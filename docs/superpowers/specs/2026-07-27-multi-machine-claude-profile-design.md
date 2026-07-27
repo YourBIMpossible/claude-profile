@@ -25,6 +25,7 @@ A single private git repo, `claude-profile`. Cloned once per machine — locatio
 | `mcp/claude_desktop_config.template.json` | Template for the Desktop app's MCP server config. |
 | `bootstrap.ps1` | One-time per-machine initializer. |
 | `hooks/session-start-pull.ps1` | Best-effort, non-blocking repo refresh, invoked via a SessionStart hook entry. |
+| `export-zip.ps1` | Regenerates a ZIP snapshot of the repo for the transfer path below. Never hand-edited; always produced from current repo state. |
 | `docs/superpowers/specs/*.md` | This spec, and any future ones for this repo. |
 
 ## Machine-local wiring
@@ -48,6 +49,19 @@ A SessionStart hook entry (baked into the generated `settings.json`) runs `hooks
 
 A manual `git pull` in the clone directory is always available to force a refresh mid-session.
 
+## Distribution — GitHub is canonical; ZIP and Drive are transport only
+
+- **GitHub** (a private repo) is the single source of truth. Every real change — a skill edit, a CLAUDE.md tweak, a bootstrap fix — happens here, through normal commit/push/pull. Nothing else is authoritative.
+- **ZIP export** is a point-in-time snapshot, regenerated from the GitHub repo on demand via `export-zip.ps1`, never hand-edited. The ZIP contains the full working tree *including* `.git/`, so extracting it produces a real, functioning clone with `origin` already configured — not a bare file dump. That's what makes reconnecting to GitHub later trivial: once the machine has network and git credentials, a normal `git pull` (manual or via the SessionStart hook) just catches it up. There is no separate reconciliation step. Used for: offline transfer, emergency recovery when GitHub isn't reachable, or a fast handoff to a brand-new machine before it has GitHub access configured.
+- **Google Drive** is transport only — a place to park the ZIP (and any other one-off transfer assets) so a new machine can grab it. It stores a copy; it is never where changes are made, and nothing reads from Drive automatically.
+- A machine bootstrapped from an extracted ZIP behaves identically to one bootstrapped from a clone from the moment `bootstrap.ps1` runs — there is no separate "zip mode" in bootstrap logic. The only difference is how the initial folder got onto disk.
+
+## Install / transfer paths
+
+1. **Normal (GitHub clone)** — `git clone <repo-url> <destination>`, then run `bootstrap.ps1`. Default path whenever GitHub is reachable. Requires git and GitHub credentials configured on the machine (a one-time, ordinary prerequisite, not specific to this design).
+2. **ZIP fallback** — extract the latest ZIP (from Drive or however it was handed off) to the destination, then run `bootstrap.ps1` exactly as above. As soon as network and git credentials are available on that machine, a `git pull` brings it current with GitHub — nothing further to reconcile, since `.git/` (including the `origin` remote) traveled with the ZIP.
+3. **Google Drive** — holds the ZIP file itself, nothing more. Not a distribution mechanism in its own right; it's just where a ZIP sits between being generated and being extracted somewhere else.
+
 ## v1 scope — exactly this, nothing more
 
 1. Create the `claude-profile` repo (this spec is its first commit).
@@ -55,6 +69,7 @@ A manual `git pull` in the clone directory is always available to force a refres
 3. Directory junction for `skills/`.
 4. Static, one-line `CLAUDE.md` stub with absolute-path import.
 5. SessionStart hook: silent pull, clean exit regardless of outcome.
+6. `export-zip.ps1`: regenerates a ZIP snapshot (including `.git/`) from current repo state, for the fallback install path. Never edited by hand.
 
 Explicitly deferred past v1: auto-memory sync, `~/.claude/rules/` (CLAUDE.md alone covers current content — not needed yet), and any Revit conditional logic beyond the single derived presence check above.
 
@@ -68,3 +83,4 @@ Explicitly deferred past v1: auto-memory sync, `~/.claude/rules/` (CLAUDE.md alo
 - Confirm the CLAUDE.md stub actually loads via `/context` → **Memory files**.
 - Confirm the SessionStart hook fires (visible via a log line or `/context`) and confirm it does *not* block session start when the network is unreachable (simulate by temporarily disabling network or pointing at an unreachable remote).
 - Run bootstrap for real on a second physical machine (the laptop, being the most readily available) as the actual cross-machine proof — everything before that point is only proven on Home Base.
+- Extract a fresh `export-zip.ps1` output into a throwaway folder and confirm `bootstrap.ps1` runs identically against it (same generated files, same junction, same stub) as it does against a plain clone.
