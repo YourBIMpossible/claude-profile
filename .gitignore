@@ -4,3 +4,8 @@ hooks/last-run.log
 
 # Worktrees live here per house convention; never part of a snapshot.
 .claude/
+
+# Machine-specific Python artifacts that rode in with the skills copy.
+__pycache__/
+*.pyc
+.coverage

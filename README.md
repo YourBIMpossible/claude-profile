@@ -4,6 +4,30 @@ Canonical source of truth for Claude Code configuration across machines.
 GitHub is authoritative. ZIP and Google Drive are transfer-only fallbacks.
 Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claude-profile-design.md
 
+## Before you install (read this once)
+
+**Prerequisites**: Claude Code installed and signed in; Git installed; GitHub
+credentials configured on this machine (for the clone path below).
+
+**Bootstrap replaces four live files.** It backs each up first, as
+`<original-name>.pre-profile-backup-<timestamp>`, and never touches the backups
+afterward - to undo, delete what bootstrap wrote and rename the backup back.
+
+| Replaced | Becomes |
+|---|---|
+| `~/.claude/CLAUDE.md` | one-line pointer at this repo |
+| `~/.claude/skills` | moved aside, replaced by a junction into this repo |
+| `~/.claude/settings.json` | generated from `settings.template.json` |
+| `%APPDATA%\Claude\claude_desktop_config.json` | generated from the template in `mcp/` |
+
+Note that skills are *replaced, not merged*: any skill that exists only on this
+machine ends up in the moved-aside backup folder, not in the new junction. If you
+want to keep it, commit it to this repo first.
+
+**Close Claude Code and Claude Desktop before running bootstrap** - a running
+instance can rewrite `~/.claude/settings.json` after bootstrap generates it, or
+hold a lock on `~/.claude/skills`. Re-running bootstrap is safe if that happens.
+
 ## Install on a new machine
 
 ### Normal path (GitHub reachable)
@@ -13,10 +37,13 @@ Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claud
    only if your Windows username has no space in it (`C:\Users\First Last\...`
    does not work). See "Why no spaces" below; bootstrap refuses rather than
    configure a machine that would silently misbehave.
+   `git clone <this repo's GitHub URL> C:\claude-profile`
 2. Run bootstrap from inside the clone:
    `powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1`
-3. Restart Claude Code. Verify with `/context` (CLAUDE.md and skills should show as
-   loaded) and `/plugin list`.
+3. Restart **Claude Code** (picks up CLAUDE.md, skills, settings) and **Claude
+   Desktop** (picks up the MCP config - it is the only consumer of that file).
+   Verify with `/context` (CLAUDE.md and skills should show as loaded) and
+   `/plugin list`.
 
 ### ZIP fallback (GitHub not reachable right now)
 
@@ -25,23 +52,52 @@ Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claud
 2. Run bootstrap exactly as in the normal path above - it behaves identically
    either way, there is no separate "zip mode".
 3. As soon as this machine has network and git credentials, run `git pull` inside
-   the clone once to catch up with GitHub. The remote is already configured,
-   because the ZIP includes `.git/`.
+   the extracted copy once to catch up with GitHub. The ZIP includes `.git/`, so
+   the remote comes with it - provided the repo it was exported from had an
+   `origin` (export-zip warns loudly if it did not, in which case the ZIP is a
+   one-time file transfer and you should re-clone from GitHub when you can).
 
-## Keeping a machine current
+## Keeping a machine current (pulling)
 
-Every Claude Code session attempts a silent `git pull --ff-only` in this repo via a
-SessionStart hook. It never blocks session start and fails silently if offline -
-it is a best-effort refresh, not a guarantee of freshness. Check
-`hooks/last-run.log` for its recent activity, or run `git pull` here yourself at
+A SessionStart hook attempts a silent `git pull --ff-only` in this repo when a
+session starts, resumes, or is cleared. It never blocks session start and fails
+quietly if offline - a best-effort refresh, not a guarantee of freshness. Check
+`hooks/last-run.log` to see what it actually did, or run `git pull` here yourself
 any time to force a refresh.
+
+## Changing your setup (pushing)
+
+This repo is the source of truth, so changes belong here and get committed and
+pushed - not made locally on one machine.
+
+- **Skills**: `~/.claude/skills` is a junction into this repo, so editing a skill
+  (including through Claude Code itself) edits the repo's working copy directly.
+  Commit and push it.
+- **Instructions**: edit this repo's `CLAUDE.md`. Do not edit
+  `~/.claude/CLAUDE.md` - it is a generated one-line pointer and bootstrap
+  rewrites it.
+- **Settings**: edit `settings.template.json` here, then re-run `bootstrap.ps1`.
+  A change made in-app (e.g. via `/config`) lands only in the *generated*
+  `~/.claude/settings.json` and will be replaced the next time bootstrap runs.
+  The same applies to MCP servers via `mcp/claude_desktop_config.template.json`.
+
+Then on your other machines, the SessionStart hook (or a manual `git pull`)
+picks it up.
 
 ## Publishing a new ZIP snapshot
 
-Run `.\export-zip.ps1` from inside the repo. It writes a timestamped ZIP to your
-Desktop by default (pass `-OutputDirectory` to change that). Upload that file to
-Google Drive if it needs to reach another machine. Never edit a ZIP directly -
-regenerate it from the repo instead.
+Run `.\export-zip.ps1` from inside a normal clone - not a git worktree, where
+`.git` is a file rather than a directory and the snapshot would not be a usable
+clone (the script refuses, and says so). It writes a timestamped ZIP to your
+Desktop by default; pass `-OutputDirectory` to change that.
+
+**Commit and push first.** The snapshot is built from committed state: untracked
+files are omitted entirely, and the script warns if the tree is dirty. It also
+warns if the repo has no `origin`, because without one the extracted copy cannot
+`git pull` to catch up - it is then only a file transfer.
+
+Upload the ZIP to Google Drive if it needs to reach another machine. Never edit a
+ZIP directly - regenerate it from the repo instead.
 
 ## Why no spaces in the clone path
 

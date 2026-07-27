@@ -16,16 +16,49 @@ $repoRoot = $PSScriptRoot
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $zipName = "claude-profile-$stamp.zip"
 
-if (-not (Test-Path -LiteralPath $OutputDirectory)) {
-    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-}
-$resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).ProviderPath
 $resolvedRepo = (Resolve-Path -LiteralPath $repoRoot).ProviderPath
 
 # Writing the archive into the tree being archived would race the enumeration
 # (and bloat or corrupt the result), so refuse rather than produce a bad ZIP.
-if ($resolvedOutput.TrimEnd('\').StartsWith($resolvedRepo.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "OutputDirectory must be outside the repo ($resolvedRepo). Got: $resolvedOutput"
+# Compare with a trailing separator on BOTH sides: a bare StartsWith would also
+# reject a sibling like 'claude-profile-zips', which is perfectly valid. Checked
+# before creating the directory so a rejected path leaves nothing behind.
+$repoPrefix = $resolvedRepo.TrimEnd('\') + '\'
+$outProbe = ([System.IO.Path]::GetFullPath($OutputDirectory)).TrimEnd('\') + '\'
+if ($outProbe.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "OutputDirectory must be outside the repo ($resolvedRepo). Got: $outProbe"
+}
+
+if (-not (Test-Path -LiteralPath $OutputDirectory)) {
+    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+}
+$resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).ProviderPath
+
+# The snapshot is built from committed state (git ls-files), so anything not
+# committed is silently absent from it - including brand-new untracked files,
+# which is exactly what editing skills through the junction produces. Say so
+# rather than let a snapshot quietly ship without the work it appears to carry.
+$dirty = @(& git -C $resolvedRepo status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw "git status failed in $resolvedRepo - is this a git repository?" }
+if ($dirty.Count -gt 0) {
+    Write-Warning "Working tree is not clean. The snapshot is built from COMMITTED state:"
+    Write-Warning "  - untracked files are omitted entirely"
+    Write-Warning "  - uncommitted edits to tracked files travel as-is on disk"
+    foreach ($line in $dirty) { Write-Warning "    $line" }
+    Write-Warning "Commit first if this work belongs in the snapshot."
+}
+
+# The success message must not promise a remote that does not exist. Without an
+# origin, the extracted copy cannot 'git pull' to catch up - which is the entire
+# point of shipping .git/ - so establish the truth here and report it honestly.
+# Listed first rather than calling 'remote get-url origin' and inspecting the
+# failure: under $ErrorActionPreference='Stop', a native command's stderr is
+# promoted to a terminating error, so probing for a missing origin would throw
+# in exactly the no-origin case this is meant to detect. 'git remote' prints
+# nothing to stderr and exits 0 when there are no remotes.
+$originUrl = $null
+if (@(& git -C $resolvedRepo remote) -contains 'origin') {
+    $originUrl = (& git -C $resolvedRepo remote get-url origin).Trim()
 }
 
 $zipPath = Join-Path $resolvedOutput $zipName
@@ -93,4 +126,11 @@ if (-not $hasGit) {
 }
 
 Write-Host "Wrote $zipPath"
-Write-Host "Verified: archive contains .git/ - extracting it produces a working clone with 'origin' already configured."
+if ($originUrl) {
+    Write-Host "Verified: archive contains .git/ and origin is $originUrl"
+    Write-Host "Extracting it produces a working clone that can 'git pull' to catch up."
+} else {
+    Write-Host "Verified: archive contains .git/"
+    Write-Warning "This repo has NO 'origin' remote, so the extracted copy cannot 'git pull' to catch up."
+    Write-Warning "It is a point-in-time file transfer only. Add a remote and push, then re-export."
+}
