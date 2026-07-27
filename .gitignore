@@ -1,0 +1,3 @@
+*.zip
+hooks/last-run.log
+*.pre-profile-backup-*
