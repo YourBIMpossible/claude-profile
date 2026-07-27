@@ -8,12 +8,15 @@ Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claud
 
 ### Normal path (GitHub reachable)
 
-1. Clone this repo anywhere. A workspace root like `F:\AI-Dev\claude-profile` if you
-   have one, otherwise `%USERPROFILE%\claude-profile` works just as well.
+1. Clone this repo to a path with **no spaces in it** - `F:\AI-Dev\claude-profile`,
+   `C:\claude-profile`, or similar. `%USERPROFILE%\claude-profile` is fine too, but
+   only if your Windows username has no space in it (`C:\Users\First Last\...`
+   does not work). See "Why no spaces" below; bootstrap refuses rather than
+   configure a machine that would silently misbehave.
 2. Run bootstrap from inside the clone:
    `powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1`
 3. Restart Claude Code. Verify with `/context` (CLAUDE.md and skills should show as
-   loaded) and `/plugins list`.
+   loaded) and `/plugin list`.
 
 ### ZIP fallback (GitHub not reachable right now)
 
@@ -39,6 +42,19 @@ Run `.\export-zip.ps1` from inside the repo. It writes a timestamped ZIP to your
 Desktop by default (pass `-OutputDirectory` to change that). Upload that file to
 Google Drive if it needs to reach another machine. Never edit a ZIP directly -
 regenerate it from the repo instead.
+
+## Why no spaces in the clone path
+
+`~/.claude/CLAUDE.md` is a one-line `@` import pointing at this repo's CLAUDE.md.
+Claude Code's `@` import fails *silently* when the path contains a space - the
+file is simply never loaded, with no error or warning, and there is no quoting
+or escaping syntax that works (anthropics/claude-code#56927, closed as not
+planned). A machine in that state looks fully configured while none of your
+instructions apply. `bootstrap.ps1` checks for this and refuses up front rather
+than leave you with a silently broken setup.
+
+Only the CLAUDE.md import is affected - the skills junction and the generated
+JSON configs handle spaces without trouble.
 
 ## What this repo does not do
 

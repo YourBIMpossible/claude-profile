@@ -41,6 +41,34 @@ function Backup-IfRealDirectory {
 }
 
 $repoRoot = $PSScriptRoot
+
+# The CLAUDE.md stub relies on Claude Code's @import, which fails SILENTLY when
+# the path contains a space - the file is simply never loaded, with no error or
+# warning (anthropics/claude-code#56927, closed as not planned; no quoting or
+# escaping syntax exists). Bootstrap would otherwise report success on a machine
+# whose instructions never actually load, which is the exact failure this repo
+# exists to prevent. Refuse up front, before writing anything, so the machine is
+# left untouched rather than half-configured.
+# Note this is reachable via the documented fallback location: %USERPROFILE% is
+# "C:\Users\First Last" on any account whose Windows username contains a space.
+if ($repoRoot -match ' ') {
+    throw @"
+Repo path contains a space:
+  $repoRoot
+
+Claude Code's @import silently fails on paths containing spaces, so
+~/.claude/CLAUDE.md would be written and appear fine while never actually
+loading - no error, no warning, just missing instructions.
+
+Move or re-clone this repo somewhere without spaces, then run bootstrap again:
+  C:\claude-profile
+  F:\AI-Dev\claude-profile
+
+(The skills junction and generated JSON configs handle spaces fine - it is
+only the CLAUDE.md @import that does not.)
+"@
+}
+
 $claudeDir = Join-Path $env:USERPROFILE '.claude'
 if (-not (Test-Path -LiteralPath $claudeDir)) {
     New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
@@ -139,4 +167,4 @@ Write-Host "Wrote claude_desktop_config.json"
 
 Write-Host ""
 Write-Host "Bootstrap complete."
-Write-Host "Verify with: /context (check CLAUDE.md and skills load) and /plugins list"
+Write-Host "Verify with: /context (check CLAUDE.md and skills load) and /plugin list"
