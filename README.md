@@ -37,7 +37,10 @@ hold a lock on `~/.claude/skills`. Re-running bootstrap is safe if that happens.
    only if your Windows username has no space in it (`C:\Users\First Last\...`
    does not work). See "Why no spaces" below; bootstrap refuses rather than
    configure a machine that would silently misbehave.
-   `git clone <this repo's GitHub URL> C:\claude-profile`
+   `git clone https://github.com/YourBIMpossible/claude-profile.git C:\claude-profile`
+
+   (Private repo - the machine needs to be signed in to GitHub as an account
+   with access. `gh auth login` is the easiest way.)
 2. Run bootstrap from inside the clone:
    `powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1`
 3. Restart **Claude Code** (picks up CLAUDE.md, skills, settings) and **Claude
