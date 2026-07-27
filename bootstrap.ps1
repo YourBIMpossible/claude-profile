@@ -18,6 +18,33 @@ function Backup-IfRealFile {
     Write-Host "Backed up existing file to $backupPath"
 }
 
+function Find-JsonObjectSpan {
+    # Returns the index of the '{' opening the given top-level key's object value
+    # and the index of its matching '}', tracking string literals and escapes so
+    # braces inside strings do not throw the count off. Null if the key is absent.
+    param([string]$Text, [string]$Key)
+    $m = [regex]::Match($Text, '"' + [regex]::Escape($Key) + '"\s*:\s*\{')
+    if (-not $m.Success) { return $null }
+    $open = $Text.IndexOf('{', $m.Index + $m.Length - 1)
+    $depth = 0; $inString = $false; $escaped = $false
+    for ($i = $open; $i -lt $Text.Length; $i++) {
+        $c = $Text[$i]
+        if ($inString) {
+            if ($escaped) { $escaped = $false }
+            elseif ($c -eq '\') { $escaped = $true }
+            elseif ($c -eq '"') { $inString = $false }
+            continue
+        }
+        if ($c -eq '"') { $inString = $true }
+        elseif ($c -eq '{') { $depth++ }
+        elseif ($c -eq '}') {
+            $depth--
+            if ($depth -eq 0) { return @{ Start = $open; End = $i } }
+        }
+    }
+    return $null
+}
+
 function Backup-IfRealDirectory {
     param([string]$Path, [string]$ExpectedTarget)
     if (-not (Test-Path -LiteralPath $Path)) { return }
@@ -161,9 +188,69 @@ if (-not (Test-Path -LiteralPath $mcpConfigDir)) {
     New-Item -ItemType Directory -Path $mcpConfigDir -Force | Out-Null
 }
 $mcpConfigPath = Join-Path $mcpConfigDir 'claude_desktop_config.json'
-Backup-IfRealFile -Path $mcpConfigPath -ExpectedContent $mcpRaw
-[System.IO.File]::WriteAllText($mcpConfigPath, $mcpRaw, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "Wrote claude_desktop_config.json"
+
+# This file is NOT ours to own. On a machine that has run Claude Desktop it also
+# holds coworkUserFilesPath and a large 'preferences' object - Chrome-extension
+# pairing, trusted folders, folder-consent grants, feature flags. On this
+# machine mcpServers was 263 bytes of a 33KB file. Overwriting it with the
+# rendered template would silently drop all of that (backed up, but the running
+# app would lose pairing and grants), so replace ONLY the mcpServers value and
+# leave every other byte untouched.
+if (-not (Test-Path -LiteralPath $mcpConfigPath)) {
+    # Fresh machine: no existing state to preserve, write the template as-is.
+    [System.IO.File]::WriteAllText($mcpConfigPath, $mcpRaw, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "Wrote claude_desktop_config.json (new file)"
+} else {
+    $existingRaw = Get-Content -Raw -LiteralPath $mcpConfigPath
+    try {
+        $existingObj = $existingRaw | ConvertFrom-Json
+    } catch {
+        throw "Existing claude_desktop_config.json is not valid JSON; refusing to edit it: $($_.Exception.Message)"
+    }
+    $existingKeys = @($existingObj.PSObject.Properties.Name)
+
+    # The replacement text is the template's own mcpServers object, lifted verbatim.
+    $srcSpan = Find-JsonObjectSpan -Text $mcpRaw -Key 'mcpServers'
+    if (-not $srcSpan) { throw "Template is missing an mcpServers object" }
+    $newBlock = $mcpRaw.Substring($srcSpan.Start, $srcSpan.End - $srcSpan.Start + 1)
+
+    $dstSpan = Find-JsonObjectSpan -Text $existingRaw -Key 'mcpServers'
+    if ($dstSpan) {
+        $merged = $existingRaw.Substring(0, $dstSpan.Start) + $newBlock + $existingRaw.Substring($dstSpan.End + 1)
+    } else {
+        # Key absent entirely: insert it right after the opening brace.
+        $firstBrace = $existingRaw.IndexOf('{')
+        if ($firstBrace -lt 0) { throw "Existing claude_desktop_config.json has no opening brace" }
+        $merged = $existingRaw.Substring(0, $firstBrace + 1) + "`n  `"mcpServers`": " + $newBlock + "," + $existingRaw.Substring($firstBrace + 1)
+    }
+
+    # Prove the edit preserved everything else before writing it.
+    try {
+        $mergedObj = $merged | ConvertFrom-Json
+    } catch {
+        throw "Merged claude_desktop_config.json is not valid JSON - refusing to write: $($_.Exception.Message)"
+    }
+    $mergedKeys = @($mergedObj.PSObject.Properties.Name)
+    $lostKeys = @($existingKeys | Where-Object { $mergedKeys -notcontains $_ })
+    if ($lostKeys.Count -gt 0) {
+        throw "Merge would drop top-level keys: $($lostKeys -join ', ') - refusing to write."
+    }
+    if ($existingObj.preferences) {
+        $prefBefore = @($existingObj.preferences.PSObject.Properties.Name).Count
+        $prefAfter = @($mergedObj.preferences.PSObject.Properties.Name).Count
+        if ($prefAfter -ne $prefBefore) {
+            throw "Merge would change preferences sub-key count ($prefBefore -> $prefAfter) - refusing to write."
+        }
+    }
+
+    if ($merged -ne $existingRaw) {
+        Backup-IfRealFile -Path $mcpConfigPath -ExpectedContent $merged
+        [System.IO.File]::WriteAllText($mcpConfigPath, $merged, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "Updated mcpServers in claude_desktop_config.json (preserved $($existingKeys.Count) top-level keys)"
+    } else {
+        Write-Host "claude_desktop_config.json already correct - left untouched"
+    }
+}
 
 Write-Host ""
 Write-Host "Bootstrap complete."
