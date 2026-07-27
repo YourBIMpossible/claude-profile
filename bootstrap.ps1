@@ -19,10 +19,21 @@ function Backup-IfRealFile {
 }
 
 function Backup-IfRealDirectory {
-    param([string]$Path)
+    param([string]$Path, [string]$ExpectedTarget)
     if (-not (Test-Path -LiteralPath $Path)) { return }
     $item = Get-Item -LiteralPath $Path -Force
-    if ($item.LinkType -eq 'Junction') { return }
+    if ($item.LinkType -eq 'Junction') {
+        $currentTarget = @($item.Target)[0]
+        if ($currentTarget -and ($currentTarget.TrimEnd('\') -eq $ExpectedTarget.TrimEnd('\'))) { return }
+        # Junction exists but points at a different (stale or dangling) target - e.g. the
+        # repo was relocated since the last bootstrap. Remove just the junction/reparse
+        # point itself, never the target's contents: [IO.Directory]::Delete($path, $false)
+        # deletes a reparse point without following it, unlike Remove-Item -Recurse, which
+        # has historically followed symlinks/junctions into their target on some versions.
+        [System.IO.Directory]::Delete($Path, $false)
+        Write-Host "Removed stale skills junction (was pointing at $currentTarget) - its old target and contents are untouched"
+        return
+    }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupPath = "$Path.pre-profile-backup-$stamp"
     Move-Item -LiteralPath $Path -Destination $backupPath -Force
@@ -49,7 +60,7 @@ Write-Host "Wrote CLAUDE.md stub: $stubContent"
 # 2. skills junction
 $skillsPath = Join-Path $claudeDir 'skills'
 $skillsTarget = Join-Path $repoRoot 'skills'
-Backup-IfRealDirectory -Path $skillsPath
+Backup-IfRealDirectory -Path $skillsPath -ExpectedTarget $skillsTarget
 if (-not (Test-Path -LiteralPath $skillsPath)) {
     New-Item -ItemType Junction -Path $skillsPath -Target $skillsTarget | Out-Null
     Write-Host "Created skills junction -> $skillsTarget"
@@ -96,11 +107,7 @@ try {
 }
 
 $settingsPath = Join-Path $claudeDir 'settings.json'
-if (Test-Path -LiteralPath $settingsPath) {
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    Copy-Item -LiteralPath $settingsPath -Destination "$settingsPath.pre-profile-backup-$stamp" -Force
-    Write-Host "Backed up existing settings.json"
-}
+Backup-IfRealFile -Path $settingsPath -ExpectedContent $settingsRaw
 [System.IO.File]::WriteAllText($settingsPath, $settingsRaw, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Wrote settings.json"
 
@@ -126,11 +133,7 @@ if (-not (Test-Path -LiteralPath $mcpConfigDir)) {
     New-Item -ItemType Directory -Path $mcpConfigDir -Force | Out-Null
 }
 $mcpConfigPath = Join-Path $mcpConfigDir 'claude_desktop_config.json'
-if (Test-Path -LiteralPath $mcpConfigPath) {
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    Copy-Item -LiteralPath $mcpConfigPath -Destination "$mcpConfigPath.pre-profile-backup-$stamp" -Force
-    Write-Host "Backed up existing claude_desktop_config.json"
-}
+Backup-IfRealFile -Path $mcpConfigPath -ExpectedContent $mcpRaw
 [System.IO.File]::WriteAllText($mcpConfigPath, $mcpRaw, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Wrote claude_desktop_config.json"
 
