@@ -1,3 +1,6 @@
 *.zip
 hooks/last-run.log
 *.pre-profile-backup-*
+
+# Worktrees live here per house convention; never part of a snapshot.
+.claude/

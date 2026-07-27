@@ -33,18 +33,46 @@ if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 
-# NOT Compress-Archive: its -Path wildcard resolves via Get-ChildItem WITHOUT
-# -Force, so it silently omits hidden entries - and .git is marked Hidden on
-# Windows. That produced a ZIP with no .git at all while still reporting
-# success, defeating the entire point of this script. CreateFromDirectory walks
-# the directory itself and includes hidden entries.
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $resolvedRepo,
-    $zipPath,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $false
-)
+# Stage exactly what belongs in a snapshot - git-tracked files plus .git/ -
+# rather than archiving the working directory as-is. Archiving in place would
+# sweep in untracked scratch files, gitignored artifacts, and (when run from a
+# checkout that has worktrees under .claude/) an entire duplicate copy of the
+# repo. Staging keeps the snapshot equal to "the repo", not "this disk".
+$staging = Join-Path ([System.IO.Path]::GetTempPath()) ("claude-profile-stage-" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $staging -Force | Out-Null
+try {
+    $tracked = & git -C $resolvedRepo ls-files
+    if ($LASTEXITCODE -ne 0) { throw "git ls-files failed in $resolvedRepo - is this a git repository?" }
+    foreach ($rel in $tracked) {
+        if (-not $rel) { continue }
+        $src = Join-Path $resolvedRepo $rel
+        if (-not (Test-Path -LiteralPath $src)) { continue }
+        $dest = Join-Path $staging $rel
+        $destDir = Split-Path -Parent $dest
+        if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+        Copy-Item -LiteralPath $src -Destination $dest -Force
+    }
+
+    # .git must travel for the extracted copy to be a working clone with origin.
+    # In a worktree .git is a FILE pointing into the parent repo's admin dir, so
+    # copying it would produce a broken clone - refuse rather than ship one.
+    $gitPath = Join-Path $resolvedRepo '.git'
+    if (-not (Test-Path -LiteralPath $gitPath)) { throw "No .git found in $resolvedRepo" }
+    if (-not (Get-Item -LiteralPath $gitPath -Force).PSIsContainer) {
+        throw "Run this from a normal clone, not a git worktree: .git here is a file pointing into another repository, so a snapshot of it would not be a usable clone."
+    }
+    Copy-Item -LiteralPath $gitPath -Destination (Join-Path $staging '.git') -Recurse -Force
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $staging,
+        $zipPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false
+    )
+} finally {
+    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # Verify the promise this script makes, rather than asserting it blindly.
 # Entry names are matched against BOTH separators on purpose: .NET Framework 4.x
