@@ -29,8 +29,10 @@ tasks under ~30 minutes: skip the planning chain and execute directly.
 
 ## Parallel sessions / worktrees (house rule)
 Two Claude sessions must NEVER share one physical git checkout. Each concurrent session gets
-its own worktree INSIDE the repo: `git worktree add .claude\worktrees\<lane> -b <branch> origin/main`
-(run from the repo root). Sibling folders (`../<repo>-<lane>`) are RETIRED 2026-07-24 — they
+its own worktree INSIDE the repo: `git worktree add .claude\worktrees\<lane> -b <branch> origin/HEAD`
+(run from the repo root; `origin/HEAD` resolves to each repo's OWN default — BIMpossible is `main`,
+claude-profile is `master`, so never hardcode either; `git remote set-head origin -a` if it's unset).
+Sibling folders (`../<repo>-<lane>`) are RETIRED 2026-07-24 — they
 sprawled into 9+ mystery folders under F:\AI-Dev; canonical rules incl. "every pushed branch
 gets a PR (draft ok)" live in F:\AI-Dev\BIMpossible_Workspace\WORKFLOW.md. A shared working tree
 makes sessions' uncommitted edits intermingle in the same files (proven 2026-07-02 on

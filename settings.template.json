@@ -2,7 +2,7 @@
   "permissions": {
     "additionalDirectories": ["__ADDITIONAL_DIRECTORIES__"]
   },
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-5",
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true,
     "typescript-lsp@claude-plugins-official": true,
