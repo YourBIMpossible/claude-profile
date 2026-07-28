@@ -129,7 +129,7 @@ $hasRevit = Test-Path -LiteralPath $revitExePath
 Write-Host "Revit MCP server detected: $hasRevit"
 
 # 4. Detect workspace root and known project directories
-$candidateRoots = @('F:\AI-Dev', (Join-Path $env:USERPROFILE 'AI-Dev'))
+$candidateRoots = @('F:\AI-Dev', 'C:\AI-Dev', (Join-Path $env:USERPROFILE 'AI-Dev'))
 $workspaceRoot = $candidateRoots | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 $additionalDirs = @()
 if ($workspaceRoot) {
