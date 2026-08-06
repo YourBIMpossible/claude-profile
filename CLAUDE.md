@@ -22,11 +22,6 @@ Auto-trigger: also invoke it unprompted when the user asks to audit the Add-Ins 
 When the user types `/revit-tool-review`, invoke the Skill tool with `skill: "revit-tool-review"` before doing anything else.
 Auto-trigger: also invoke it unprompted whenever the user asks to review, audit, dissect, or nitpick a BIMpossible tool's usability, UX, flow, labels, defaults, or messaging — even if the skill isn't named. Route code-correctness findings to the functionality-audit track instead of fixing them.
 
-## Superpowers gating
-Only invoke brainstorming/writing-plans skills for new features, new tools, or tasks
-with genuinely ambiguous scope. For bug fixes, tweaks, refactors of known code, and
-tasks under ~30 minutes: skip the planning chain and execute directly.
-
 ## Parallel sessions / worktrees (house rule)
 Two Claude sessions must NEVER share one physical git checkout. Each concurrent session gets
 its own worktree INSIDE the repo: `git worktree add .claude\worktrees\<lane> -b <branch> origin/HEAD`
