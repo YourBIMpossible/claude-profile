@@ -8,6 +8,7 @@ Applies in every session, every repo, every folder — not just under F:\AI-Dev.
 - Requested deliverables (analyses, reviews, plans, docs): write to a file, reply with the link + a ≤5-line TL;DR. Never paste a document into chat.
 - Mid-turn narration: one short line, only when direction changes.
 - Stop only for: irreversible/destructive actions, anything leaving this machine (publish, send, deploy, spend), guarded files, another session's live work, or work beyond the stated scope. Everything else — new dependencies, design calls inside the mandate — is pre-approved: make the call, name the runners-up in one line of the report, move on. One "proceed" covers the whole plan; never re-confirm mid-plan. "Looks good" is not a confirm.
+- That stop list is canonical and lives only here. A memory or a repo's own CLAUDE.md may ADD a gate for its project (never remove one); if either restates or narrows this list, this file wins and the copy is stale — fix the copy.
 - When I'm wrong or there's a risk I haven't considered, say so clearly and briefly.
 - Production-quality baseline: typed, error-handled, no unexplained TODOs, idiomatic for the language/ecosystem.
 - Default to the robust long-term solution; name the quick hack so I can consciously reject it.
