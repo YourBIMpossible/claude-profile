@@ -1,6 +1,6 @@
 ---
 name: next
-description: Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, or types "/next". Renders a cross-repo portfolio board and a ranked, evidence-verified production queue from a durable structured item store at F:\AI-Dev\.tools\state. Ranks by critical path (how much each item unblocks). Read-only against project repos — it never fixes, commits, pushes, or hunts defects.
+description: Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, or types "/next". Renders a cross-repo portfolio board and a ranked, evidence-verified production queue from a durable structured item store at F:\AI-Dev\.tools\state. Ranks by critical path (how much each item unblocks). Modes — /next = board; /next <target> = ranked drill; /next <target> sync = reconcile the store (run when stale or after a merge wave); /next <target> init = bootstrap a new project; /next all deep = full re-derive. Read-only against project repos — it never fixes, commits, pushes, or hunts defects.
 ---
 
 # /next — production status and next-move
