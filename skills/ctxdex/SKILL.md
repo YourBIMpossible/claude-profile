@@ -7,6 +7,8 @@ description: Local FTS5 index for durable recall over large content already seen
 
 A ~350-line SQLite FTS5 CLI at `F:\AI-Dev\.tools\ctxdex\ctxdex.py`. Fully local — no network except URLs you explicitly index.
 
+**Dependency pin (for the auto-capture hook):** ctxdex is its own git repo at `F:\AI-Dev\.tools\ctxdex` (local-only, no remote). The hook was built and verified against commit `402c0e6` ("Initial commit", 2026-08-07), which includes the two support features the hook requires: `index --path` override (synthetic `bash://` URIs) and `purge --source`/`--older-than` compose (scoped retention). Check with `git -C F:\AI-Dev\.tools\ctxdex log --oneline -1`. If ctxdex is absent or lacks `cmd_index`, the hook fails open silently in-session and writes a clear `preflight:` diagnostic to `ctxdex_autoindex.log`.
+
 Solves one problem: content you paid tokens to see **once** (a fetched doc page, a 300KB log, a CSV export, a reference directory) is otherwise truncated away or must be re-read whole. Index it, then pull back ranked 1500-char snippets on demand.
 
 ## When to use

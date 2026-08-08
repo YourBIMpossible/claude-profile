@@ -194,6 +194,25 @@ def _resolve_persisted_output(output) -> str:
     return text
 
 
+def _ctxdex_preflight(log: logging.Logger) -> bool:
+    """Verify the external ctxdex dependency before doing any work.
+
+    ctxdex lives OUTSIDE this repo (CTXDEX_DIR, its own git repo — pinned
+    commit documented in skills/ctxdex/SKILL.md). Per the fail-open policy
+    an absent or moved ctxdex must never disturb the session, but it also
+    must not fail silently forever: this writes one clear diagnostic per
+    occurrence to the rotating log so the gap is visible on inspection."""
+    script = CTXDEX_DIR / "ctxdex.py"
+    if not script.is_file():
+        log.error(
+            "preflight: ctxdex.py not found at %s - auto-capture disabled until "
+            "it is restored (see skills/ctxdex/SKILL.md for the pinned version)",
+            script,
+        )
+        return False
+    return True
+
+
 def _is_binary_or_empty(text: str) -> bool:
     if not text or not text.strip():
         return True
@@ -244,6 +263,9 @@ def main() -> None:
         log.info("skip: output looks credential-sensitive - %r", command[:200])
         _passthrough()
 
+    if not _ctxdex_preflight(log):
+        _passthrough()
+
     cwd = payload.get("cwd") or os.getcwd()
     project = Path(cwd).name or "default"
     is_error = bool(payload.get("tool_output_is_error"))
@@ -266,6 +288,14 @@ def main() -> None:
         if str(CTXDEX_DIR) not in sys.path:
             sys.path.insert(0, str(CTXDEX_DIR))
         import ctxdex  # noqa: E402  (sys.path must be set first)
+
+        if not hasattr(ctxdex, "cmd_index"):
+            log.error(
+                "preflight: ctxdex at %s has no cmd_index - incompatible version, "
+                "auto-capture skipped (see skills/ctxdex/SKILL.md for the pinned version)",
+                CTXDEX_DIR,
+            )
+            return
 
         ns = argparse.Namespace(
             target=str(tmp_path), source="bash-output", project=project, path=bash_uri
