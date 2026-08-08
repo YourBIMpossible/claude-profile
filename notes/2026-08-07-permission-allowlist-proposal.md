@@ -12,12 +12,14 @@ lineage, with mutation assessment:
 | Blocked command | Read-only? | Allowlist candidate? |
 |---|---|---|
 | `gh pr view 5` | Yes — GitHub API GET, renders PR | **Yes** |
-| `python F:/AI-Dev/.tools/ctxdex/ctxdex.py stats` | *Almost* — see caveat below | **Yes, with caveat** |
+| `python F:/AI-Dev/.tools/ctxdex/ctxdex.py stats` | **No** — creates DB file if absent (see caveat) | No — withdrawn per owner ruling |
 | `gh pr merge 6 --squash --delete-branch` | **No** — merges + deletes branches | No — correct scrutiny |
 | `git rebase --skip; git status --short \| head; git log --oneline -8` | **No** — rebase mutates history | No — correct scrutiny (compound contained a mutator) |
 
-Only the first two were false positives. The other two blocks were the
-classifier doing its job; retry-after-explicit-instruction was the right flow.
+Only `gh pr view` was a clean false positive. `ctxdex stats` initially looked
+like one, but the audit reclassified it (DB-open side effect). The other two
+blocks were the classifier doing its job; retry-after-explicit-instruction was
+the right flow.
 
 ## Resolved executables and argument shapes
 
@@ -32,16 +34,24 @@ file inside `ctxdex\data\` only.
 
 ## Narrowest configuration change (if approved later)
 
-Two `permissions.allow` entries in `~/.claude/settings.json`:
+Owner wording safeguard (2026-08-07): any future rule must be interpreted and
+verified as a **parsed executable + constrained argument-vector rule**, never a
+textual shell-command prefix. A string-prefix matcher is bypassable via
+separators, expansion, redirection, or appended flags. If Claude Code's rule
+engine cannot be confirmed to parse (not string-match) the command, do not
+implement.
+
+Candidate shape — one rule, not two:
 
 ```json
-"Bash(gh pr view:*)",
-"Bash(py F:/AI-Dev/.tools/ctxdex/ctxdex.py stats:*)"
+"Bash(gh pr view:*)"
 ```
 
 Nothing broader: no `gh pr:*` (would cover merge/close/edit), no `gh api:*`
-(arbitrary REST verbs), no bare `ctxdex.py:*` (would cover `index`/`purge`,
-which write and delete).
+(arbitrary REST verbs). The ctxdex-stats rule is **withdrawn as a candidate**
+(owner ruling): the DB-creation side effect means it is not read-only; it stays
+blocked unless future measured block frequency justifies a tightly constrained
+rule of its own.
 
 ## Adversarial review
 
@@ -78,5 +88,7 @@ which write and delete).
 
 ## Decision
 
-Deferred. Revisit when block frequency justifies it; implement exactly the two
-rules above, nothing wider, with the backup-first rollback.
+Deferred. Revisit when block frequency justifies it; implement at most the
+single `gh pr view` rule above — as a parsed executable/argument-vector rule,
+verified, never a string prefix — with the backup-first rollback. ctxdex stats
+stays blocked.
