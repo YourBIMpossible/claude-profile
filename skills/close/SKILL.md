@@ -29,6 +29,10 @@ verdict (SAFE TO CLOSE, or NEEDS CHECKPOINT: n items). Change nothing.
 1. Externalize every not-on-disk item: commit + push in-scope code on the lane
    branch; write conversation-only decisions/gotchas to the anchor doc (or a
    dated notes file if the job has no anchor); durable lessons → one memory max.
+   The anchor/notes write includes a **fenced-decisions table** — settled calls
+   (merged, closed, deliberately gated, rejected alternatives) with a one-line
+   rationale each, so a successor session neither re-litigates nor re-does them.
+   Settled means fenced, not re-narrated.
 2. WANDER items: one line each into the /next item store or the anchor's queue.
    Do NOT fix, investigate, or expand them — that is the wander this skill
    exists to stop.
@@ -44,3 +48,6 @@ verdict (SAFE TO CLOSE, or NEEDS CHECKPOINT: n items). Change nothing.
 - SAFE TO CLOSE requires: nothing of value exists only in this conversation.
 - Shared dirty trees (house rule): `git diff --cached --stat` before any
   closeout commit — never sweep another session's hunks.
+- Durable-lesson writes amend before they append: when a session proved an
+  existing rule/skill/memory failed to bind, fix the line that failed rather
+  than adding a new clause beside it. Rules-bloat is the failure mode.
