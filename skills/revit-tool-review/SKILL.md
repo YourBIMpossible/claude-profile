@@ -1,16 +1,11 @@
 ---
 name: revit-tool-review
 description: >-
-  Ruthless, user-perspective usability review of ONE BIMpossible Revit tool at a time —
-  the second audit track, separate from code-correctness. Use whenever the user asks to
-  review, audit, dissect, or nitpick a tool's UX/usability/flow/labels/defaults, or says
-  "/revit-tool-review <tool>". Produces a filled 10-section checklist (PASS/FLAG/FAIL +
-  evidence), a stall log from a live Revit walkthrough, and findings prioritized
-  Critical/Medium/Polish with behavior-level improvement proposals — never code-level
-  fixes. Carries the suite's house conventions (WireDialogKeys Enter/Esc contract,
-  count-in-button-label for destructive actions, honest-counts messaging, GlassAlert
-  policy, Session-persisted last-used values) and the pre-seeded suite-wide regression
-  findings, so reviews stay grounded in THIS suite, not generic UX theory.
+  User-perspective usability review of ONE BIMpossible Revit tool at a time — the UX
+  audit track, separate from code-correctness. Use whenever the user asks to review,
+  dissect, or nitpick a tool's UX/usability/flow/labels/defaults/messaging, or says
+  "/revit-tool-review <tool>". Findings only, never fixes; code-correctness findings
+  route to /revit-functionality-audit.
 ---
 
 # Revit Tool Review — one tool, user's eyes, ruthless

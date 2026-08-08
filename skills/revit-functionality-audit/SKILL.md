@@ -1,17 +1,12 @@
 ---
 name: revit-functionality-audit
 description: >-
-  On-demand functionality/code-correctness audit for the Revit ADD-INS repo
-  (F:\AI-Dev\Add-Ins) — the Add-Ins counterpart of /audit, which is scoped to the
-  BIMpossible web repo and does NOT cover Add-Ins. /revit-functionality-audit =
-  incremental (every commit since the last report in audits/); "complete" = full
-  top-to-bottom. Behavior only: commands, flows, error handling, transactions,
-  silent failures — UI/UX belongs to /revit-tool-review, which routes its CODE
-  findings here. Method is fixed by hard lessons: build BOTH TFMs before believing
-  any static claim; every finding is a HYPOTHESIS until verified; hunt the house
-  defect "reports success, quietly did nothing" via silent-catch census,
-  counter-integrity checks, and async/event chain tracing. Output is a
-  findings-report + resolution companion in audits/ — no fixes in the same pass.
+  On-demand code-correctness/behavior audit of the Revit ADD-INS repo
+  (F:\AI-Dev\Add-Ins) — the Add-Ins counterpart of /audit, which covers only the
+  BIMpossible web repo. Default = incremental since the last report in audits/;
+  "complete" = full top-to-bottom. Behavior only — UI/UX belongs to
+  /revit-tool-review, which routes its CODE findings here. Findings-report output,
+  no fixes in the same pass.
 ---
 
 # Revit Add-Ins Functionality Audit

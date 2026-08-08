@@ -1,18 +1,12 @@
 ---
 name: revit-viewport-standardization
 description: >-
-  Standardize Revit sheet-set plan viewports to per-sector templates through the
-  mcp-server-for-revit `send_code_to_revit` interface: align viewport box centers,
-  match grid-bubble extents to the crop boundary, tighten annotation crops, and set
-  viewport titles so every sector's plan views match that sector's template sheet.
-  Use this WHENEVER the user wants to align, standardize, clean up, or repair Revit
-  viewports / plan sheets / sector plans / grid bubbles / annotation crops / viewport
-  titles across a sheet set, match views to a template view, or run/fix an
-  "AlignSectorViewports"-style batch — even if they don't name this skill. It also
-  carries the hard-won `send_code_to_revit` C# quirks (document-not-doc, no top-level
-  usings, no nested Transaction, ElementId.Value, ElementId-typed Scope Box), the
-  correct operation order, the box↔title coupling, chunking to dodge MCP timeouts, and
-  post-commit verification — so nobody re-derives them the hard way.
+  Align, standardize, or repair Revit plan viewports against a per-sector template
+  sheet via mcp-server-for-revit: box centers, grid bubbles, annotation crops, and
+  viewport titles ("AlignSectorViewports"-style batches) — even if the user doesn't
+  name this skill. For general sheet/view management NOT about matching a template
+  (creating sheets/views, scope boxes, print sets, renames), use
+  revit-sheet-view-manager instead.
 ---
 
 # Revit Viewport Standardization
