@@ -60,6 +60,23 @@ Top to bottom. Do NOT restrict to recently-modified files. Re-examine the full c
 
 ---
 
+## Anti-slop checklist (every run, both modes)
+
+Apply `/slop-audit`'s three checks to the in-scope files (full method + per-language
+patterns in `skills/slop-audit/SKILL.md`):
+
+1. **Silent-catch census** — every swallowed-failure site (empty `catch`, floating
+   promise, `.then` without rejection handling), classified justified-and-logged /
+   justified-but-silent / swallows-a-real-failure. Table appendix in the report.
+2. **Counter-integrity** — every "N succeeded/done" summary: trace that each skip,
+   early return, and caught exception reaches a counter in the final message.
+3. **Tested-but-dead** — new/changed tests must exercise shipped code paths; grep
+   tested exports for production callers.
+
+Findings go in the report like any other; label `HYPOTHESIS` until verified.
+
+---
+
 ## Run index (every run)
 
 Append one row to `F:\AI-Dev\BIMpossible_Workspace\02_Reference\_audit-runs.md` (create it with an `# Audit run index` heading + `| Date | Type | Files reviewed | Top finding | Report |` table header if it does not yet exist). Record the date, type (`incremental` or `full`), how many files were in scope, the single most serious finding (one line), and a relative link to this run's report. The index file itself stays at `02_Reference\_audit-runs.md` (it spans both legacy root reports and the new subfolder); reports now live in `Audit Reports\`, so the link is `Audit Reports/<file>.md` (URL-encode the space as `Audit%20Reports/`).
