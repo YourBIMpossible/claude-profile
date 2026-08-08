@@ -25,7 +25,7 @@ py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run claude-profile
 ```
 
 `run <name>` resolves `configs/<name>.toml` inside the ctxcheck repo
-(currently: `claude-profile`, `bimpossible`). Alternatives: `run <repo-dir>`
+(currently: `claude-profile`, `bimpossible`, `memory`). Alternatives: `run <repo-dir>`
 (uses `<repo>/.ctxcheck.toml`) or `--config <file> --repo <dir>`.
 
 ```bash
