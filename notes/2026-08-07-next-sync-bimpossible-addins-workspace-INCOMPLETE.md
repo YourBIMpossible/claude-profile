@@ -45,32 +45,39 @@ window. Fixes canonical identity: BIMpossible = future firm, BIMpossible Forma =
 BIMpossible Dev = APS admin only, Silverman & Light = legacy/do-not-promote. 13-step checklist,
 all unchecked. Explicit non-goals include "No Teams or Slack work" and "No named-pipe
 enablement." Phase 3 row and Phase 15 row both got a pointer/warning note to this gate (no status
-flips). **`BIMpossible_WAVE-STATUS.md` still ends at Wave 29** — no Wave 30 row exists in the
-file as read, despite commit `1d4e8b5`'s title claiming to add one.
+flips).
 
-## ⚠ UNRESOLVED CONTRADICTION — check this first on resume
+## ✅ Checkout contradiction — RESOLVED 2026-08-07 (same day)
 
-`git rev-parse HEAD origin/main` in `F:\AI-Dev\BIMpossible_Workspace` returned HEAD=`6002bbf`,
-origin/main=`ebfec37`, with `git log HEAD..origin/main` listing `ebfec37`, `f003341`, `1d4e8b5`
-(among others) as commits HEAD does **not** have — i.e., machine evidence says the local
-checkout is 17 commits behind and should be missing the tenancy-gate section and the Wave 30 row.
-But the PHASE-STATUS.md content just read from that same working tree **already contains** the
-full tenancy-gate section matching what `f003341`/`ebfec37` claim to add. That's internally
-inconsistent and was not resolved before this session closed. Do not trust either reading blind:
-re-run `git -C F:\AI-Dev\BIMpossible_Workspace fetch origin && git -C F:\AI-Dev\BIMpossible_Workspace log --oneline -5 HEAD origin/main`
-fresh and re-read the two ledger files after confirming which commit the working tree is
-actually at. (Working tree also has 2 untracked foreign files — not mine, do not touch:
-`00_Strategy/design-docs/2026-08-06__revitlink-pipe-transport-investigation.md`,
-`01_BuildLog/2026-08-07__hub-tenancy-VERIFIED-fail-closed.md`.)
+The `F:\AI-Dev\BIMpossible_Workspace` working tree is **not on main** — it's on session branch
+`docs/2026-08-06-session-paper-trail` at `6002bbf`, diverged 16 ahead / 17 behind origin/main.
+Its own commit `6002bbf` ("docs(tenancy): add BIMpossible hub cutover / tenancy test gate
+(PAUSED)") is why the PHASE-STATUS.md read contained the gate section despite HEAD lacking
+origin/main's `f003341`/`ebfec37` — the same content reached main separately via branch
+`docs/phase15c-tenancy-test-gate` → **PR #36 (MERGED)**. The branch's PR #19 is also MERGED.
+No mystery, just a stale-branch checkout.
 
-The Wave-30-missing-from-WAVE-STATUS.md observation may simply be explained by this same
-staleness question, or may be a real gap (PR merged, content never actually landed in that
-specific file) — undetermined either way.
+**Consequences for the resume:**
+- Read ledgers from `git show origin/main:00_Strategy/<file>` — NOT the working tree.
+- **Wave 30 row EXISTS on origin/main** (WAVE-STATUS.md line 66): "Phase 15e chat assistant
+  gateways — Slack + Microsoft Teams | BUILT (dark by design) | 2026-08-07 | Slack `dd89889`
+  (#262), Teams `879e857` (#276) ... flag-gated OFF, routers not mounted, migrations
+  `9329a1e7be85`+`a7c1e93f4b28` never applied to prod, no Azure Bot resource, #291 policy
+  decisions outstanding. **Not SHIPPED.**" The earlier "Wave 30 missing" observation was purely
+  the stale checkout.
+- PHASE-STATUS.md on origin/main differs from the branch copy by 71/72 lines — the tenancy-gate
+  content read this session is directionally right but re-read the origin/main version before
+  citing line numbers or exact wording.
+- Working tree also has 2 untracked foreign files — not mine, do not touch:
+  `00_Strategy/design-docs/2026-08-06__revitlink-pipe-transport-investigation.md`,
+  `01_BuildLog/2026-08-07__hub-tenancy-VERIFIED-fail-closed.md`.
+- Whether `docs/2026-08-06-session-paper-trail` is fully merged (squash) or carries unmerged
+  work is another session's question — do not switch branches or clean it.
 
 ## Not yet done (full remaining scope)
 
-1. Resolve the contradiction above.
-2. Read ledger content fresh if the working tree was confirmed stale.
+1. ~~Resolve the contradiction above.~~ Done — see resolved section.
+2. Re-read both ledgers from `git show origin/main:...` (working tree is a stale branch).
 3. Search `queue.yaml` (1641 lines) for existing items matching each workstream: Teams gateway/
    Wave 30/15e, tenancy gate (now PAUSED — likely needs a new or updated item, e.g.
    `OPS-TENANCY-*`), backup resilience arc, addins firm-literal ratchet, neutrality/remediation
@@ -84,8 +91,7 @@ specific file) — undetermined either way.
 6. Recompute ranks, report cycles/dangling `unblocks`.
 7. Write `queue.yaml`, regenerate `QUEUE.md`.
 8. Advance watermarks for bimpossible/addins/workspace **only** if their sources were fully and
-   correctly read (workspace watermark must not advance until the contradiction above is
-   resolved).
+   correctly read (workspace ledger reads must come from origin/main, per the resolved section).
 9. Report the diff — promoted/demoted/added/dropped/contradictions, and whether the #1 move
    changed.
 
