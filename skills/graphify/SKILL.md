@@ -600,6 +600,8 @@ graphify query "<question>"
 
 Answer using only what the graph output contains, and quote `source_location` when citing a specific fact. Before traversal, expand the question against the graph's own vocabulary so a wording mismatch does not collapse the answer to noise. For that vocab-expansion step, the `--dfs` / `--budget` modes, `save-result` feedback, and the `/graphify path` and `/graphify explain` flows, see `references/query.md`.
 
+Opt-in BM25 reranking of returned candidates is available behind the `GRAPHIFY_RERANK` env var — off by default, byte-identical to the call above when unset. See `references/query.md` Step 1 for the wrapper call, and `scripts/query_reranked.py` for how it works.
+
 ---
 
 ## For /graphify add and --watch
