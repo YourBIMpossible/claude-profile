@@ -9,3 +9,5 @@ hooks/last-run.log
 __pycache__/
 *.pyc
 .coverage
+hooks/*.log*
+hooks/*.error.log
