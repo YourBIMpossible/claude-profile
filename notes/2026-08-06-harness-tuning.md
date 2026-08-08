@@ -32,10 +32,11 @@ across the 25 biggest prior sessions.
 
 ## Queue — found, NOT handled (belongs to other lanes / the owner)
 
-- `hooks/context_budget.py` + `hooks/context_budget.error.log` are uncommitted WIP in this
-  shared tree. Another lane's; that lane should land them. Known gap while it sits: Agent
-  (subagent) results bypass the spill hook — mitigation is behavioral (subagents write
-  findings to a file, return ≤10 lines + path).
+- ~~`hooks/context_budget.py` + `hooks/context_budget.error.log` are uncommitted WIP in this
+  shared tree.~~ Resolved 2026-08-07, commit 0e119ec — see
+  `notes/2026-08-07-context-budget-hook-fix.md`. Known gap still open: Agent (subagent)
+  results bypass the spill hook — mitigation is behavioral (subagents write findings to a
+  file, return ≤10 lines + path).
 - `skills/context-budget/`, `skills/dashboard-update/`, `skills/revit-sheet-view-manager/`
   are untracked in this tree — same lane question, not this session's to commit.
 - Commit `1a32b36` is unpushed. Pushing leaves the machine = CONFIRM gate; owner's call.
