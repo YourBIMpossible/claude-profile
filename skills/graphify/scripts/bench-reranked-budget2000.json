@@ -1,0 +1,430 @@
+{
+  "measured_at": "2026-08-08T02:38:13Z",
+  "set_version": 1,
+  "budget": 2000,
+  "rerank": true,
+  "repo": "F:\\AI-Dev\\Add-Ins",
+  "graph_nodes": 6634,
+  "graph_built_at_commit": "5160510dfcd50f16570b62d63866efb59403fdb0",
+  "overall": {
+    "queries": 24,
+    "hit_rate": 0.542,
+    "file_recall": 0.517,
+    "mrr": 0.199,
+    "median_rank": 4,
+    "misses": [
+      "q02",
+      "q04",
+      "q07",
+      "q08",
+      "q12",
+      "q13",
+      "q15",
+      "q17",
+      "q19",
+      "q20",
+      "q24"
+    ]
+  },
+  "by_phrasing": {
+    "intent": {
+      "queries": 11,
+      "hit_rate": 0.455,
+      "file_recall": 0.417,
+      "mrr": 0.155,
+      "median_rank": 6,
+      "misses": [
+        "q02",
+        "q04",
+        "q13",
+        "q15",
+        "q20",
+        "q24"
+      ]
+    },
+    "lexical": {
+      "queries": 13,
+      "hit_rate": 0.615,
+      "file_recall": 0.588,
+      "mrr": 0.236,
+      "median_rank": 4,
+      "misses": [
+        "q07",
+        "q08",
+        "q12",
+        "q17",
+        "q19"
+      ]
+    }
+  },
+  "results": [
+    {
+      "id": "q01",
+      "phrasing": "lexical",
+      "question": "which command duplicates a collection of views",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/Tool2DuplicateCollectionCommand.cs"
+      ],
+      "returned": 9,
+      "hit": true,
+      "rank": 7,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q02",
+      "phrasing": "intent",
+      "question": "a user picks existing views and copies them into a new sector with a suffix",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/Tool2DuplicateCollectionCommand.cs"
+      ],
+      "returned": 14,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/Tool2DuplicateCollectionCommand.cs"
+      ]
+    },
+    {
+      "id": "q03",
+      "phrasing": "lexical",
+      "question": "where are viewports aligned on sheets",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/AlignViewportsCommand.cs"
+      ],
+      "returned": 16,
+      "hit": true,
+      "rank": 3,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q04",
+      "phrasing": "intent",
+      "question": "make the drawing sit in the same spot on every sheet",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/AlignViewportsCommand.cs"
+      ],
+      "returned": 20,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/AlignViewportsCommand.cs"
+      ]
+    },
+    {
+      "id": "q05",
+      "phrasing": "lexical",
+      "question": "how does the add-in sync with the central model",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/BIMpossibleSyncCommand.cs",
+        "BIMpossible.RevitLink/Commands/SyncWithCentralRibbonCommand.cs"
+      ],
+      "returned": 21,
+      "hit": true,
+      "rank": 2,
+      "found": 1,
+      "expected": 2,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/BIMpossibleSyncCommand.cs"
+      ]
+    },
+    {
+      "id": "q06",
+      "phrasing": "intent",
+      "question": "what runs when Revit starts up and builds the toolbar",
+      "expect": [
+        "BIMpossible.RevitLink/App.cs"
+      ],
+      "returned": 23,
+      "hit": true,
+      "rank": 17,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q07",
+      "phrasing": "lexical",
+      "question": "which code fixes family parameters",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/FamilyFixerCommand.cs"
+      ],
+      "returned": 4,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/FamilyFixerCommand.cs"
+      ]
+    },
+    {
+      "id": "q08",
+      "phrasing": "lexical",
+      "question": "how are worksets on linked models repaired",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/FixLinkWorksetsCommand.cs"
+      ],
+      "returned": 26,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/FixLinkWorksetsCommand.cs"
+      ]
+    },
+    {
+      "id": "q09",
+      "phrasing": "intent",
+      "question": "find elements that appear more than once in the model",
+      "expect": [
+        "BIMpossible.ModelQA.Core/Duplicates.cs"
+      ],
+      "returned": 32,
+      "hit": true,
+      "rank": 3,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q10",
+      "phrasing": "lexical",
+      "question": "which command renames elements in batch",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/BatchRenameCommand.cs"
+      ],
+      "returned": 5,
+      "hit": true,
+      "rank": 2,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q11",
+      "phrasing": "lexical",
+      "question": "how are scope boxes managed",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/ScopeBoxManagerCommand.cs"
+      ],
+      "returned": 26,
+      "hit": true,
+      "rank": 4,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q12",
+      "phrasing": "lexical",
+      "question": "where are print sets synchronized",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/SyncPrintSetsCommand.cs"
+      ],
+      "returned": 7,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/SyncPrintSetsCommand.cs"
+      ]
+    },
+    {
+      "id": "q13",
+      "phrasing": "intent",
+      "question": "check that every view is using the right template",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/ViewTemplateAuditCommand.cs"
+      ],
+      "returned": 7,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/ViewTemplateAuditCommand.cs"
+      ]
+    },
+    {
+      "id": "q14",
+      "phrasing": "lexical",
+      "question": "how are callout views created and placed on sheets",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/CreateCalloutViewsCommand.cs",
+        "BIMpossible.RevitLink/Commands/PlaceCalloutSheetsCommand.cs",
+        "BIMpossible.RevitLink/Commands/CalloutSheetPlacer.cs"
+      ],
+      "returned": 11,
+      "hit": true,
+      "rank": 5,
+      "found": 3,
+      "expected": 3,
+      "missed": []
+    },
+    {
+      "id": "q15",
+      "phrasing": "intent",
+      "question": "show or hide the chat side panel inside Revit",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/AssistantPaneToggleCommand.cs"
+      ],
+      "returned": 30,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/AssistantPaneToggleCommand.cs"
+      ]
+    },
+    {
+      "id": "q16",
+      "phrasing": "lexical",
+      "question": "how are rooms retagged",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/RetagAllRoomsCommand.cs"
+      ],
+      "returned": 30,
+      "hit": true,
+      "rank": 1,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q17",
+      "phrasing": "lexical",
+      "question": "where are electrical parameters synced to linked elements",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/ElectricalParamSyncCommand.cs",
+        "BIMpossible.RevitLink/Commands/ElectricalParamLinkCommand.cs"
+      ],
+      "returned": 5,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 2,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/ElectricalParamSyncCommand.cs",
+        "BIMpossible.RevitLink/Commands/ElectricalParamLinkCommand.cs"
+      ]
+    },
+    {
+      "id": "q18",
+      "phrasing": "intent",
+      "question": "write the schedule data out to a spreadsheet file",
+      "expect": [
+        "BIMpossible.Architectural/Commands/ArchScheduleExportCommand.cs",
+        "BIMpossible.Electrical/Commands/PanelScheduleExportCommand.cs"
+      ],
+      "returned": 23,
+      "hit": true,
+      "rank": 7,
+      "found": 1,
+      "expected": 2,
+      "missed": [
+        "BIMpossible.Electrical/Commands/PanelScheduleExportCommand.cs"
+      ]
+    },
+    {
+      "id": "q19",
+      "phrasing": "lexical",
+      "question": "how are sheets sorted",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/SortSheetsCommand.cs"
+      ],
+      "returned": 5,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/SortSheetsCommand.cs"
+      ]
+    },
+    {
+      "id": "q20",
+      "phrasing": "intent",
+      "question": "produce a summary of everything wrong with the model for the team",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/ModelHealthReportCommand.cs"
+      ],
+      "returned": 23,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/ModelHealthReportCommand.cs"
+      ]
+    },
+    {
+      "id": "q21",
+      "phrasing": "intent",
+      "question": "generate the plan views for a sector from a template set",
+      "expect": [
+        "BIMpossible.RevitLink/Scaffold/ViewScaffolder.cs"
+      ],
+      "returned": 8,
+      "hit": true,
+      "rank": 6,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q22",
+      "phrasing": "lexical",
+      "question": "where are visibility filters synced across views",
+      "expect": [
+        "BIMpossible.RevitLink/Visibility/VisibilityFilterSyncCommand.cs"
+      ],
+      "returned": 18,
+      "hit": true,
+      "rank": 7,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q23",
+      "phrasing": "intent",
+      "question": "apply the changes the web app sent back into the Revit model",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/ApplyBimpossibleChangesCommand.cs"
+      ],
+      "returned": 20,
+      "hit": true,
+      "rank": 1,
+      "found": 1,
+      "expected": 1,
+      "missed": []
+    },
+    {
+      "id": "q24",
+      "phrasing": "intent",
+      "question": "drop out the sheets that are not part of this package",
+      "expect": [
+        "BIMpossible.RevitLink/Commands/TrimOutOfScopeSheetsCommand.cs"
+      ],
+      "returned": 14,
+      "hit": false,
+      "rank": null,
+      "found": 0,
+      "expected": 1,
+      "missed": [
+        "BIMpossible.RevitLink/Commands/TrimOutOfScopeSheetsCommand.cs"
+      ]
+    }
+  ]
+}

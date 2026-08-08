@@ -56,6 +56,17 @@ graphify query "QUESTION"
 # or: graphify query "QUESTION" --dfs --budget 3000
 ```
 
+Opt-in BM25 reranking of the returned candidates (reorders/selects within what BFS already found — never invents nodes, and never applies to `--dfs`) is available behind the `GRAPHIFY_RERANK` env var. When it's set, route the same call through the wrapper instead — it forwards every flag unchanged and is a byte-identical passthrough to the plain `graphify query` call above when the var is unset:
+
+```bash
+if [ -n "$GRAPHIFY_RERANK" ]; then
+    python "F:/AI-Dev/claude-profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --rerank
+    # or: python "F:/AI-Dev/claude-profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --dfs --budget 3000 --rerank
+else
+    graphify query "QUESTION"
+fi
+```
+
 Answer using **only** what the graph output contains. Quote `source_location` when citing a specific fact. If the graph lacks enough information, say so - do not hallucinate edges.
 
 After writing the answer, save it back into the graph so it improves future queries. Include the expanded tokens inside the `--answer` text (e.g. `"Expanded from original query via vocab: [tokens]. Then traversed..."`) so the next `--update` extracts the expansion history as a graph node:

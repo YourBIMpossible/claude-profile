@@ -1,26 +1,32 @@
-# next
-- **next** (`~/.claude/skills/next/SKILL.md`) - "where is this at / what do I do now". Cross-repo portfolio board + ranked, evidence-verified production queue from the durable item store at `F:\AI-Dev\.tools\state`. Ranks by critical path (transitive `unblocks` cone). Modes: bare = board · `<target>` = drill · `<target> sync` = reconcile · `<target> init` = first derivation · `all deep` = re-derive from scratch. Trigger: `/next [target] [sync|init|deep]`
-When the user types `/next`, invoke the Skill tool with `skill: "next"` before doing anything else.
-Auto-trigger: also invoke it unprompted when the user asks where a project stands, what to work on next, what's blocking production, or what's left to finish — even if the skill isn't named. It is READ-ONLY on project repos: it never fixes, commits, pushes, hunts defects, or edits the owner-maintained PHASE-STATUS/WAVE-STATUS ledgers. Code-correctness questions route to `/audit` or `/revit-functionality-audit`; UX questions to `/revit-tool-review`.
+# How to work with me
 
-# graphify
-- **graphify** (`~/.claude/skills/graphify/SKILL.md`) - any input to knowledge graph. Trigger: `/graphify`
-When the user types `/graphify`, invoke the Skill tool with `skill: "graphify"` before doing anything else.
+Applies in every session, every repo, every folder — not just under F:\AI-Dev.
 
-# revit-viewport-standardization
-- **revit-viewport-standardization** (`~/.claude/skills/revit-viewport-standardization/SKILL.md`) - standardize Revit plan viewports to per-sector template views via the Revit MCP: box alignment, grid bubbles, annotation crop, titles (in that order). Trigger: `/revit-viewport-standardization`
-When the user types `/revit-viewport-standardization`, invoke the Skill tool with `skill: "revit-viewport-standardization"` before doing anything else.
-Auto-trigger: also invoke it unprompted whenever a task involves aligning, standardizing, or repairing Revit viewports, sector/sheet-set plan views, grid bubbles, annotation crops, or viewport titles through mcp-server-for-revit — even if the skill isn't named.
+- Cut every word that carries nothing: no filler, no pep talks, no recaps, no rationale unless asked. Stop just short of where I'd have to reread a line.
+- Default: act, then report. Carry the task end-to-end in one turn. No mid-task check-ins, no "should I…?", no approval requests for reversible steps that follow from the ask.
+- Report as **Done** (what changed, file links) / **Assumed** (say the word to flip) / **Left-Flags**. No length target — length follows content, never trimmed to hit a number.
+- Requested deliverables (analyses, reviews, plans, docs): write to a file, reply with the link + a ≤5-line TL;DR. Never paste a document into chat.
+- Mid-turn narration: one short line, only when direction changes.
+- Stop only for: irreversible/destructive actions, anything leaving this machine (publish, send, deploy, spend), guarded files, another session's live work, or work beyond the stated scope. Everything else — new dependencies, design calls inside the mandate — is pre-approved: make the call, name the runners-up in one line of the report, move on. One "proceed" covers the whole plan; never re-confirm mid-plan. "Looks good" is not a confirm.
+- That stop list is canonical and lives only here. A memory or a repo's own CLAUDE.md may ADD a gate for its project (never remove one); if either restates or narrows this list, this file wins and the copy is stale — fix the copy.
+- When I'm wrong or there's a risk I haven't considered, say so clearly and briefly.
+- Production-quality baseline: typed, error-handled, no unexplained TODOs, idiomatic for the language/ecosystem.
+- Default to the robust long-term solution; name the quick hack so I can consciously reject it.
+- When an approach starts failing (second unexpected error, assumption proven wrong), stop and re-plan instead of pushing harder — grinding on a dead approach burns more context than starting over.
+- In long tool-heavy tasks, protect the context window: delegate bulk exploration/search to subagents, read slices instead of whole files, keep command output small (big output → file → read the slice you need). Mid-task compaction loses detail; treat it as a failure to avoid.
+- Multi-phase or multi-hour job: read `F:\AI-Dev\claude-profile\LONG-TASK-HARNESS.md` first and run the job by it — phases, anchor doc, checkpoints, fresh session per phase.
+- Stay on the session's original mandate. Discoveries outside it get one line in the /next queue or anchor — never handled inline, including "quick" fixes.
 
-# revit-functionality-audit
-- **revit-functionality-audit** (`~/.claude/skills/revit-functionality-audit/SKILL.md`) - code-correctness audit for the Revit ADD-INS repo (F:\AI-Dev\Add-Ins) — the Add-Ins counterpart of /audit (which covers only the BIMpossible web repo). Incremental since the last report in audits/ by default; "complete" = full. Build both TFMs first; findings are hypotheses until verified; hunts "reports success, quietly did nothing". Trigger: `/revit-functionality-audit [complete]`
-When the user types `/revit-functionality-audit`, invoke the Skill tool with `skill: "revit-functionality-audit"` before doing anything else.
-Auto-trigger: also invoke it unprompted when the user asks to audit the Add-Ins code/behavior/correctness (not UX). UX/usability requests go to revit-tool-review instead; that skill routes its CODE findings here.
+# Skills
 
-# revit-tool-review
-- **revit-tool-review** (`~/.claude/skills/revit-tool-review/SKILL.md`) - ruthless usability review of ONE BIMpossible Revit tool at a time (the second audit track — user experience, not code correctness): 10-section checklist, live-walkthrough stall log, findings as Critical/Medium/Polish with behavior-level improvements only. Trigger: `/revit-tool-review <tool name>`
-When the user types `/revit-tool-review`, invoke the Skill tool with `skill: "revit-tool-review"` before doing anything else.
-Auto-trigger: also invoke it unprompted whenever the user asks to review, audit, dissect, or nitpick a BIMpossible tool's usability, UX, flow, labels, defaults, or messaging — even if the skill isn't named. Route code-correctness findings to the functionality-audit track instead of fixing them.
+Each skill's own description is already loaded — this section only says when to invoke one
+*without* being asked, and how the tracks route into each other.
+
+- **next** — asked where a project stands, what to work on next, what's blocking production, or what's left to finish. READ-ONLY on project repos: never fixes, commits, pushes, hunts defects, or edits the owner-maintained PHASE-STATUS/WAVE-STATUS ledgers. Code-correctness questions route to `/audit` or `/revit-functionality-audit`; UX questions to `/revit-tool-review`.
+- **revit-viewport-standardization** — aligning, standardizing, or repairing Revit viewports, sector/sheet-set plan views, grid bubbles, annotation crops, or viewport titles through mcp-server-for-revit.
+- **revit-functionality-audit** — auditing Add-Ins code/behavior/correctness (not UX).
+- **revit-tool-review** — reviewing, dissecting, or nitpicking a BIMpossible tool's usability, UX, flow, labels, defaults, or messaging. Route code-correctness findings to the functionality-audit track instead of fixing them.
+- **graphify** — explicit `/graphify` only, no auto-trigger.
 
 ## Parallel sessions / worktrees (house rule)
 Two Claude sessions must NEVER share one physical git checkout. Each concurrent session gets

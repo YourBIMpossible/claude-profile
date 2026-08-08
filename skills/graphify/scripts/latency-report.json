@@ -1,0 +1,177 @@
+{
+  "budget": 2000,
+  "queries": 24,
+  "passthrough": {
+    "label": "passthrough",
+    "n": 24,
+    "min": 0.677,
+    "median": 0.704,
+    "p90": 0.744,
+    "max": 0.761,
+    "mean": 0.709
+  },
+  "rerank": {
+    "label": "rerank",
+    "n": 24,
+    "min": 1.278,
+    "median": 1.36,
+    "p90": 2.036,
+    "max": 2.099,
+    "mean": 1.568
+  },
+  "overhead": {
+    "label": "overhead",
+    "n": 24,
+    "min": 0.589,
+    "median": 0.657,
+    "p90": 1.319,
+    "max": 1.372,
+    "mean": 0.86
+  },
+  "per_query": [
+    {
+      "id": "q01",
+      "passthrough_s": 0.72,
+      "rerank_s": 2.034,
+      "overhead_s": 1.314
+    },
+    {
+      "id": "q02",
+      "passthrough_s": 0.689,
+      "rerank_s": 1.939,
+      "overhead_s": 1.251
+    },
+    {
+      "id": "q03",
+      "passthrough_s": 0.694,
+      "rerank_s": 1.349,
+      "overhead_s": 0.655
+    },
+    {
+      "id": "q04",
+      "passthrough_s": 0.682,
+      "rerank_s": 1.327,
+      "overhead_s": 0.645
+    },
+    {
+      "id": "q05",
+      "passthrough_s": 0.729,
+      "rerank_s": 2.036,
+      "overhead_s": 1.307
+    },
+    {
+      "id": "q06",
+      "passthrough_s": 0.709,
+      "rerank_s": 1.372,
+      "overhead_s": 0.662
+    },
+    {
+      "id": "q07",
+      "passthrough_s": 0.711,
+      "rerank_s": 1.316,
+      "overhead_s": 0.604
+    },
+    {
+      "id": "q08",
+      "passthrough_s": 0.69,
+      "rerank_s": 1.316,
+      "overhead_s": 0.626
+    },
+    {
+      "id": "q09",
+      "passthrough_s": 0.744,
+      "rerank_s": 1.997,
+      "overhead_s": 1.254
+    },
+    {
+      "id": "q10",
+      "passthrough_s": 0.705,
+      "rerank_s": 1.992,
+      "overhead_s": 1.287
+    },
+    {
+      "id": "q11",
+      "passthrough_s": 0.683,
+      "rerank_s": 1.317,
+      "overhead_s": 0.634
+    },
+    {
+      "id": "q12",
+      "passthrough_s": 0.707,
+      "rerank_s": 1.341,
+      "overhead_s": 0.634
+    },
+    {
+      "id": "q13",
+      "passthrough_s": 0.734,
+      "rerank_s": 1.406,
+      "overhead_s": 0.671
+    },
+    {
+      "id": "q14",
+      "passthrough_s": 0.698,
+      "rerank_s": 1.352,
+      "overhead_s": 0.653
+    },
+    {
+      "id": "q15",
+      "passthrough_s": 0.727,
+      "rerank_s": 2.099,
+      "overhead_s": 1.372
+    },
+    {
+      "id": "q16",
+      "passthrough_s": 0.757,
+      "rerank_s": 1.362,
+      "overhead_s": 0.604
+    },
+    {
+      "id": "q17",
+      "passthrough_s": 0.684,
+      "rerank_s": 1.356,
+      "overhead_s": 0.672
+    },
+    {
+      "id": "q18",
+      "passthrough_s": 0.677,
+      "rerank_s": 1.316,
+      "overhead_s": 0.639
+    },
+    {
+      "id": "q19",
+      "passthrough_s": 0.722,
+      "rerank_s": 1.359,
+      "overhead_s": 0.638
+    },
+    {
+      "id": "q20",
+      "passthrough_s": 0.696,
+      "rerank_s": 2.014,
+      "overhead_s": 1.319
+    },
+    {
+      "id": "q21",
+      "passthrough_s": 0.702,
+      "rerank_s": 1.362,
+      "overhead_s": 0.66
+    },
+    {
+      "id": "q22",
+      "passthrough_s": 0.703,
+      "rerank_s": 1.312,
+      "overhead_s": 0.608
+    },
+    {
+      "id": "q23",
+      "passthrough_s": 0.761,
+      "rerank_s": 2.091,
+      "overhead_s": 1.33
+    },
+    {
+      "id": "q24",
+      "passthrough_s": 0.689,
+      "rerank_s": 1.278,
+      "overhead_s": 0.589
+    }
+  ]
+}

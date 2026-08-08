@@ -2,6 +2,8 @@
 
 Load this only when the user passed `--update` or `--cluster-only`. A first-time full build never reads this file.
 
+**CWD rule:** every block below uses paths relative to `graphify-out/`. Run them from the directory that *contains* `graphify-out/` (where the graph was originally built — `graphify-out/.graphify_root` records the scan root). Running from anywhere else silently reads/writes the wrong graph or creates a stray `graphify-out/`.
+
 ## For --update (incremental re-extraction)
 
 Use when you've added or modified files since the last run. Only re-extracts changed files - saves tokens and time.
@@ -12,7 +14,11 @@ import sys, json
 from graphify.detect import detect_incremental, save_manifest
 from pathlib import Path
 
-result = detect_incremental(Path('INPUT_PATH'))
+# kind must match how the manifest was written. For AST/code-only graphs
+# (every node has _origin: 'ast') pass kind='ast' — the default 'semantic'
+# compares semantic-pass hashes and reports EVERY file as changed (#2033),
+# turning a 12-file delta into a full re-extraction.
+result = detect_incremental(Path('INPUT_PATH'), kind='ast')
 new_total = result.get('new_total', 0)
 print(json.dumps(result, indent=2, ensure_ascii=False))
 Path('graphify-out/.graphify_incremental.json').write_text(json.dumps(result, ensure_ascii=False), encoding=\"utf-8\")
