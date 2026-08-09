@@ -24,13 +24,26 @@ SCOPE HONESTY (the C3 lesson)
   fail-open control. Never overclaim what this hook does.
 
   Never fails a prompt: any read/parse problem exits 0 (inject nothing).
-  ASCII-only output (no em-dashes) to avoid the console encoding trap.
+  Output is written as raw UTF-8 bytes (see emit()), so a mission file may
+  contain arrows/emoji/smart-quotes without tripping the cp1252 console trap.
 """
 import os
 import sys
 from pathlib import Path
 
 MAX_WALK_UP = 6  # cwd + up to 6 parents; closest NORTHSTAR wins
+
+
+def emit(text: str) -> None:
+    """Write UTF-8 bytes directly. The console may be cp1252; a mission file can
+    hold arrows/emoji/smart-quotes outside it, and a plain stdout.write would
+    raise UnicodeEncodeError (then get swallowed by the fail-open backstop, so
+    the mission would silently never inject). Bypass the text layer entirely."""
+    try:
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.buffer.flush()
+    except Exception:
+        pass
 
 
 def find_northstar() -> "Path | None":
@@ -65,7 +78,7 @@ def main() -> None:
         # No mission locked yet. Nudge ONCE at session start (never per-turn nag)
         # so Claude offers to draft one from the user's first real instruction.
         if event == "SessionStart":
-            sys.stdout.write(
+            emit(
                 "<northstar-setup>\n"
                 "No NORTHSTAR.md in this project yet. If this session is real work,\n"
                 "ask the user what we are building and DRAFT a NORTHSTAR.md for them\n"
@@ -95,7 +108,7 @@ def main() -> None:
         + mission + "\n"
         "</northstar>"
     )
-    sys.stdout.write(out)
+    emit(out)
     sys.exit(0)
 
 
