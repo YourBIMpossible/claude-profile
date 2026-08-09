@@ -32,24 +32,27 @@ are exempt: they live entirely inside settings.json.
 | `session-start-pull.ps1` | SessionStart | convenience | `~/.claude/hooks/` (pinned; `$repoRoot` hardcoded) |
 | `ctxdex_autoindex.py` | PostToolUse Bash | convenience | `~/.claude/hooks/` |
 | `decay_reminder.py` | UserPromptSubmit | **advisory** reminder (C2) | `~/.claude/hooks/` |
-| `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3) | `~/.claude/hooks/` |
-| `loop_grant_gate.py` | PreToolUse ScheduleWakeup | **control** — fail-closed (G6) | `~/.claude/hooks/` |
-| `reground_reminder.py` | SessionStart | **advisory** reminder (G7) | `~/.claude/hooks/` |
+| `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; also locks `NORTHSTAR.md`) | `~/.claude/hooks/` |
+| `northstar_inject.py` | UserPromptSubmit | **advisory** — re-injects the locked mission each turn (scope-governor v2) | `~/.claude/hooks/` |
 | `skill-detection-hook.json` | PostToolUse (Revit MCP) | prompt-type, enabled 2026-08-08 | n/a (JSON in settings.json) |
 
 ## Control vs advisory (from the fail-open lesson)
 
-Two **controls**, both fail-closed (block on their own failure — malformed payload,
-missing field, any exception → exit 2): `protect_paths_gate.py` (protected paths on
-Write/Edit) and `loop_grant_gate.py` (autonomous-loop arms without a live grant).
-Everything else is advisory or convenience — a failure there changes nothing about
-safety.
+One **control**, fail-closed (block on its own failure — malformed payload, missing
+field, any exception → exit 2): `protect_paths_gate.py` (protected paths on Write/Edit,
+including the locked `NORTHSTAR.md` mission file). Everything else is advisory or
+convenience — a failure there changes nothing about safety.
 
-Scope honesty for both controls:
+Scope honesty:
 - **protect_paths_gate**: covers only Write/Edit. **The Bash channel (`sed -i`,
   redirection, `tee`, `Set-Content`, `python -c`) is NOT covered and is advisory-only** —
   never describe Bash-side protection as a control.
-- **loop_grant_gate**: covers only the `ScheduleWakeup` tool. It cannot stop a human
-  manually re-issuing a `/loop`, nor autonomy that never routes through ScheduleWakeup.
-  That residual is advisory. The grant store is `F:\AI-Dev\.tools\state\grants\`; grants
-  are created only by `/authorize-lane` from a genuine human turn.
+- **northstar_inject** (scope-governor v2): ADVISORY. It re-reads `NORTHSTAR.md` from
+  disk each turn and injects the mission + the three-doors routing rule, so the plan
+  cannot drift through a rolling context summary. It does not enforce — the matching
+  enforcement is protect_paths_gate blocking edits to `NORTHSTAR.md` (only the human
+  moves the mission). Whether an extra is a tag-along / roadmap item / mission-change is
+  the model's judgment; a hook cannot classify scope, so this is not dressed up as a
+  control. Superseded the G6 loop-grant gate + G7 reground reminder (removed 2026-08-08:
+  they capped overnight autonomy the user wants, and solved duration-runaway rather than
+  scope-drift).
