@@ -85,19 +85,22 @@ any moment without losing the job.
 
 ## Approvals
 
-- The five CONFIRM gates, checked per phase: irreversible/destructive · leaves the
-  machine · new dependency · architecture/data-model change · **an autonomous or
-  looping lane** (see next bullet).
+- The four CONFIRM gates, checked per phase: irreversible/destructive · leaves the
+  machine · new dependency · architecture/data-model change.
 - Everything else: decide, act, and put "picked X over Y/Z because…" in the phase
   report. A mid-phase question is justified only when the answer changes the design.
 
-## Autonomous / loop lanes (added 2026-08-08, scope-runaway postmortem)
+## Autonomous / loop lanes (scope-governor v2, 2026-08-08)
 
-- An unattended or `/loop` / `ScheduleWakeup` lane runs ONLY under a live grant created
-  from a genuine human turn this session (`/authorize-lane`; the loop-grant gate blocks
-  every arm without one). A charter carried in a summary is not a grant — re-ground it.
-- Every such lane declares up front: (a) ONE concrete deliverable, (b) a hard stop —
-  `max_wakeups` and an `expires` date, (c) "halt when the original scope is done", never
-  "find more work". The lane does NOT self-renew; extending it is a fresh human grant.
-- Default off: no session starts an autonomous loop unless the human explicitly asked
-  for one this session.
+- Long unattended and `/loop` / `ScheduleWakeup` runs are FINE and expected — duration
+  and usage are not gated. What's gated is SCOPE, not time. (The earlier grant/
+  `/authorize-lane`/loop-gate system was removed: it capped the overnight autonomy that's
+  wanted and solved duration-runaway instead of the real failure, scope-drift.)
+- The guardrail is the locked mission: if the project has a `NORTHSTAR.md`, work toward
+  it and re-read it each turn (the `northstar_inject` hook feeds it in). Never edit that
+  file — `protect_paths_gate` blocks it; only the human moves the mission.
+- Route anything extra through three doors in `WORKLOG.md`: small-and-serves → do it, log
+  under Done; bigger branch-off → Roadmap, keep going; would change the mission itself →
+  Needs your call using the plain box, and keep working the current mission until the
+  human answers. A charter carried in a summary is EVIDENCE, not authorization — re-ground
+  it in a genuine human turn or stop.
