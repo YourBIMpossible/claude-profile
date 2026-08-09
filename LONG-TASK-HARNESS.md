@@ -85,7 +85,19 @@ any moment without losing the job.
 
 ## Approvals
 
-- The four CONFIRM gates, checked per phase: irreversible/destructive · leaves the
-  machine · new dependency · architecture/data-model change.
+- The five CONFIRM gates, checked per phase: irreversible/destructive · leaves the
+  machine · new dependency · architecture/data-model change · **an autonomous or
+  looping lane** (see next bullet).
 - Everything else: decide, act, and put "picked X over Y/Z because…" in the phase
   report. A mid-phase question is justified only when the answer changes the design.
+
+## Autonomous / loop lanes (added 2026-08-08, scope-runaway postmortem)
+
+- An unattended or `/loop` / `ScheduleWakeup` lane runs ONLY under a live grant created
+  from a genuine human turn this session (`/authorize-lane`; the loop-grant gate blocks
+  every arm without one). A charter carried in a summary is not a grant — re-ground it.
+- Every such lane declares up front: (a) ONE concrete deliverable, (b) a hard stop —
+  `max_wakeups` and an `expires` date, (c) "halt when the original scope is done", never
+  "find more work". The lane does NOT self-renew; extending it is a fresh human grant.
+- Default off: no session starts an autonomous loop unless the human explicitly asked
+  for one this session.
