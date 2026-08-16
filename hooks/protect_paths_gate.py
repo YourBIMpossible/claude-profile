@@ -17,8 +17,13 @@ that.
 Protected classes (mirrors the standing rules in CLAUDE.md / memory):
   - .env and every .env.* variant EXCEPT .env.example / .env.template /
     .env.sample (documented placeholders, routinely edited)
-  - NORTHSTAR.md - the locked mission file (human-only; the scope-governor
-    depends on the model being unable to rewrite its own orders)
+  - north-star mission files: NORTHSTAR.md and NORTHSTAR.<slug>.md (human-only;
+    the scope-governor depends on the model being unable to rewrite its own
+    orders - that now includes pausing/closing a mission via its status line).
+    EXCEPT *.draft.md (NORTHSTAR.draft.md / NORTHSTAR.<slug>.draft.md): drafts
+    are the one northstar-named thing Claude writes; the human renames a draft
+    to drop ".draft", which locks and activates it. Also EXCEPT *.template.md
+    (documentation scaffolding, same reasoning as .env.template).
   - any path ending backend/guard.py (BIMpossible human-only file)
   - key material: *.pem, *.key, *.pfx, *.p12, id_rsa*, id_ed25519*, id_ecdsa*
   - credential stores: credentials.json, .netrc, _netrc, .pgpass, .npmrc,
@@ -48,8 +53,9 @@ def is_protected(raw_path: str) -> "str | None":
     if name == ".env" or name.startswith(".env."):
         if not name.endswith(ALLOWED_ENV_SUFFIXES):
             return f"{name} is a protected env file (human-only)"
-    if name == "northstar.md":
-        return "NORTHSTAR.md is the locked mission file (human-only)"
+    if name == "northstar.md" or (name.startswith("northstar.") and name.endswith(".md")):
+        if not name.endswith((".draft.md", ".template.md")):
+            return f"{name} is a locked north-star mission file (human-only; drafts go to *.draft.md)"
     if norm.lower().endswith("backend/guard.py"):
         return "backend/guard.py is human-only"
     if name.endswith(KEY_SUFFIXES):

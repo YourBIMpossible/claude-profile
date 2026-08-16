@@ -1,37 +1,62 @@
-"""UserPromptSubmit hook: re-inject the locked NORTHSTAR mission every turn.
+"""UserPromptSubmit hook: re-inject the locked NORTHSTAR mission(s) every turn.
 
-Autonomous-scope-governor v2 (2026-08-08). Replaces reground_reminder.py.
+Autonomous-scope-governor v3 (2026-08-15). v2 assumed exactly ONE mission per
+project (a single hard-coded NORTHSTAR.md, closest-wins). v3 supports a SET of
+concurrent north stars so parallel/sequential workflows each carry their own
+locked mission without renaming files or fighting over one canonical path.
 
-WHY THIS EXISTS
+WHY THIS EXISTS (unchanged from v2)
   The scope-runaway failure happened because the "plan" lived inside rolling
   context summaries. Over many autonomous cycles the summary got reworded until
   the reworded plan WAS the new (wrong) plan - the model edited its own orders
   and then followed them faithfully. The fix: keep the mission on DISK in
-  NORTHSTAR.md, human-owned, and re-read it from disk on every prompt. A summary
-  can no longer be the source of truth for what we are building.
+  human-owned files and re-read them from disk on every prompt. A summary can
+  never be the source of truth for what we are building.
 
-WHAT IT DOES
-  - Looks for NORTHSTAR.md in the current directory, then walks up to find one.
-  - If found, injects its text plus the standing three-doors routing rule.
-  - If none is found, injects nothing (opt-in per project).
+THE v3 MODEL
+  - A north star is any file named NORTHSTAR.md or NORTHSTAR.<slug>.md sitting
+    at a project level (same walk-up as before, closest level wins).
+  - Lifecycle lives INSIDE the file as a human-edited line near the top:
+        status: active | paused | closed
+    No status line means ACTIVE (so every legacy NORTHSTAR.md keeps working).
+    Activation/pause/close/switch = the human edits one line. No renames, no
+    moves, no magic directory.
+  - Drafts (NORTHSTAR.<slug>.draft.md / NORTHSTAR.draft.md) are the ONLY
+    northstar-named files Claude may write; the human renames a draft to drop
+    ".draft" and that act locks + activates it.
+  - Injection: the closest walk-up directory holding at least one ACTIVE star
+    wins, and ALL of its active stars inject. (A worktree lane's own star still
+    shadows the portfolio star, exactly like v2's closest-wins.)
 
 SCOPE HONESTY (the C3 lesson)
   This is ADVISORY, not a control. It reminds; it does not enforce. The matching
-  ENFORCEMENT is protect_paths_gate.py blocking Write/Edit on NORTHSTAR.md, so
-  the model cannot rewrite the mission even if it ignores this reminder. The
-  three-doors ROUTING (tag-along vs roadmap vs mission-change) is the model's
-  judgment - a hook cannot classify scope, and pretending it can would be a
-  fail-open control. Never overclaim what this hook does.
+  ENFORCEMENT is protect_paths_gate.py blocking Write/Edit on every
+  NORTHSTAR*.md except *.draft.md, so the model cannot rewrite, pause, or close
+  a mission even if it ignores this reminder. The three-doors ROUTING is the
+  model's judgment - a hook cannot classify scope, and pretending it can would
+  be a fail-open control. Never overclaim what this hook does.
 
   Never fails a prompt: any read/parse problem exits 0 (inject nothing).
   Output is written as raw UTF-8 bytes (see emit()), so a mission file may
   contain arrows/emoji/smart-quotes without tripping the cp1252 console trap.
 """
 import os
+import re
 import sys
 from pathlib import Path
 
-MAX_WALK_UP = 6  # cwd + up to 6 parents; closest NORTHSTAR wins
+MAX_WALK_UP = 6  # cwd + up to 6 parents; closest level with an active star wins
+
+# NORTHSTAR.md or NORTHSTAR.<slug>.md (slug = anything); drafts and templates
+# are not missions (both are also the gate's writable exemptions)
+STAR_NAME_RE = re.compile(r"^northstar(\..+)?\.md$", re.IGNORECASE)
+NON_STAR_SUFFIXES = (".draft.md", ".template.md")
+
+# status line: near the top of the file, e.g. "status: paused" (optionally
+# bolded or inside --- frontmatter); absence of the line means active
+STATUS_RE = re.compile(r"^\s*\**status\**\s*[:=]\s*([A-Za-z-]+)", re.IGNORECASE)
+INACTIVE_WORDS = {"paused", "closed", "done", "archived", "inactive"}
+STATUS_SCAN_LINES = 20
 
 
 def emit(text: str) -> None:
@@ -46,17 +71,59 @@ def emit(text: str) -> None:
         pass
 
 
-def find_northstar() -> "Path | None":
+def star_status(f: Path) -> str:
+    """Return 'active' or the inactive word from the file's status line.
+    Unreadable or unparseable -> 'active' (over-injecting a mission is safer
+    than silently dropping one)."""
+    try:
+        with f.open("r", encoding="utf-8-sig", errors="replace") as fh:
+            for _ in range(STATUS_SCAN_LINES):
+                line = fh.readline()
+                if not line:
+                    break
+                m = STATUS_RE.match(line)
+                if m:
+                    word = m.group(1).lower()
+                    return word if word in INACTIVE_WORDS else "active"
+    except Exception:
+        pass
+    return "active"
+
+
+def stars_in(d: Path) -> "list[Path]":
+    """All non-draft north-star files directly in d, sorted by name."""
+    out = []
+    try:
+        for p in d.iterdir():
+            name = p.name.lower()
+            if not STAR_NAME_RE.match(name) or name.endswith(NON_STAR_SUFFIXES):
+                continue
+            if p.is_file():
+                out.append(p)
+    except OSError:
+        pass
+    return sorted(out, key=lambda p: p.name.lower())
+
+
+def find_stars() -> "tuple[list[Path], list[tuple[Path, str]]]":
+    """Walk up from cwd. Return (active, inactive):
+    - active: all active stars in the CLOSEST directory that has at least one
+      (empty if no directory has an active star).
+    - inactive: (path, status) for every paused/closed star seen during the
+      walk, up to and including the winning directory."""
     here = Path(os.getcwd())
-    candidates = [here, *list(here.parents)[:MAX_WALK_UP]]
-    for d in candidates:
-        f = d / "NORTHSTAR.md"
-        try:
-            if f.is_file():
-                return f
-        except OSError:
-            continue
-    return None
+    inactive: "list[tuple[Path, str]]" = []
+    for d in [here, *list(here.parents)[:MAX_WALK_UP]]:
+        active_here = []
+        for f in stars_in(d):
+            st = star_status(f)
+            if st == "active":
+                active_here.append(f)
+            else:
+                inactive.append((f, st))
+        if active_here:
+            return active_here, inactive
+    return [], inactive
 
 
 def read_event() -> str:
@@ -73,45 +140,80 @@ def read_event() -> str:
 
 def main() -> None:
     event = read_event()
-    f = find_northstar()
-    if f is None:
-        # No mission locked yet. Nudge ONCE at session start (never per-turn nag)
-        # so Claude offers to draft one from the user's first real instruction.
+    active, inactive = find_stars()
+
+    if not active:
+        # No live mission. Nudge ONCE at session start (never per-turn nag).
         if event == "SessionStart":
-            emit(
-                "<northstar-setup>\n"
-                "No NORTHSTAR.md in this project yet. If this session is real work,\n"
-                "ask the user what we are building and DRAFT a NORTHSTAR.md for them\n"
-                "(write it as NORTHSTAR.draft.md - you cannot save the real file; the\n"
-                "human renames it to NORTHSTAR.md to lock it in). Keep the draft to a\n"
-                "few plain sentences: mission, what done looks like, what is off-limits.\n"
-                "</northstar-setup>"
-            )
+            if inactive:
+                names = ", ".join(f"{p.name} ({st})" for p, st in inactive)
+                emit(
+                    "<northstar-status>\n"
+                    "No ACTIVE north star, but inactive ones exist: " + names + "\n"
+                    "If this session resumes one of those workflows, ask the user;\n"
+                    "resuming = the HUMAN edits that file's 'status:' line back to\n"
+                    "active (you cannot - a gate blocks NORTHSTAR*.md). For new work,\n"
+                    "draft NORTHSTAR.<slug>.draft.md and the human renames it to\n"
+                    "NORTHSTAR.<slug>.md to lock it in.\n"
+                    "</northstar-status>"
+                )
+            else:
+                emit(
+                    "<northstar-setup>\n"
+                    "No north star in this project yet. If this session is real work,\n"
+                    "ask the user what we are building and DRAFT a mission for them as\n"
+                    "NORTHSTAR.<slug>.draft.md (or NORTHSTAR.draft.md for a single-\n"
+                    "mission project) - you cannot save the real file; the human\n"
+                    "renames it to drop '.draft', which locks AND activates it. Keep\n"
+                    "the draft to a few plain sentences: mission, what done looks\n"
+                    "like, what is off-limits.\n"
+                    "</northstar-setup>"
+                )
         sys.exit(0)
-    try:
-        mission = f.read_text(encoding="utf-8-sig").strip()
-    except Exception:
-        sys.exit(0)  # advisory: never block a prompt on a read error
-    if not mission:
+
+    blocks = []
+    for f in active:
+        try:
+            text = f.read_text(encoding="utf-8-sig").strip()
+        except Exception:
+            continue  # advisory: skip an unreadable star, keep the rest
+        if text:
+            blocks.append((f, text))
+    if not blocks:
         sys.exit(0)
+
+    paused_note = ""
+    local_inactive = [(p, st) for p, st in inactive if p.parent == blocks[0][0].parent]
+    if local_inactive:
+        paused_note = (
+            "Inactive here (NOT injected, do not work toward them): "
+            + ", ".join(f"{p.name} ({st})" for p, st in local_inactive) + "\n"
+        )
+
+    plural = "s" if len(blocks) > 1 else ""
     out = (
         "<northstar>\n"
-        "LOCKED MISSION for this project, re-read from " + str(f) + " every turn.\n"
-        "You cannot edit this file (a gate blocks it). Work toward this mission.\n"
+        f"LOCKED MISSION{plural.upper() or ''} - {len(blocks)} active north star file{plural}, "
+        "re-read from disk every turn.\n"
+        "You cannot edit these files (a gate blocks Write/Edit on NORTHSTAR*.md;\n"
+        "only *.draft.md is writable). Work toward the active mission(s) below.\n"
         "Route anything extra through three doors and record it in WORKLOG.md:\n"
-        "  1) small AND serves the mission -> do it, log under Done.\n"
+        "  1) small AND serves an active mission -> do it, log under Done.\n"
         "  2) bigger, worth doing, but a branch-off -> log under Roadmap, keep going.\n"
-        "  3) would change the mission itself -> log under Needs your call using the\n"
-        "     plain box; keep working the current mission until the human answers.\n"
-        "Never edit NORTHSTAR.md yourself. Never abandon the mission on your own.\n"
-        "If the user asks you to CREATE or REPLACE the mission here, STOP: a\n"
-        "mission already exists (below). Do not silently make a competing one.\n"
-        "Say so, then offer two paths: (a) REPLACE it - you write a new draft, the\n"
-        "user renames it over this file; or (b) NEW LANE - put the new direction in\n"
-        "its own folder/worktree with its own NORTHSTAR so both run side by side.\n"
-        "----- mission text -----\n"
-        + mission + "\n"
-        "</northstar>"
+        "  3) would change a mission itself -> log under Needs your call using the\n"
+        "     plain box; keep working the current mission(s) until the human answers.\n"
+        "Never edit a north-star file yourself. Never abandon, merge, pause, or\n"
+        "close a mission on your own - pausing/closing/switching is the human\n"
+        "editing that file's 'status:' line.\n"
+        "A NEW direction that deserves its own mission is not a conflict anymore:\n"
+        "draft NORTHSTAR.<slug>.draft.md beside these and the human renames it to\n"
+        "activate. To REPLACE an existing mission, draft the replacement the same\n"
+        "way and the human does the swap. Never treat a draft as active.\n"
+        + paused_note
+        + "".join(
+            f"----- {f.name} (active) -----\n{text}\n" for f, text in blocks
+        )
+        + "</northstar>"
     )
     emit(out)
     sys.exit(0)

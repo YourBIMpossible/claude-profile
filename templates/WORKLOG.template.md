@@ -15,7 +15,7 @@
 
 ## Needs your call — proposed changes to the mission
 <!--
-  Each item uses the plain box from NORTHSTAR.md. Nothing here is acted on until
+  Each item uses the plain box from the north-star template. Nothing here is acted on until
   you say "yes, change it". Claude keeps working the current mission meanwhile.
 -->
 -

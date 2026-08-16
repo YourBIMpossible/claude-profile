@@ -96,9 +96,12 @@ any moment without losing the job.
   and usage are not gated. What's gated is SCOPE, not time. (The earlier grant/
   `/authorize-lane`/loop-gate system was removed: it capped the overnight autonomy that's
   wanted and solved duration-runaway instead of the real failure, scope-drift.)
-- The guardrail is the locked mission: if the project has a `NORTHSTAR.md`, work toward
-  it and re-read it each turn (the `northstar_inject` hook feeds it in). Never edit that
-  file — `protect_paths_gate` blocks it; only the human moves the mission.
+- The guardrail is the locked mission set: if the project has north-star files
+  (`NORTHSTAR.md` or `NORTHSTAR.<slug>.md` — one per workflow, many may be active at
+  once), work toward the ACTIVE ones and re-read them each turn (the `northstar_inject`
+  hook feeds them in; a file's human-edited `status:` line decides active/paused/closed).
+  Never edit those files — `protect_paths_gate` blocks all `NORTHSTAR*.md` except
+  `*.draft.md`; only the human moves, pauses, or activates a mission.
 - Route anything extra through three doors in `WORKLOG.md`: small-and-serves → do it, log
   under Done; bigger branch-off → Roadmap, keep going; would change the mission itself →
   Needs your call using the plain box, and keep working the current mission until the

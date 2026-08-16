@@ -4,9 +4,19 @@
   THIS FILE IS YOURS. Claude is blocked from editing it (a hook enforces that).
   Only you change it. Claude re-reads it every turn and works toward it.
   Keep it SHORT — a few plain sentences. If it grows into a document, it has
-  failed its job. Drop a copy of this file, named exactly NORTHSTAR.md, at the
-  root of any project you want kept on-mission.
+  failed its job. Drop a copy at the root of any project you want kept
+  on-mission, named NORTHSTAR.md — or NORTHSTAR.<slug>.md to run several
+  missions side by side (one per workflow; all active ones inject together).
+
+  Lifecycle is the "status:" line below — you edit it, Claude can't:
+    (no status line) or status: active  -> live, injected every turn
+    status: paused                      -> kept on disk, not injected
+    status: closed                      -> finished, kept as history
+  Claude proposes new or replacement missions only as NORTHSTAR.<slug>.draft.md;
+  renaming a draft to drop ".draft" is YOUR act that locks and activates it.
 -->
+
+status: active
 
 ## The mission (one or two plain sentences)
 > Example: Fix the broken share link so a shared model opens again.
