@@ -54,6 +54,19 @@ For every existing item in scope, decide exactly one:
 Then scan for **new** items in the delta: merged PRs with no matching item, new flags that default
 off, new gates in ledger rows, audit findings that block production, un-run verification steps.
 
+**"No matching item" means no match in EITHER tier.** Before creating an item for a discovered PR
+or commit, probe the combined index:
+
+```bash
+python F:/AI-Dev/.tools/state/queue_store.py --known-pr <repo>#<N>     # exit 0 = known, 2 = unknown
+python F:/AI-Dev/.tools/state/queue_store.py --known-commit <sha>
+```
+
+A PR represented only in `queue-archive.yaml` is **known** — never re-create it as a new active
+item. If new evidence genuinely reopens archived work, create a NEW active item with a new id and
+`follow_up_of: <archived-id>`; ordinary reconciliation never edits, promotes, or deletes archive
+records. Confirm/Promote/Demote/Drop decisions apply to ACTIVE items only.
+
 Every new item needs `unblocks` populated. An item with no `unblocks` can never rank #1, so leaving
 it empty silently buries the work — if nothing downstream depends on it, say so explicitly by
 setting `unblocks: []` and `risk` appropriately, rather than leaving it unconsidered.
@@ -78,7 +91,11 @@ condition the per-project ledgers lose.
 ## Finishing
 
 1. Recompute ranks (`reference/item-model.md`). Report any cycles or dangling `unblocks` ids.
-2. Write `queue.yaml` in the live store (`F:\AI-Dev\.tools\state`).
+2. Write `queue.yaml` in the live store (`F:\AI-Dev\.tools\state`), then validate both tiers:
+   `python F:/AI-Dev/.tools/state/queue_store.py` (must print OK, exit 0). Archive-eligible
+   records (item-model.md "Store hygiene and archiving") may be moved to `queue-archive.yaml`
+   in the same pass; keep the watermark block structured values only — sync narrative goes in
+   the commit message, not the file.
 3. Regenerate `QUEUE.md` deterministically — never hand-render it:
 
    ```bash

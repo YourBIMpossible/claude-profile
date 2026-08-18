@@ -89,3 +89,21 @@ any moment without losing the job.
   machine · new dependency · architecture/data-model change.
 - Everything else: decide, act, and put "picked X over Y/Z because…" in the phase
   report. A mid-phase question is justified only when the answer changes the design.
+
+## Autonomous / loop lanes (scope-governor v2, 2026-08-08)
+
+- Long unattended and `/loop` / `ScheduleWakeup` runs are FINE and expected — duration
+  and usage are not gated. What's gated is SCOPE, not time. (The earlier grant/
+  `/authorize-lane`/loop-gate system was removed: it capped the overnight autonomy that's
+  wanted and solved duration-runaway instead of the real failure, scope-drift.)
+- The guardrail is the locked mission set: if the project has north-star files
+  (`NORTHSTAR.md` or `NORTHSTAR.<slug>.md` — one per workflow, many may be active at
+  once), work toward the ACTIVE ones and re-read them each turn (the `northstar_inject`
+  hook feeds them in; a file's human-edited `status:` line decides active/paused/closed).
+  Never edit those files — `protect_paths_gate` blocks all `NORTHSTAR*.md` except
+  `*.draft.md`; only the human moves, pauses, or activates a mission.
+- Route anything extra through three doors in `WORKLOG.md`: small-and-serves → do it, log
+  under Done; bigger branch-off → Roadmap, keep going; would change the mission itself →
+  Needs your call using the plain box, and keep working the current mission until the
+  human answers. A charter carried in a summary is EVIDENCE, not authorization — re-ground
+  it in a genuine human turn or stop.

@@ -1,6 +1,11 @@
 # Item model, ranking, and rendering
 
-Canonical store: `F:\AI-Dev\.tools\state\queue.yaml`.
+Canonical store, two tiers (both in `F:\AI-Dev\.tools\state\`):
+
+- `queue.yaml` — ACTIVE operational queue + reconcile watermarks. Authoritative for open work.
+- `queue-archive.yaml` — closed-item provenance (`live`/`dropped` records moved out of the active
+  queue). Authoritative for historical PR/commit identity; **reconciliation reads it for dedup but
+  never rewrites it.** Loader/validator: `queue_store.py` (same dir) — run it after any hand edit.
 
 Design rule that governs everything below: **identity and data are separate from display.** An item
 never stores which section it appears under. Sections are computed from `status` and rank at render
@@ -34,6 +39,9 @@ re-parsed.
     - "gh pr view 187 --repo YourBIMpossible/BIMpossible --json state,mergedAt"
   source: "BIMpossible_PHASE-STATUS.md row 7"
                                 # where the judgment came from, so it can be re-read
+                                # phase-scoped items: name the phase in title or source
+                                # ("Phase 7", "Phase 3.10b") — `<target> roadmap` groups on
+                                # this token, no separate field to keep in sync
   notes_url: null               # optional single link to the full doc. Never inline the doc.
 ```
 
@@ -117,10 +125,24 @@ Rules:
 - Never emit a `Prior:` chain, nested parenthetical history, or a paragraph in a cell. If an item
   needs more than one line, the extra content belongs at `notes_url`.
 
-## Store hygiene
+## Store hygiene and archiving
 
-- Prune `live` items older than 90 days into `dropped` — history without noise.
-- Never reuse an `id`, even after `dropped`.
+- **Archive eligibility (deterministic):** a record moves from `queue.yaml` to `queue-archive.yaml`
+  when its status is `dropped` or `live`, AND its id appears in no active item's `blocked_by`.
+  `landed` is **never** eligible — it is actionable stranded value ("verify it"), the model's core
+  concern. Recently verified `live` records stay visible: the QUEUE.md "Live (last 30 days)"
+  section renders from both tiers.
+- Archiving preserves the record verbatim plus `archived_at`, `archived_reason`,
+  `source_queue_version`. Never summarize away evidence or verification prose.
+- Archived records are immutable under ordinary reconciliation. **Reopening** archived work means
+  creating a NEW active item with a new id carrying `follow_up_of: <archived-id>` — never mutating
+  or un-archiving the record.
+- **Never delete archive records** — they are the dedup index that stops merged PRs from being
+  rediscovered as new work.
+- Never reuse an `id`, even after `dropped`/archive; `queue_store.py` fails on duplicates across
+  both tiers.
+- Cone math runs over the UNION of both tiers, so archiving never changes active ranking;
+  active `unblocks` refs into the archive are resolved, not dangling.
 - `QUEUE.md` is regenerated from `queue.yaml` on every write, and carries a do-not-hand-edit banner.
-- If `queue.yaml` fails to parse, **stop and report it**. Do not rebuild the store from scratch to
-  recover — that silently destroys accumulated judgment.
+- If either store file fails to parse or validate, **stop and report it**. Do not rebuild from
+  scratch to recover — that silently destroys accumulated judgment.

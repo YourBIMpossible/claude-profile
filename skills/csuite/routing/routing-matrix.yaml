@@ -1,0 +1,118 @@
+version: 1.0.0
+source_of_truth: true
+roles:
+  cpo: references/cpo.md
+  cto: references/cto.md
+  bim_manager: references/bim-manager.md
+  ciso: references/ciso.md
+  evidence_analyst: references/evidence-analyst.md
+  ai_evaluation: references/ai-evaluation.md
+  ceo: references/ceo.md
+  cro: references/cro.md
+  customer_success: references/customer-success.md
+  cfo: references/cfo.md
+
+reviewer_types:
+  required: Must return a position before the task can advance.
+  consulted: Advises the decision owner but cannot independently block unless a policy gate says otherwise.
+  observer: Receives the outcome only; does not participate in the decision.
+
+task_routes:
+  - task_class: trivial_internal_change
+    criteria:
+      - no_customer_visible_workflow_change
+      - no_model_or_revit_data
+      - no_customer_data_or_permissions_change
+      - reversible_by_normal_deployment_or_git_rollback
+    required: [cto]
+    consulted: []
+    observers: []
+    decision_owner: technical_owner
+    response_tier: short
+
+  - task_class: ui_copy_or_low_risk_user_experience_change
+    required: [cpo]
+    consulted: []
+    observers: []
+    decision_owner: product_owner
+    response_tier: short
+
+  - task_class: feature_user_workflow
+    required: [cpo, bim_manager]
+    consulted: [cto]
+    observers: [customer_success]
+    decision_owner: product_owner
+    response_tier: short
+
+  - task_class: read_only_model_qa_or_model_interpretation
+    required: [bim_manager, cto, ai_evaluation]
+    consulted: [cpo]
+    observers: [ciso]
+    decision_owner: product_owner
+    response_tier: full
+
+  - task_class: revit_or_graph_write_automation
+    required: [bim_manager, cto, ciso, ai_evaluation]
+    consulted: [cpo]
+    observers: [customer_success]
+    decision_owner: human_approver
+    response_tier: full
+    requires_human_approval: true
+
+  - task_class: ai_assistant_or_agent_workflow
+    required: [cpo, cto, ciso, ai_evaluation]
+    consulted: [bim_manager]
+    observers: [customer_success]
+    decision_owner: product_owner
+    response_tier: full
+
+  - task_class: new_integration_or_permission_scope
+    required: [cto, ciso]
+    consulted: [cpo, ai_evaluation]
+    observers: [cfo]
+    decision_owner: human_approver
+    response_tier: full
+    requires_human_approval: true
+
+  - task_class: architecture_or_platform_change
+    required: [cto]
+    consulted: [cpo]
+    observers: [ciso]
+    decision_owner: technical_owner
+    response_tier: full
+
+  - task_class: roadmap_strategy_market_or_major_investment
+    required: [cpo, ceo]
+    consulted: [cro, cfo]
+    observers: [cto]
+    decision_owner: product_owner
+    response_tier: full
+
+  - task_class: pricing_packaging_or_pilot
+    required: [cro, cfo, cpo]
+    consulted: [customer_success]
+    observers: [ceo]
+    decision_owner: business_owner
+    response_tier: full
+
+  - task_class: onboarding_adoption_or_support_friction
+    required: [customer_success, cpo]
+    consulted: [bim_manager]
+    observers: [cro]
+    decision_owner: product_owner
+    response_tier: full
+
+  - task_class: security_privacy_or_incident
+    required: [ciso, cto]
+    consulted: [customer_success]
+    observers: [cpo]
+    decision_owner: incident_owner
+    response_tier: full
+
+routing_notes:
+  - Run evidence analysis first when requests contain unsupported claims, conflicting inputs, market/customer assertions, model findings, or insufficient source provenance.
+  - Add BIM Manager whenever Revit semantics, model findings, element attribution, worksharing, linked models, parameters, phases, design options, groups, or families are material.
+  - Add CISO whenever customer data, tenant isolation, credentials, OAuth, permissions, tools, integrations, AI retrieval, or external actions are material.
+  - Add AI Evaluation whenever an LLM produces findings, classifications, recommendations, or proposed tool actions that affect a user decision or workflow.
+  - Do not add CEO simply because a task is at the idea stage. Use CEO only for strategic scope, major investment, market, or focus decisions.
+  - Do not add CPO solely because a task has a known user. Use CPO when user workflow, product scope, activation, adoption, or prioritization is affected.
