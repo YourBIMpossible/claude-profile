@@ -13,7 +13,7 @@ finishing side quests.
 1. State the ORIGINAL MANDATE in one line — the first user ask, not what the
    session drifted into.
 2. Inventory what this session produced or decided:
-   - Files edited/created — committed? pushed (draft PR per house rule)?
+   - Files edited/created — committed? pushed?
    - Decisions, findings, gotchas that exist ONLY in this conversation.
    - Memory writes already made.
 3. Classify each item: IN-SCOPE (belongs to the mandate) or WANDER (found along
@@ -27,8 +27,11 @@ verdict (SAFE TO CLOSE, or NEEDS CHECKPOINT: n items). Change nothing.
 ## /close (execute)
 
 1. Externalize every not-on-disk item: commit + push in-scope code on the lane
-   branch; write conversation-only decisions/gotchas to the anchor doc (or a
-   dated notes file if the job has no anchor); durable lessons → one memory max.
+   branch (verify locally first per the repo's delivery contract, e.g.
+   `docs/engineering/DELIVERY.md` in BIMpossible; opening a PR or merging stays
+   a separate, explicit ask). Write conversation-only decisions/gotchas to the
+   anchor doc (or a dated notes file if the job has no anchor); durable
+   lessons → one memory max.
    The anchor/notes write includes a **fenced-decisions table** — settled calls
    (merged, closed, deliberately gated, rejected alternatives) with a one-line
    rationale each, so a successor session neither re-litigates nor re-does them.

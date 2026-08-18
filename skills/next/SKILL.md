@@ -94,7 +94,10 @@ in full) but far less than `sync` (no git/gh probing, no re-ranking write-back).
 
 ### `<target> sync` — reconcile
 
-The expensive path. Run when the store is stale, after a merge wave, or when drill reports a contradiction.
+The expensive path. Run when the store is stale, after a merge wave, or when drill reports a
+contradiction. Cadence (2026-08-18 delivery rebuild): sync — like dashboard refreshes, anchor
+updates, queue-mirror publishes, and workspace backups — is a **weekly or on-demand** action,
+never a per-merge or session-exit obligation.
 
 Follow `reference/reconcile.md`. Summary: read everything that changed since the project's watermark
 (commits, PRs, ledger rows, audit reports, build logs), then confirm / demote / add / re-rank items,
