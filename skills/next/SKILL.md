@@ -1,6 +1,6 @@
 ---
 name: next
-description: Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, or types "/next". Renders a cross-repo portfolio board and a ranked, evidence-verified production queue from a durable structured item store at F:\AI-Dev\.tools\state. Ranks by critical path (how much each item unblocks). Modes — /next = board; /next <target> = ranked drill; /next <target> sync = reconcile the store (run when stale or after a merge wave); /next <target> init = bootstrap a new project; /next all deep = full re-derive. Read-only against project repos — it never fixes, commits, pushes, or hunts defects.
+description: Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, wants to see the whole project/roadmap so they can work through it, or types "/next". Renders a cross-repo portfolio board and a ranked, evidence-verified production queue from a durable structured item store at F:\AI-Dev\.tools\state. Ranks by critical path (how much each item unblocks). Modes — /next = board; /next <target> = ranked drill (single #1 move); /next <target> roadmap = live whole-project view, phase by phase, cross-checked against the owner ledger every run (never a static snapshot); /next <target> sync = reconcile the store (run when stale or after a merge wave); /next <target> init = bootstrap a new project; /next all deep = full re-derive. Read-only against project repos — it never fixes, commits, pushes, or hunts defects.
 ---
 
 # /next — production status and next-move
@@ -77,6 +77,21 @@ If any `live_check` contradicts stored `verification`, see Anti-drift below — 
 If the watermark is older than 7 days, print the staleness banner and **do not name a #1 move without
 first offering `sync`**. A confident answer off a stale store is the exact failure mode this replaces.
 
+### `<target> roadmap` — whole project, live
+
+The answer to "show me everything, phase by phase, so I can pick." Never write this to a file —
+a saved snapshot is exactly the staleness this replaces. Render it fresh, in chat, every time.
+
+Follow `reference/roadmap.md`. Summary: load every active item in scope, group by the phase token
+parsed from its `title`/`source`, read the project's phase ledger **live** (not from the item store)
+and cross-check each phase row against the grouped items, then render every phase in order with the
+existing #1 critical-path move still leading the output. Ledger rows with no matching item print as
+`UNTRACKED` — named, not silently dropped — because that is the gap `sync` should close next, and
+surfacing it live is what keeps this mode from ever needing a companion document.
+
+Read-only: no store writes, no watermark advance. Costs more than `bare`/drill (it reads the ledger
+in full) but far less than `sync` (no git/gh probing, no re-ranking write-back).
+
 ### `<target> sync` — reconcile
 
 The expensive path. Run when the store is stale, after a merge wave, or when drill reports a contradiction.
@@ -135,3 +150,4 @@ Terse. The source artifacts this replaces failed by being exhaustive, so length 
 
 - `reference/item-model.md` — schema, status vocabulary, ranking algorithm, rendering rules
 - `reference/reconcile.md` — the sync procedure, evidence rules, watermarks
+- `reference/roadmap.md` — the whole-project live view: phase grouping, ledger cross-check, ordering

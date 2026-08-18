@@ -39,6 +39,9 @@ re-parsed.
     - "gh pr view 187 --repo YourBIMpossible/BIMpossible --json state,mergedAt"
   source: "BIMpossible_PHASE-STATUS.md row 7"
                                 # where the judgment came from, so it can be re-read
+                                # phase-scoped items: name the phase in title or source
+                                # ("Phase 7", "Phase 3.10b") — `<target> roadmap` groups on
+                                # this token, no separate field to keep in sync
   notes_url: null               # optional single link to the full doc. Never inline the doc.
 ```
 
