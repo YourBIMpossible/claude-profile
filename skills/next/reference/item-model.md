@@ -125,9 +125,10 @@ Rules:
 ## Store hygiene and archiving
 
 - **Archive eligibility (deterministic):** a record moves from `queue.yaml` to `queue-archive.yaml`
-  when its status is `dropped`, or `live` with `verification.at` older than 30 days (outside the
-  QUEUE.md live window), AND its id appears in no active item's `blocked_by`. `landed` is **never**
-  eligible — it is actionable stranded value ("verify it"), the model's core concern.
+  when its status is `dropped` or `live`, AND its id appears in no active item's `blocked_by`.
+  `landed` is **never** eligible — it is actionable stranded value ("verify it"), the model's core
+  concern. Recently verified `live` records stay visible: the QUEUE.md "Live (last 30 days)"
+  section renders from both tiers.
 - Archiving preserves the record verbatim plus `archived_at`, `archived_reason`,
   `source_queue_version`. Never summarize away evidence or verification prose.
 - Archived records are immutable under ordinary reconciliation. **Reopening** archived work means
