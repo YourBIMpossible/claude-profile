@@ -29,6 +29,15 @@ The contract: **no implementation before a failing test; no "done" without paste
   watch it fail again for the new right reason.
 - **Evidence, not claims.** The report quotes the test run ("N passed in X.XXs") with the
   command that produced it — pasted, not paraphrased.
+- **Unconfirmed system boundary → confirm before testing around it.** If it's not obvious
+  where "the seam" actually is (which layer owns the contract, what the real external
+  edge is), ask the user before writing a test that assumes one.
+- **Mock system boundaries, not internal collaborators.** Stub the external edge (network,
+  filesystem, a real third-party API); never mock the code under test or its neighbors —
+  that tests the mock, not the design.
+- **No tautological tests.** If the test computes its expected value with substantially
+  the same logic as the implementation, it will fail together with a real bug and pass
+  together with a wrong one. Assert against an independently-derived expected value.
 
 ## Scope boundaries
 

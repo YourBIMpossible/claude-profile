@@ -22,6 +22,7 @@ re-parsed.
                                 # 1..n registry keys. Cross-repo items live here ONCE.
   status: blocked_owner         # closed vocabulary, see below
   owner_gate: true              # true = only the human can advance it
+  owner: null                   # claiming session's identifier, or null if unclaimed — see Claiming below
   unblocks: [P9-1, P10-1, P13-promote, P15d]
                                 # direct downstream item ids. Drives the primary ranking axis.
   blocked_by: []                # upstream item ids that must land first
@@ -47,7 +48,26 @@ re-parsed.
 
 Required: `id`, `title`, `projects`, `status`, `unblocks`, `verification`, `source`.
 Everything else may be omitted; treat missing `effort` as `M`, missing `risk` as `0`,
-missing `owner_gate` as `false`.
+missing `owner_gate` as `false`, missing `owner` as `null`.
+
+## Claiming (concurrent-session safety)
+
+`owner` stops two concurrent sessions from writing conflicting updates to the same item during
+`sync` — this workspace already forbids two sessions sharing one checkout (CLAUDE.md), and `sync`
+is the one mode that writes the store, so the same discipline extends here.
+
+- `owner: null` — unclaimed; any session may claim it.
+- `owner: <identifier>` — set to the claiming session's branch or worktree path
+  (`git rev-parse --show-toplevel` + current branch) the moment a session marks an item
+  `in_flight`, or is about to write that item during `sync`.
+- **Before writing an item during `sync`,** check `owner`. If it is set to a *different* session's
+  identifier, do not write that item — report it as `OWNED BY <owner>` and skip it. Never silently
+  overwrite another session's in-progress claim. Applies to both tiers: an item mid-archive under
+  another session's claim is skipped the same way.
+- Clear `owner` back to `null` when the item leaves `in_flight` (lands, blocks, or parks).
+- A stale claim — `owner` set but the item hasn't moved in over 24h — is reported, not
+  auto-released. Releasing on a timer risks two sessions racing right after expiry; a human clears
+  a stale claim explicitly.
 
 ## Status vocabulary (closed — do not invent values)
 

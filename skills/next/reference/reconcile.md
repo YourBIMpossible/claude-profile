@@ -91,12 +91,15 @@ condition the per-project ledgers lose.
 ## Finishing
 
 1. Recompute ranks (`reference/item-model.md`). Report any cycles or dangling `unblocks` ids.
-2. Write `queue.yaml` in the live store (`F:\AI-Dev\.tools\state`), then validate both tiers:
+2. **Claim check** — for every item about to be written, if `owner` is set to a different
+   session's identifier, skip writing that item and report it `OWNED BY <owner>` instead
+   (`reference/item-model.md` § Claiming). Write everything else normally.
+3. Write `queue.yaml` in the live store (`F:\AI-Dev\.tools\state`), then validate both tiers:
    `python F:/AI-Dev/.tools/state/queue_store.py` (must print OK, exit 0). Archive-eligible
    records (item-model.md "Store hygiene and archiving") may be moved to `queue-archive.yaml`
    in the same pass; keep the watermark block structured values only — sync narrative goes in
    the commit message, not the file.
-3. Regenerate `QUEUE.md` deterministically — never hand-render it:
+4. Regenerate `QUEUE.md` deterministically — never hand-render it:
 
    ```bash
    python F:/AI-Dev/.tools/state/render_queue.py --generated-on <today> --check   # expect CHECK OK after step-4 write
@@ -105,14 +108,15 @@ condition the per-project ledgers lose.
    `render_queue.py` (no flags) writes `QUEUE.md`; `--check` re-derives and byte-compares without
    writing. If `--check` fails after you regenerate, the store and the view disagree — fix it, do not
    ship the mismatch.
-4. Advance watermarks for successfully-read projects only.
-5. **Publish the mirror (Option B, 2026-08-08).** The workspace repo carries a committed mirror at
+5. Advance watermarks for successfully-read projects only.
+6. **Publish the mirror (Option B, 2026-08-08).** The workspace repo carries a committed mirror at
    `F:\AI-Dev\BIMpossible_Workspace\.tools\state`. Copy the regenerated `queue.yaml` + `QUEUE.md`
    (and `render_queue.py`/`projects.yaml` if they changed) into the mirror and commit **both together**
    through the normal workspace path — `Push-And-Verify.ps1` (PowerShell), never Bash git, never a
    hand-edit of the Markdown. The mirror's `.gitattributes` pins the store to LF so `--check` holds on
-   any checkout. Skip only if the sync changed no queue data.
-6. Report the diff: promoted, demoted, added, dropped, contradictions found, and whether the #1 move
+   any checkout. Skip only if the sync changed no queue data. This is the one data-publish path — the
+   workspace `next` skill copy does not duplicate it.
+7. Report the diff: promoted, demoted, added, dropped, contradictions found, and whether the #1 move
    changed. If the #1 move changed, lead with that. Name the mirror commit/PR if one was published.
 
 Do not also print the full queue after a sync — run the drill view if that is wanted.

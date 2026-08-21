@@ -149,6 +149,32 @@ Terse. The source artifacts this replaces failed by being exhaustive, so length 
 - Never emit a `Prior:` chain, a nested history clause, or a paragraph inside a table cell.
 - When something is unknown, say "unknown" and name the probe that would settle it.
 
+## Canonical copy and project mirrors
+
+This copy (`F:\Claude-Profile\skills\next`) is **canonical** for shared `next` mechanics — item
+model, ranking, reconcile procedure, roadmap mode. `BIMpossible_Workspace\.claude\skills\next` is
+a **project-local mirror**: same behavior, scoped description, no `all deep` (single-project
+workspace has no cross-project board to re-derive). Distinct from the data mirror in
+`reconcile.md` step 6 (`queue.yaml`/`QUEUE.md` copied into the workspace repo) — that publishes
+store *data*; this section is about keeping the *skill files* in sync.
+
+Rule: when shared `next` behavior changes (item schema, ranking, reconcile steps, claiming), edit
+this canonical copy and mirror the same change into the workspace copy **in the same work item** —
+never as a separate follow-up pass. Project-specific wording (scoped description, dropped modes)
+stays local to the mirror.
+
+To check for drift, diff the shared sections directly — no tooling beyond what already exists:
+
+```bash
+diff "F:/Claude-Profile/skills/next/reference/item-model.md" \
+     "F:/AI-Dev/BIMpossible_Workspace/.claude/skills/next/reference/item-model.md"
+diff "F:/Claude-Profile/skills/next/reference/reconcile.md" \
+     "F:/AI-Dev/BIMpossible_Workspace/.claude/skills/next/reference/reconcile.md"
+```
+
+Non-empty output beyond the known project-local deltas (scope line in `SKILL.md`, absent
+`all deep`) means the mirror has drifted — reconcile before trusting either copy.
+
 ## Reference
 
 - `reference/item-model.md` — schema, status vocabulary, ranking algorithm, rendering rules
