@@ -5,7 +5,10 @@ description: Maintain the BIMpossible design-knowledge wiki at BIMpossible_Works
 
 # wiki — design-knowledge wiki maintenance
 
-Schema and full conventions: `../../BIMpossible_Workspace/wiki/SCHEMA.md`. Read it before the
+Schema and full conventions:
+[`BIMpossible_Workspace/wiki/SCHEMA.md`](https://github.com/YourBIMpossible/BIMpossible_Workspace/blob/main/wiki/SCHEMA.md)
+(sibling repo — a relative `../../` link can't cross a repo boundary either on GitHub or once this
+file is read from a location other than its own checkout, so this uses a full GitHub URL). Read it before the
 first ingest of a session — it defines page front matter, directory layout, and what counts as
 a design-doc source. This skill file is the operational entry point; SCHEMA.md is the contract.
 
