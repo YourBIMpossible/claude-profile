@@ -35,6 +35,7 @@ are exempt: they live entirely inside settings.json.
 | `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; also locks all `NORTHSTAR*.md` except `*.draft.md`) | `~/.claude/hooks/` |
 | `northstar_inject.py` | UserPromptSubmit | **advisory** — re-injects the active locked mission(s) each turn (scope-governor v3, multi-star) | `~/.claude/hooks/` |
 | `skill-detection-hook.json` | PostToolUse (Revit MCP) | prompt-type, enabled 2026-08-08 | n/a (JSON in settings.json) |
+| `session_closure_audit.py` + `closure_audit_repos.json` | SessionStart + SessionEnd | **advisory** — read-only closure audit: surfaces uncommitted/unpushed design docs, untracked branches, and dirty worktrees across the repos in `closure_audit_repos.json` each session, so knowledge is never lost by deleting a worktree that holds it. Local-only (git status/worktree list; no push/commit/network); fail-open. | `~/.claude/hooks/` (pinned copies of both files; this repo is the source of truth as of 2026-08-21 — update via the C1 copy procedure above) |
 
 ## Control vs advisory (from the fail-open lesson)
 

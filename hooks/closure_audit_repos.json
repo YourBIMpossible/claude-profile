@@ -1,0 +1,16 @@
+{
+  "_comment": "Repo scope for session_closure_audit.py. Add a repo by adding one entry here — no code change needed. 'path' is the repo root (or the root that contains .claude/worktrees for BIMpossible-style setups); the script walks 'git worktree list' from there, so linked worktrees are discovered automatically and never need their own entry.",
+  "repos": [
+    { "name": "BIMpossible", "path": "F:/AI-Dev/BIMpossible" },
+    { "name": "BIMpossible_Workspace", "path": "F:/AI-Dev/BIMpossible_Workspace" },
+    { "name": "Add-Ins", "path": "F:/AI-Dev/Add-Ins" }
+  ],
+  "design_doc_globs": [
+    "docs/**/*.md",
+    "00_Strategy/**/*.md",
+    "02_Reference/**/*.md",
+    "wiki/**/*.md",
+    "*.md"
+  ],
+  "draft_markers": [".draft.md", ".wip.md"]
+}
