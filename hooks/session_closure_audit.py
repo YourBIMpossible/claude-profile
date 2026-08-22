@@ -166,6 +166,40 @@ def is_draft(path: str, markers: "list[str]") -> bool:
     return any(lower.endswith(m) for m in markers)
 
 
+def classify_worktree_location(wt_path: str, repo_root: str) -> "dict | None":
+    """Return None when `wt_path` is canonical for `repo_root`: either the
+    repo's own primary checkout, or a lane under its `.claude/worktrees/`
+    convention (WORKFLOW.md / claude-profile CLAUDE.md). Otherwise return a
+    dict flagging it as out-of-convention, with `under_temp` telling whether
+    it sits inside the process's TEMP/TMP directory — the specific pattern
+    seen from a peer session's ad hoc `git worktree add` (2026-08-21
+    concurrent-mutation investigation: worktrees named `main-check` /
+    `t6-rebase` registered under %TEMP%, invisible to this convention).
+
+    Read-only: string/path comparison only, no filesystem or git call.
+    """
+    norm_path = os.path.normcase(os.path.normpath(wt_path))
+    norm_root = os.path.normcase(os.path.normpath(repo_root))
+    if norm_path == norm_root:
+        return None
+
+    worktrees_root = os.path.normcase(os.path.normpath(os.path.join(repo_root, ".claude", "worktrees")))
+    if norm_path == worktrees_root or norm_path.startswith(worktrees_root + os.sep):
+        return None
+
+    under_temp = False
+    for var in ("TEMP", "TMP"):
+        temp_dir = os.environ.get(var)
+        if not temp_dir:
+            continue
+        norm_temp = os.path.normcase(os.path.normpath(temp_dir))
+        if norm_path == norm_temp or norm_path.startswith(norm_temp + os.sep):
+            under_temp = True
+            break
+
+    return {"under_temp": under_temp}
+
+
 def _run_concurrently(jobs: "list", deadline: float) -> "dict[int, object]":
     """Run zero-arg callables `jobs` on daemon threads, stopping new
     submissions once `deadline` (a time.monotonic() timestamp) has passed.
@@ -211,13 +245,22 @@ def _run_concurrently(jobs: "list", deadline: float) -> "dict[int, object]":
     return results
 
 
-def audit_worktree(name: str, wt: dict, cfg: dict, st: "dict | None" = None, truncated: bool = False) -> "list[dict]":
+def audit_worktree(
+    name: str,
+    wt: dict,
+    cfg: dict,
+    st: "dict | None" = None,
+    truncated: bool = False,
+    repo_root: "str | None" = None,
+) -> "list[dict]":
     """Return a list of finding dicts for one worktree/repo. Empty = clean.
 
     `st` is a pre-fetched parse_status() result (fetched concurrently by
     build_report to stay inside OVERALL_GIT_BUDGET). `truncated=True` means
     the audit ran out of its time budget before this worktree's status could
     be checked — that must surface as an explicit finding, not silence.
+    `repo_root` is the configured repo path, used only for the out-of-
+    convention location check below (registry-only, no status needed).
     """
     findings = []
     path = wt["path"]
@@ -228,6 +271,24 @@ def audit_worktree(name: str, wt: dict, cfg: dict, st: "dict | None" = None, tru
             "action": "Confirm the path in closure_audit_repos.json is correct.",
         })
         return findings
+
+    # Convention check runs off `git worktree list` alone (already fetched in
+    # stage 1), so it still fires even when this worktree's `git status` was
+    # truncated by the time budget below. WARNING only, per owner spec — this
+    # flags visibility, it never blocks and never touches another session's
+    # worktree.
+    if repo_root is not None:
+        loc = classify_worktree_location(path, repo_root)
+        if loc is not None:
+            where = "under %TEMP%" if loc["under_temp"] else "outside the repo's worktree convention"
+            head_state = "detached HEAD" if wt.get("detached") else (wt.get("branch") or "(unknown branch)")
+            findings.append({
+                "severity": "WARNING",
+                "text": f"{path} [{head_state}] — out-of-convention worktree ({where}).",
+                "action": "Out-of-convention worktree. Its owning session should use "
+                          "`.claude/worktrees/<lane>` or clean it up after completion. "
+                          "Do not modify another session's worktree.",
+            })
 
     if truncated:
         findings.append({
@@ -350,6 +411,8 @@ def build_report(cfg: dict) -> str:
     truncated_repos = 0
     truncated_worktrees = 0
 
+    repo_paths = dict(valid_repos)
+
     for name, _ in valid_repos:
         rng = repo_ranges[name]
         if rng is None:
@@ -368,7 +431,9 @@ def build_report(cfg: dict) -> str:
             wt_truncated = st is None and not wt.get("unreadable")
             if wt_truncated:
                 truncated_worktrees += 1
-            wt_findings = audit_worktree(name, wt, cfg, st=st, truncated=wt_truncated)
+            wt_findings = audit_worktree(
+                name, wt, cfg, st=st, truncated=wt_truncated, repo_root=repo_paths.get(name)
+            )
             if not wt_findings:
                 lines.append(f"  - {wt['path']} [{wt.get('branch') or '(detached)'}] — clean. No action needed.")
                 continue
