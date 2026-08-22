@@ -35,7 +35,7 @@ its own worktree INSIDE the repo: `git worktree add .claude\worktrees\<lane> -b 
 claude-profile is `master`, so never hardcode either; `git remote set-head origin -a` if it's unset).
 Sibling folders (`../<repo>-<lane>`) are RETIRED 2026-07-24 — they
 sprawled into 9+ mystery folders under F:\AI-Dev; canonical rules live in
-F:\AI-Dev\BIMpossible_Workspace\WORKFLOW.md (since 2026-08-18: one PR per coherent
+F:\BIMpossible-Workspace\WORKFLOW.md (since 2026-08-18: one PR per coherent
 feature, opened when ready to merge — the same-day-PR rule is retired). A shared working tree
 makes sessions' uncommitted edits intermingle in the same files (proven 2026-07-02 on
 BIMpossible — required `git add -p` hunk surgery to unmix, plus care to not sweep another
