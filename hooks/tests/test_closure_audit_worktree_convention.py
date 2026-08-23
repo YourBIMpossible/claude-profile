@@ -28,7 +28,7 @@ def check(name, cond, detail=""):
     print(f"{'PASS' if cond else 'FAIL'}: {name}" + (f" -- {detail}" if detail and not cond else ""))
 
 
-REPO_ROOT = "F:/AI-Dev/BIMpossible"
+REPO_ROOT = "F:/BIMpossible"
 
 # ---------------------------------------------------------------------------
 # 1. classify_worktree_location — direct unit coverage of the four scenarios
@@ -41,19 +41,19 @@ check(
 
 check(
     "canonical primary checkout, backslash form -> None",
-    sca.classify_worktree_location("F:\\AI-Dev\\BIMpossible", REPO_ROOT) is None,
+    sca.classify_worktree_location("F:\\BIMpossible", REPO_ROOT) is None,
 )
 
 check(
     "canonical .claude/worktrees/<lane> -> None (no warning)",
     sca.classify_worktree_location(
-        "F:/AI-Dev/BIMpossible/.claude/worktrees/some-lane-abcdef", REPO_ROOT
+        "F:/BIMpossible/.claude/worktrees/some-lane-abcdef", REPO_ROOT
     ) is None,
 )
 
 check(
     "canonical .claude/worktrees root itself -> None",
-    sca.classify_worktree_location("F:/AI-Dev/BIMpossible/.claude/worktrees", REPO_ROOT) is None,
+    sca.classify_worktree_location("F:/BIMpossible/.claude/worktrees", REPO_ROOT) is None,
 )
 
 _orig_temp = os.environ.get("TEMP")
@@ -83,7 +83,7 @@ try:
     # Lookalike path that merely starts with the repo root string but isn't
     # actually inside it (e.g. a sibling dir "BIMpossible2") must not be
     # treated as canonical.
-    lookalike_result = sca.classify_worktree_location("F:/AI-Dev/BIMpossible2", REPO_ROOT)
+    lookalike_result = sca.classify_worktree_location("F:/BIMpossible2", REPO_ROOT)
     check(
         "sibling dir with repo-root-prefixed name is NOT canonical",
         lookalike_result is not None,
@@ -118,7 +118,7 @@ check("primary checkout, clean status -> zero findings", primary_findings == [],
 
 lane_findings = sca.audit_worktree(
     "BIMpossible",
-    {"path": "F:/AI-Dev/BIMpossible/.claude/worktrees/some-lane-abcdef",
+    {"path": "F:/BIMpossible/.claude/worktrees/some-lane-abcdef",
      "branch": "claude/some-lane-abcdef", "detached": False},
     CFG,
     st={**CLEAN_STATUS, "branch": "claude/some-lane-abcdef", "upstream": "origin/claude/some-lane-abcdef"},

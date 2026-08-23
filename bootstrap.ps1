@@ -128,20 +128,21 @@ $revitExePath = 'C:\Program Files\Autodesk\Revit 2027 MCP Server Read-Tools Tech
 $hasRevit = Test-Path -LiteralPath $revitExePath
 Write-Host "Revit MCP server detected: $hasRevit"
 
-# 4. Detect workspace root and known project directories
-$candidateRoots = @('F:\AI-Dev', 'C:\AI-Dev', (Join-Path $env:USERPROFILE 'AI-Dev'))
-$workspaceRoot = $candidateRoots | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+# 4. Detect known project directories (siblings on the drive root since the 2026-08-23
+# AI-Dev extraction - BIMpossible/BIMpossible-Workspace are no longer nested under AI-Dev)
+$candidateDriveRoots = @('F:\', 'C:\', $env:USERPROFILE)
 $additionalDirs = @()
-if ($workspaceRoot) {
-    Write-Host "Workspace root detected: $workspaceRoot"
-    foreach ($name in @('BIMpossible', 'BIMpossible_Workspace')) {
-        $candidate = Join-Path $workspaceRoot $name
-        if (Test-Path -LiteralPath $candidate) {
+foreach ($driveRoot in $candidateDriveRoots) {
+    foreach ($name in @('BIMpossible', 'BIMpossible-Workspace')) {
+        $candidate = Join-Path $driveRoot $name
+        if ((Test-Path -LiteralPath $candidate) -and ($additionalDirs -notcontains (ConvertTo-ForwardSlash $candidate))) {
             $additionalDirs += (ConvertTo-ForwardSlash $candidate)
+            Write-Host "Project directory detected: $candidate"
         }
     }
-} else {
-    Write-Host "No workspace root found - additionalDirectories will be empty"
+}
+if (-not $additionalDirs) {
+    Write-Host "No known project directories found - additionalDirectories will be empty"
 }
 
 # 5. Generate settings.json from template

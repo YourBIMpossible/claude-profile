@@ -21,10 +21,10 @@ from pathlib import Path
 HOME = Path.home()
 SKILLS_DIR = HOME / ".claude" / "skills"
 SETTINGS = HOME / ".claude" / "settings.json"
-MEMORY_MD = HOME / ".claude" / "projects" / "F--AI-Dev" / "memory" / "MEMORY.md"
+MEMORY_MD = HOME / ".claude" / "projects" / "F--BIMpossible" / "memory" / "MEMORY.md"
 CLAUDE_MDS = [
     Path("F:/Claude-Profile/CLAUDE.md"),
-    Path("F:/AI-Dev/CLAUDE.md"),
+    Path("F:/BIMpossible/CLAUDE.md"),
 ]
 
 DESC_WARN = 600          # per-skill description
