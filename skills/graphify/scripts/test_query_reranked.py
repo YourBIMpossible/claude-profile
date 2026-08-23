@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import query_reranked as qr  # noqa: E402
 
-BIMPOSSIBLE_BACKEND = Path(r"F:\AI-Dev\BIMpossible\backend")
+BIMPOSSIBLE_BACKEND = Path(r"F:\BIMpossible\backend")
 
 
 class TestTokenize(unittest.TestCase):

@@ -26,8 +26,8 @@ Tone: Direct, professional, no ego-stroking. The goal is stronger code, not hurt
 ---
 
 ## Scope
-- `F:\AI-Dev\BIMpossible`           — code repo
-- `F:\AI-Dev\BIMpossible_Workspace` — docs, build logs, strategy, decisions
+- `F:\BIMpossible`           — code repo
+- `F:\BIMpossible-Workspace` — docs, build logs, strategy, decisions
 
 ---
 
@@ -43,12 +43,12 @@ Check `args`:
 
 Only files modified since the most recent audit.
 
-1. Find the most recent `YYYY-MM-DD__audit-report*.md` in `F:\AI-Dev\BIMpossible_Workspace\02_Reference\Audit Reports\` (fall back to `02_Reference\` root for legacy reports dated before 2026-06-10). Use its date as the cutoff.
-2. In `F:\AI-Dev\BIMpossible`: `git log --since="<cutoff>" --name-only` for changed source files; `git status` for uncommitted/untracked.
-3. In `F:\AI-Dev\BIMpossible_Workspace`: any doc / build-log / decision entry with mtime after the cutoff.
+1. Find the most recent `YYYY-MM-DD__audit-report*.md` in `F:\BIMpossible-Workspace\02_Reference\Audit Reports\` (fall back to `02_Reference\` root for legacy reports dated before 2026-06-10). Use its date as the cutoff.
+2. In `F:\BIMpossible`: `git log --since="<cutoff>" --name-only` for changed source files; `git status` for uncommitted/untracked.
+3. In `F:\BIMpossible-Workspace`: any doc / build-log / decision entry with mtime after the cutoff.
 4. Review only those files against the persona above. Cite `file:line` throughout.
 
-**Output:** Save to `F:\AI-Dev\BIMpossible_Workspace\02_Reference\Audit Reports\YYYY-MM-DD__audit-report.md`. If the file already exists for today, append `-2`, `-3`, etc.
+**Output:** Save to `F:\BIMpossible-Workspace\02_Reference\Audit Reports\YYYY-MM-DD__audit-report.md`. If the file already exists for today, append `-2`, `-3`, etc.
 
 ---
 
@@ -56,7 +56,7 @@ Only files modified since the most recent audit.
 
 Top to bottom. Do NOT restrict to recently-modified files. Re-examine the full codebase as if seeing it for the first time, plus the workspace docs / strategy / build-log layer. Carry the prior-audit context (most recent report in `02_Reference\Audit Reports\`, with legacy reports in `02_Reference\` root) only as a checklist for "did previously-flagged items get fixed, or did they regress" — do not let it constrain what you look at.
 
-**Output:** Save to `F:\AI-Dev\BIMpossible_Workspace\02_Reference\Audit Reports\YYYY-MM-DD__audit-report-full.md`.
+**Output:** Save to `F:\BIMpossible-Workspace\02_Reference\Audit Reports\YYYY-MM-DD__audit-report-full.md`.
 
 ---
 
@@ -79,4 +79,4 @@ Findings go in the report like any other; label `HYPOTHESIS` until verified.
 
 ## Run index (every run)
 
-Append one row to `F:\AI-Dev\BIMpossible_Workspace\02_Reference\_audit-runs.md` (create it with an `# Audit run index` heading + `| Date | Type | Files reviewed | Top finding | Report |` table header if it does not yet exist). Record the date, type (`incremental` or `full`), how many files were in scope, the single most serious finding (one line), and a relative link to this run's report. The index file itself stays at `02_Reference\_audit-runs.md` (it spans both legacy root reports and the new subfolder); reports now live in `Audit Reports\`, so the link is `Audit Reports/<file>.md` (URL-encode the space as `Audit%20Reports/`).
+Append one row to `F:\BIMpossible-Workspace\02_Reference\_audit-runs.md` (create it with an `# Audit run index` heading + `| Date | Type | Files reviewed | Top finding | Report |` table header if it does not yet exist). Record the date, type (`incremental` or `full`), how many files were in scope, the single most serious finding (one line), and a relative link to this run's report. The index file itself stays at `02_Reference\_audit-runs.md` (it spans both legacy root reports and the new subfolder); reports now live in `Audit Reports\`, so the link is `Audit Reports/<file>.md` (URL-encode the space as `Audit%20Reports/`).

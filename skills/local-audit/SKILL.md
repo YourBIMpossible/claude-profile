@@ -44,7 +44,7 @@ instead of invoking this.
 
 ## Run it
 
-1. **Resolve args.** Repo path (default `F:\AI-Dev\BIMpossible`; never guess a
+1. **Resolve args.** Repo path (default `F:\BIMpossible`; never guess a
    different one — ask). Scope: default **incremental** (`--since` the last local
    report for that repo under `out/`, else the newest `main`/`master` merge base);
    `full` on request. Optional `--max-files N` (default 25).

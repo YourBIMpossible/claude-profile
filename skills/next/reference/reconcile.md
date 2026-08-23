@@ -110,7 +110,7 @@ condition the per-project ledgers lose.
    ship the mismatch.
 5. Advance watermarks for successfully-read projects only.
 6. **Publish the mirror (Option B, 2026-08-08).** The workspace repo carries a committed mirror at
-   `F:\AI-Dev\BIMpossible_Workspace\.tools\state`. Copy the regenerated `queue.yaml` + `QUEUE.md`
+   `F:\BIMpossible-Workspace\.tools\state`. Copy the regenerated `queue.yaml` + `QUEUE.md`
    (and `render_queue.py`/`projects.yaml` if they changed) into the mirror and commit **both together**
    through the normal workspace path — `Push-And-Verify.ps1` (PowerShell), never Bash git, never a
    hand-edit of the Markdown. The mirror's `.gitattributes` pins the store to LF so `--check` holds on

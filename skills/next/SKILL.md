@@ -167,9 +167,9 @@ To check for drift, diff the shared sections directly — no tooling beyond what
 
 ```bash
 diff "F:/Claude-Profile/skills/next/reference/item-model.md" \
-     "F:/AI-Dev/BIMpossible_Workspace/.claude/skills/next/reference/item-model.md"
+     "F:/BIMpossible-Workspace/.claude/skills/next/reference/item-model.md"
 diff "F:/Claude-Profile/skills/next/reference/reconcile.md" \
-     "F:/AI-Dev/BIMpossible_Workspace/.claude/skills/next/reference/reconcile.md"
+     "F:/BIMpossible-Workspace/.claude/skills/next/reference/reconcile.md"
 ```
 
 Non-empty output beyond the known project-local deltas (scope line in `SKILL.md`, absent

@@ -2,7 +2,7 @@
 name: revit-functionality-audit
 description: >-
   On-demand code-correctness/behavior audit of the Revit ADD-INS repo
-  (F:\AI-Dev\Add-Ins) — the Add-Ins counterpart of /audit, which covers only the
+  (F:\BIMpossible-AddIns) — the Add-Ins counterpart of /audit, which covers only the
   BIMpossible web repo. Default = incremental since the last report in audits/;
   "complete" = full top-to-bottom. Behavior only — UI/UX belongs to
   /revit-tool-review, which routes its CODE findings here. Findings-report output,
@@ -11,7 +11,7 @@ description: >-
 
 # Revit Add-Ins Functionality Audit
 
-**Scope:** `F:\AI-Dev\Add-Ins` — `BIMpossible.RevitLink` (Commands, ModelHealth, Assistant,
+**Scope:** `F:\BIMpossible-AddIns` — `BIMpossible.RevitLink` (Commands, ModelHealth, Assistant,
 FamilyFixer, Shared, App/ribbon), `BIMpossible.ModelQA.Core`, the six discipline add-ins,
 all test suites, CI/deploy layer. **Not** the BIMpossible web repo (that's `/audit`) and
 **not** UI/UX quality (that's `/revit-tool-review` — it routes CODE findings here).
