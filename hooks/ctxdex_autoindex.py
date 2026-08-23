@@ -6,7 +6,7 @@ it fall out of context forever. This hook indexes it into ctxdex under
 source="bash-output" as a pure side effect. Unlike context_budget.py, it
 never rewrites the tool result — it only reads the same payload and writes
 to ctxdex's own SQLite DB. Query side: ctxdex search --source bash-output
-(see F:/AI-Dev/claude-profile/skills/ctxdex/SKILL.md).
+(see F:/Claude-Profile/skills/ctxdex/SKILL.md).
 
 Contract (same PostToolUse payload as context_budget.py — see that script's
 header for the schema note, verified against the real binary, not just
@@ -62,7 +62,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-CTXDEX_DIR = Path("F:/AI-Dev/.tools/ctxdex")
+CTXDEX_DIR = Path("F:/Claude-Tools/ctxdex")
 MIN_BYTES = 100 * 1024
 LOG_PATH = Path(__file__).with_name("ctxdex_autoindex.log")
 

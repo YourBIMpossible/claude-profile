@@ -23,7 +23,7 @@ SKILLS_DIR = HOME / ".claude" / "skills"
 SETTINGS = HOME / ".claude" / "settings.json"
 MEMORY_MD = HOME / ".claude" / "projects" / "F--AI-Dev" / "memory" / "MEMORY.md"
 CLAUDE_MDS = [
-    Path("F:/AI-Dev/claude-profile/CLAUDE.md"),
+    Path("F:/Claude-Profile/CLAUDE.md"),
     Path("F:/AI-Dev/CLAUDE.md"),
 ]
 

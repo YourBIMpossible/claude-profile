@@ -15,7 +15,7 @@ swallows failure, over-counts success, or tests a dead twin. Ported from
 
 ## Scope & args
 
-- **Argument = repo path** (e.g. `/slop-audit F:\AI-Dev\PC-Monitor`). No argument →
+- **Argument = repo path** (e.g. `/slop-audit F:\PC-Monitor`). No argument →
   ask which repo; never guess.
 - `complete` / `full` after the path → FULL scan. Default is **INCREMENTAL**:
   window = commits since the newest `audits/*__slop-audit*.md` in that repo (no

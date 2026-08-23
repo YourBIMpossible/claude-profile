@@ -5,7 +5,7 @@ description: Repo reality-check CLI — validates that a repo's documented claim
 
 # ctxcheck — repo reality-check
 
-CLI at `F:/AI-Dev/.tools/ctxcheck/ctxcheck.py` (single-file stdlib Python, its
+CLI at `F:/Claude-Tools/ctxcheck/ctxcheck.py` (single-file stdlib Python, its
 own local git repo). It answers one question: **do this repo's documented
 claims still hold?**
 
@@ -21,7 +21,7 @@ claims still hold?**
 ## Commands
 
 ```bash
-py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run claude-profile
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run claude-profile
 ```
 
 `run <name>` resolves `configs/<name>.toml` inside the ctxcheck repo
@@ -29,10 +29,10 @@ py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run claude-profile
 (uses `<repo>/.ctxcheck.toml`) or `--config <file> --repo <dir>`.
 
 ```bash
-py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run bimpossible --only files,endpoints
-py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run bimpossible --json
-py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run claude-profile --verbose
-py F:/AI-Dev/.tools/ctxcheck/ctxcheck.py run claude-profile --strict
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run bimpossible --only files,endpoints
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run bimpossible --json
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run claude-profile --verbose
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run claude-profile --strict
 ```
 
 - `--only` filters categories: `files,refs,env,compose,endpoints,links,commands,staleness`.

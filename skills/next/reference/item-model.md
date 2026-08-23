@@ -1,6 +1,6 @@
 # Item model, ranking, and rendering
 
-Canonical store, two tiers (both in `F:\AI-Dev\.tools\state\`):
+Canonical store, two tiers (both in `F:\Claude-Tools\state\`):
 
 - `queue.yaml` — ACTIVE operational queue + reconcile watermarks. Authoritative for open work.
 - `queue-archive.yaml` — closed-item provenance (`live`/`dropped` records moved out of the active

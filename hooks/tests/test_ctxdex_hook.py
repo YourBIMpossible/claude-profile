@@ -11,10 +11,10 @@ import time
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "ctxdex_autoindex.py")
-CTXDEX = "F:/AI-Dev/.tools/ctxdex/ctxdex.py"
+CTXDEX = "F:/Claude-Tools/ctxdex/ctxdex.py"
 PROJECT = "ctxdex-hook-selftest"
 CWD = "F:/AI-Dev/_scratch/ctxdex-hook-selftest"
-DB_PATH = Path(f"F:/AI-Dev/.tools/ctxdex/data/{PROJECT}.db")
+DB_PATH = Path(f"F:/Claude-Tools/ctxdex/data/{PROJECT}.db")
 
 results = []
 
@@ -180,14 +180,14 @@ rows = db_rows("bash-output")
 check("7a non-Bash tool_name exits 0", p.returncode == 0)
 check("7b non-Bash tool_name never indexed", len(rows) == 0, f"rows={rows}")
 
-self_index_payload = dict(base_payload, tool_input={"command": "python F:/AI-Dev/.tools/ctxdex/ctxdex.py search \"foo\""})
+self_index_payload = dict(base_payload, tool_input={"command": "python F:/Claude-Tools/ctxdex/ctxdex.py search \"foo\""})
 p = run_hook(self_index_payload)
 rows = db_rows("bash-output")
 check("7c command invoking ctxdex itself is skipped (no recursive self-index)", len(rows) == 0, f"rows={rows}")
 clean_db()
 
 # backslash path + bare-name-at-start variants must also trip the guard
-self_index_bs_payload = dict(base_payload, tool_input={"command": r"python F:\AI-Dev\.tools\ctxdex\ctxdex.py stats"})
+self_index_bs_payload = dict(base_payload, tool_input={"command": r"python F:\Claude-Tools\ctxdex\ctxdex.py stats"})
 p = run_hook(self_index_bs_payload)
 rows = db_rows("bash-output")
 check("7d backslash-path ctxdex.py invocation is skipped", len(rows) == 0, f"rows={rows}")
@@ -216,13 +216,13 @@ rows = db_rows("bash-output")
 check("7g prose mention of 'ctxdex' (not an invocation) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
 clean_db()
 
-mention_grep_payload = dict(base_payload, tool_input={"command": "grep -r ctxdex F:/AI-Dev/claude-profile"})
+mention_grep_payload = dict(base_payload, tool_input={"command": "grep -r ctxdex F:/Claude-Profile"})
 p = run_hook(mention_grep_payload)
 rows = db_rows("bash-output")
 check("7h grepping FOR 'ctxdex' (not invoking it) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
 clean_db()
 
-mention_read_own_source_payload = dict(base_payload, tool_input={"command": "cat F:/AI-Dev/claude-profile/hooks/ctxdex_autoindex.py"})
+mention_read_own_source_payload = dict(base_payload, tool_input={"command": "cat F:/Claude-Profile/hooks/ctxdex_autoindex.py"})
 p = run_hook(mention_read_own_source_payload)
 rows = db_rows("bash-output")
 check("7i reading this hook's own source (ctxdex_autoindex.py, not ctxdex.py) is NOT suppressed", len(rows) >= 1, f"rows={rows}")

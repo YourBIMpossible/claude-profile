@@ -1,0 +1,71 @@
+version: 1.0.0
+
+severity:
+  low: 1
+  medium: 2
+  high: 3
+  critical: 4
+
+likelihood:
+  rare: 1
+  unlikely: 2
+  possible: 3
+  likely: 4
+
+score: severity_x_likelihood
+
+risk_levels:
+  low:
+    score_range: [1, 3]
+    response_tier: short
+    human_approval: false
+  medium:
+    score_range: [4, 7]
+    response_tier: short_or_full
+    human_approval: false
+  high:
+    score_range: [8, 11]
+    response_tier: full
+    human_approval: required_for_consequential_writes
+  critical:
+    score_range: [12, 16]
+    response_tier: full
+    human_approval: required
+    dual_approval: required
+    escalation: required
+
+automatic_escalation:
+  - condition: customer_project_or_model_data_exfiltration_risk
+    minimum_risk_level: high
+    required_reviewer: ciso
+  - condition: tenant_boundary_or_authorization_change
+    minimum_risk_level: high
+    required_reviewer: ciso
+  - condition: revit_or_graph_mutation
+    minimum_risk_level: high
+    required_reviewers: [bim_manager, cto]
+    human_approval: required
+  - condition: irreversible_or_unverified_data_change
+    minimum_risk_level: critical
+    human_approval: required
+    dual_approval: required
+  - condition: unsupported_model_claim_or_low_evidence_model_finding
+    minimum_risk_level: high
+    required_reviewers: [evidence_analyst, bim_manager, ai_evaluation]
+  - condition: unbounded_llm_or_api_cost_exposure
+    minimum_risk_level: medium
+    required_reviewer: cfo
+  - condition: production_incident_with_security_or_customer_impact
+    minimum_risk_level: high
+    required_reviewers: [ciso, cto]
+
+risk_record_template:
+  id: R-001
+  description: ""
+  severity: high
+  likelihood: possible
+  score: 9
+  mitigation: ""
+  owner: ""
+  escalation_required: true
+  residual_risk: ""

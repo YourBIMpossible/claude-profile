@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
-RECALL_DIR = Path(r"F:\AI-Dev\.tools\graphify\recall")
+RECALL_DIR = Path(r"F:\Claude-Tools\graphify\recall")
 sys.path.insert(0, str(RECALL_DIR))
 sys.path.insert(0, str(SCRIPTS_DIR))
 

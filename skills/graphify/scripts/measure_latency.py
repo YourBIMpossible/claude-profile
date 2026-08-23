@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
-RECALL_DIR = Path(r"F:\AI-Dev\.tools\graphify\recall")
+RECALL_DIR = Path(r"F:\Claude-Tools\graphify\recall")
 sys.path.insert(0, str(RECALL_DIR))
 
 import measure_recall as mr  # noqa: E402

@@ -89,7 +89,7 @@ loading - no error, no warning, just missing instructions.
 
 Move or re-clone this repo somewhere without spaces, then run bootstrap again:
   C:\claude-profile
-  F:\AI-Dev\claude-profile
+  F:\Claude-Profile
 
 (The skills junction and generated JSON configs handle spaces fine - it is
 only the CLAUDE.md @import that does not.)

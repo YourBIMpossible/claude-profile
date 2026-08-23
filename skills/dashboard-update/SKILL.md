@@ -1,6 +1,6 @@
 ---
 name: dashboard-update
-description: Use when updating, refreshing, rescanning, or fixing the AI-Dev project dashboard (F:\AI-Dev\Dashboard, data.js, ai-dev-dashboard, ai-dev-dashboard.pages.dev) — after an audit run, after work lands across repos, when a project card or the Toolkit looks stale, or when asked to "update the dashboard".
+description: Use when updating, refreshing, rescanning, or fixing the AI-Dev project dashboard (F:\AI-Dashboard\Dashboard, data.js, ai-dev-dashboard, ai-dev-dashboard.pages.dev) — after an audit run, after work lands across repos, when a project card or the Toolkit looks stale, or when asked to "update the dashboard".
 ---
 
 # Dashboard Update
@@ -17,11 +17,11 @@ Renders the AI-Dev dashboard from other systems' outputs. **This skill is a rend
 
 ## Always, every mode
 
-1. **Sync before touching anything.** `git -C F:\AI-Dev\Dashboard fetch origin main` then `git merge --ff-only origin/main`. The auto-clone pushes ~daily; a patch built on a stale base silently reverts live content. Re-check for drift again right before you commit.
-2. **Run the refresh:** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "F:\AI-Dev\Dashboard-auto\Refresh-Dashboard.ps1"`, then read `F:\AI-Dev\Dashboard-auto\_backups\refresh-log.txt`. This renders phases/waves from the ledgers, dates/activity from git, DAG, graph-metrics. Never hand-edit what it owns (`progress` for `bimpossible`, `activity`, `lastActivity`, `generated`). Then ff-sync the editing clone to what it pushed.
+1. **Sync before touching anything.** `git -C F:\AI-Dashboard\Dashboard fetch origin main` then `git merge --ff-only origin/main`. The auto-clone pushes ~daily; a patch built on a stale base silently reverts live content. Re-check for drift again right before you commit.
+2. **Run the refresh:** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "F:\AI-Dashboard\Dashboard-auto\Refresh-Dashboard.ps1"`, then read `F:\AI-Dashboard\Dashboard-auto\_backups\refresh-log.txt`. This renders phases/waves from the ledgers, dates/activity from git, DAG, graph-metrics. Never hand-edit what it owns (`progress` for `bimpossible`, `activity`, `lastActivity`, `generated`). Then ff-sync the editing clone to what it pushed.
 3. **Never freehand-edit `data.js`.** Patch through the repo's own machinery — a throwaway Python script importing from the repo:
    ```python
-   sys.path.insert(0, r"F:\AI-Dev\Dashboard")
+   sys.path.insert(0, r"F:\AI-Dashboard\Dashboard")
    from sync_dashboard import extract_block, apply_patch, node_check
    from sync_ledgers import compact_to_js
    i, j, block = extract_block(data_js, "addins")

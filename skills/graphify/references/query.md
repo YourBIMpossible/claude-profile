@@ -60,8 +60,8 @@ Opt-in BM25 reranking of the returned candidates (reorders/selects within what B
 
 ```bash
 if [ -n "$GRAPHIFY_RERANK" ]; then
-    python "F:/AI-Dev/claude-profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --rerank
-    # or: python "F:/AI-Dev/claude-profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --dfs --budget 3000 --rerank
+    python "F:/Claude-Profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --rerank
+    # or: python "F:/Claude-Profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --dfs --budget 3000 --rerank
 else
     graphify query "QUESTION"
 fi

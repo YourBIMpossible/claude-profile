@@ -53,7 +53,7 @@ instead of invoking this.
 3. **Launch the runner** (it does pre-pass → per-file Qwen calls → report assembly):
 
    ```bash
-   python F:\AI-Dev\.tools\local-audit\local_audit.py "<repo>" [--full] [--since <ref>] [--max-files N]
+   python F:\Claude-Tools\local-audit\local_audit.py "<repo>" [--full] [--since <ref>] [--max-files N]
    ```
 
    Each flagged file is ~1 min on the local GPU. A full BIMpossible sweep (25 files)

@@ -14,7 +14,7 @@ Applies in every session, every repo, every folder — not just under F:\AI-Dev.
 - Default to the robust long-term solution; name the quick hack so I can consciously reject it.
 - When an approach starts failing (second unexpected error, assumption proven wrong), stop and re-plan instead of pushing harder — grinding on a dead approach burns more context than starting over.
 - In long tool-heavy tasks, protect the context window: delegate bulk exploration/search to subagents, read slices instead of whole files, keep command output small (big output → file → read the slice you need). Mid-task compaction loses detail; treat it as a failure to avoid.
-- Multi-phase or multi-hour job: read `F:\AI-Dev\claude-profile\LONG-TASK-HARNESS.md` first and run the job by it — phases, anchor doc, checkpoints, fresh session per phase.
+- Multi-phase or multi-hour job: read `F:\Claude-Profile\LONG-TASK-HARNESS.md` first and run the job by it — phases, anchor doc, checkpoints, fresh session per phase.
 - Stay on the session's original mandate. Discoveries outside it get one line in the /next queue or anchor — never handled inline, including "quick" fixes.
 
 # Skills

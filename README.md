@@ -32,7 +32,7 @@ hold a lock on `~/.claude/skills`. Re-running bootstrap is safe if that happens.
 
 ### Normal path (GitHub reachable)
 
-1. Clone this repo to a path with **no spaces in it** - `F:\AI-Dev\claude-profile`,
+1. Clone this repo to a path with **no spaces in it** - `F:\Claude-Profile`,
    `C:\claude-profile`, or similar. `%USERPROFILE%\claude-profile` is fine too, but
    only if your Windows username has no space in it (`C:\Users\First Last\...`
    does not work). See "Why no spaces" below; bootstrap refuses rather than

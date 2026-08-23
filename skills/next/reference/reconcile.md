@@ -58,8 +58,8 @@ off, new gates in ledger rows, audit findings that block production, un-run veri
 or commit, probe the combined index:
 
 ```bash
-python F:/AI-Dev/.tools/state/queue_store.py --known-pr <repo>#<N>     # exit 0 = known, 2 = unknown
-python F:/AI-Dev/.tools/state/queue_store.py --known-commit <sha>
+python F:/Claude-Tools/state/queue_store.py --known-pr <repo>#<N>     # exit 0 = known, 2 = unknown
+python F:/Claude-Tools/state/queue_store.py --known-commit <sha>
 ```
 
 A PR represented only in `queue-archive.yaml` is **known** — never re-create it as a new active
@@ -94,15 +94,15 @@ condition the per-project ledgers lose.
 2. **Claim check** — for every item about to be written, if `owner` is set to a different
    session's identifier, skip writing that item and report it `OWNED BY <owner>` instead
    (`reference/item-model.md` § Claiming). Write everything else normally.
-3. Write `queue.yaml` in the live store (`F:\AI-Dev\.tools\state`), then validate both tiers:
-   `python F:/AI-Dev/.tools/state/queue_store.py` (must print OK, exit 0). Archive-eligible
+3. Write `queue.yaml` in the live store (`F:\Claude-Tools\state`), then validate both tiers:
+   `python F:/Claude-Tools/state/queue_store.py` (must print OK, exit 0). Archive-eligible
    records (item-model.md "Store hygiene and archiving") may be moved to `queue-archive.yaml`
    in the same pass; keep the watermark block structured values only — sync narrative goes in
    the commit message, not the file.
 4. Regenerate `QUEUE.md` deterministically — never hand-render it:
 
    ```bash
-   python F:/AI-Dev/.tools/state/render_queue.py --generated-on <today> --check   # expect CHECK OK after step-4 write
+   python F:/Claude-Tools/state/render_queue.py --generated-on <today> --check   # expect CHECK OK after step-4 write
    ```
 
    `render_queue.py` (no flags) writes `QUEUE.md`; `--check` re-derives and byte-compares without

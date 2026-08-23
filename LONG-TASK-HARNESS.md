@@ -61,8 +61,8 @@ any moment without losing the job.
 ## Session scope
 
 - Build sessions: cwd = the repo root (worktree per lane, per house rules).
-- Portfolio/meta sessions (/next, dashboard, claude-profile tuning): cwd = F:\AI-Dev.
-- Never grep/glob from F:\AI-Dev when the question concerns one repo.
+- Portfolio/meta sessions (/next, dashboard, claude-profile tuning): cwd = F:\Claude-Tools (state/queue lives there; F:\AI-Dev is the personal sandbox).
+- Never grep/glob from a portfolio root (F:\ or F:\Claude-Tools) when the question concerns one repo.
 
 ## Intake discipline (per tool call)
 

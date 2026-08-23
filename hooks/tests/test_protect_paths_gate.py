@@ -24,11 +24,11 @@ def payload(file_path) -> str:
 
 
 BLOCKED = [
-    payload("F:/AI-Dev/BIMpossible/.env"),
-    payload("F:\\AI-Dev\\BIMpossible\\.env"),                     # backslashes
+    payload("F:/BIMpossible/.env"),
+    payload("F:\\BIMpossible\\.env"),                     # backslashes
     payload(".env.production"),
-    payload("F:/AI-Dev/BIMpossible/backend/guard.py"),
-    payload("F:\\AI-Dev\\BIMpossible\\backend\\guard.py"),
+    payload("F:/BIMpossible/backend/guard.py"),
+    payload("F:\\BIMpossible\\backend\\guard.py"),
     payload("C:/Users/Zeria/.ssh/id_rsa"),
     payload("C:/Users/Zeria/.ssh/id_ed25519.pub"),
     payload("certs/server.pem"),
@@ -49,14 +49,14 @@ BLOCKED = [
 ]
 
 ALLOWED = [
-    payload("F:/AI-Dev/BIMpossible/backend/main.py"),
-    payload("F:/AI-Dev/BIMpossible/.env.example"),
+    payload("F:/BIMpossible/backend/main.py"),
+    payload("F:/BIMpossible/.env.example"),
     payload(".env.template"),
     payload("docs/environment.md"),                                # 'env' substring
-    payload("F:/AI-Dev/BIMpossible/backend/guardrails.py"),        # not guard.py
+    payload("F:/BIMpossible/backend/guardrails.py"),        # not guard.py
     payload("src/monkey.py"),                                      # .py not .key
     payload("notes/keys-to-success.md"),
-    payload("F:/AI-Dev/claude-profile/hooks/README.md"),
+    payload("F:/Claude-Profile/hooks/README.md"),
     json.dumps({"tool_name": "NotebookEdit",
                 "tool_input": {"notebook_path": "analysis/run.ipynb"}}),
 ]

@@ -1,7 +1,7 @@
 """Drop-in wrapper for `graphify query` that optionally reranks candidates with BM25.
 
 Productionizes the reranker evaluated in
-F:\\AI-Dev\\.tools\\graphify\\recall\\rerank_bm25.py (see RERANK-EXPERIMENT.md):
+F:\\Claude-Tools\\graphify\\recall\\rerank_bm25.py (see RERANK-EXPERIMENT.md):
 BM25 k1=1.5 b=0.75 over tokenize(label + source_file), stable sort so a
 0.0-vs-0.0 tie keeps graphify's own BFS order, truncated to the same node
 count graphify's own budget would have shown. That method is reused here

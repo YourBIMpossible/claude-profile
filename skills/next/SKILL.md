@@ -1,6 +1,6 @@
 ---
 name: next
-description: Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, wants to see the whole project/roadmap so they can work through it, or types "/next". Renders a cross-repo portfolio board and a ranked, evidence-verified production queue from a durable structured item store at F:\AI-Dev\.tools\state. Ranks by critical path (how much each item unblocks). Modes — /next = board; /next <target> = ranked drill (single #1 move); /next <target> roadmap = live whole-project view, phase by phase, cross-checked against the owner ledger every run (never a static snapshot); /next <target> sync = reconcile the store (run when stale or after a merge wave); /next <target> init = bootstrap a new project; /next all deep = full re-derive. Read-only against project repos — it never fixes, commits, pushes, or hunts defects.
+description: Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, wants to see the whole project/roadmap so they can work through it, or types "/next". Renders a cross-repo portfolio board and a ranked, evidence-verified production queue from a durable structured item store at F:\Claude-Tools\state. Ranks by critical path (how much each item unblocks). Modes — /next = board; /next <target> = ranked drill (single #1 move); /next <target> roadmap = live whole-project view, phase by phase, cross-checked against the owner ledger every run (never a static snapshot); /next <target> sync = reconcile the store (run when stale or after a merge wave); /next <target> init = bootstrap a new project; /next all deep = full re-derive. Read-only against project repos — it never fixes, commits, pushes, or hunts defects.
 ---
 
 # /next — production status and next-move
@@ -30,9 +30,9 @@ audit skills instead of answering it here.
 
 Canonical store is **structured, not prose**:
 
-- `F:\AI-Dev\.tools\state\projects.yaml` — the registry. One entry per project. Hand-edited.
-- `F:\AI-Dev\.tools\state\queue.yaml` — the item store. Canonical. Hand-editable and machine-written.
-- `F:\AI-Dev\.tools\state\QUEUE.md` — **generated view, do not hand-edit.** Regenerated from `queue.yaml`.
+- `F:\Claude-Tools\state\projects.yaml` — the registry. One entry per project. Hand-edited.
+- `F:\Claude-Tools\state\queue.yaml` — the item store. Canonical. Hand-editable and machine-written.
+- `F:\Claude-Tools\state\QUEUE.md` — **generated view, do not hand-edit.** Regenerated from `queue.yaml`.
 
 **Items are cross-repo work items, not repo-scoped rows.** An item declares `projects: [a, b]` when
 it spans repos (BIMpossible ↔ Add-Ins lockstep work is the common case). Never mirror one item into
