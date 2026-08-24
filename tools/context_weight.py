@@ -21,9 +21,10 @@ from pathlib import Path
 HOME = Path.home()
 SKILLS_DIR = HOME / ".claude" / "skills"
 SETTINGS = HOME / ".claude" / "settings.json"
-MEMORY_MD = HOME / ".claude" / "projects" / "F--BIMpossible" / "memory" / "MEMORY.md"
+PROJECTS_DIR = HOME / ".claude" / "projects"
 CLAUDE_MDS = [
     Path("F:/Claude-Profile/CLAUDE.md"),
+    Path("F:/AI-Dev/CLAUDE.md"),
     Path("F:/BIMpossible/CLAUDE.md"),
 ]
 
@@ -33,7 +34,7 @@ DESC_TOTAL_WARN = 10_000 # all personal descriptions combined
 MEMORY_WARN_BYTES = 20_000
 MEMORY_FAIL_BYTES = 25_000   # harness guidance ceiling
 MEMORY_FAIL_LINES = 200      # harness guidance ceiling
-CLAUDEMD_WARN = 8_000        # both files combined
+CLAUDEMD_WARN = 8_000        # all CLAUDE_MDS combined
 TOTAL_WARN = 32_000          # everything standing, combined
 
 # Plugins expected enabled. Anything enabled but not listed => WARN (new context
@@ -89,14 +90,19 @@ def main() -> int:
     if cm_total >= CLAUDEMD_WARN:
         warns.append(f"CLAUDE.md files {cm_total} bytes combined (>= {CLAUDEMD_WARN})")
 
-    if MEMORY_MD.is_file():
-        mem_bytes = len(MEMORY_MD.read_bytes())
-        mem_lines = MEMORY_MD.read_text(encoding="utf-8", errors="replace").count("\n") + 1
-        total += mem_bytes
+    # Each project's index is checked against the ceilings, but only one loads
+    # per session — the largest is the worst-case contribution to `total`.
+    mem_worst = 0
+    for mem in sorted(PROJECTS_DIR.glob("*/memory/MEMORY.md")):
+        proj = mem.parent.parent.name
+        mem_bytes = len(mem.read_bytes())
+        mem_lines = mem.read_text(encoding="utf-8", errors="replace").count("\n") + 1
+        mem_worst = max(mem_worst, mem_bytes)
         if mem_bytes >= MEMORY_FAIL_BYTES or mem_lines >= MEMORY_FAIL_LINES:
-            fails.append(f"MEMORY.md {mem_bytes} bytes / {mem_lines} lines (ceiling {MEMORY_FAIL_BYTES}B / {MEMORY_FAIL_LINES} lines)")
+            fails.append(f"MEMORY.md ({proj}) {mem_bytes} bytes / {mem_lines} lines (ceiling {MEMORY_FAIL_BYTES}B / {MEMORY_FAIL_LINES} lines)")
         elif mem_bytes >= MEMORY_WARN_BYTES:
-            warns.append(f"MEMORY.md {mem_bytes} bytes (>= {MEMORY_WARN_BYTES})")
+            warns.append(f"MEMORY.md ({proj}) {mem_bytes} bytes (>= {MEMORY_WARN_BYTES})")
+    total += mem_worst
 
     try:
         settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
