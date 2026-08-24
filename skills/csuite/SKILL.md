@@ -2,18 +2,14 @@
 name: csuite
 version: 1.0.0
 description: >
-  Explicit-invocation-only governance skill for BIMpossible strategic,
-  product, Revit/BIM, AI, security, commercial, and release-gate decisions.
-  Invoke only with /csuite for feature proposals, model QA, Revit automations,
-  AI workflows, integrations, write actions, architecture decisions, roadmap
-  choices, pilots, pricing, incidents, and post-release reviews.
-  Not for: code-correctness or behavior audits of existing code (route to
-  /audit for BIMpossible web, /revit-functionality-audit for Add-Ins);
-  usability/UX review of a built tool (/revit-tool-review); project status,
-  next-step, or what-is-blocking questions (/next); simple factual questions,
-  isolated copy edits, or trivial non-production code changes. This skill
-  governs decisions before and at release gates — it does not review shipped
-  code, fix defects, or track project state.
+  Explicit /csuite invocation only. Governance for BIMpossible strategic,
+  product, Revit/BIM, AI, security, commercial, and release-gate decisions:
+  feature proposals, model QA, architecture calls, roadmap, pilots, pricing,
+  integrations, write actions, incidents, post-release reviews. Governs
+  decisions before and at release gates — never reviews shipped code, fixes
+  defects, or tracks state. Not for: code/behavior audits (/audit for web,
+  /revit-functionality-audit for Add-Ins); UX review (/revit-tool-review);
+  status or what-is-blocking questions (/next).
 ---
 
 # BIMpossible Orchestrator (`/csuite`)
