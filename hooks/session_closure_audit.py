@@ -80,17 +80,24 @@ def load_config() -> dict:
         return json.load(fh)
 
 
-def run_git(repo: str, *args: str) -> "list[str]":
+def run_git(repo: str, *args: str) -> "list[str] | None":
+    """Run one git command. Returns stdout lines on success, None on ANY
+    failure (non-zero exit, GIT_TIMEOUT, git missing, any exception).
+
+    None vs [] is load-bearing: callers must be able to tell "git said the
+    answer is empty" from "git never answered". Collapsing both to [] made a
+    failed `git status` render as "clean. No action needed." — the exact
+    silent-loss this hook exists to prevent (2026-08-24 slop-audit HIGH)."""
     try:
         proc = subprocess.run(
             ["git", "-C", repo, *args],
             capture_output=True, text=True, timeout=GIT_TIMEOUT,
         )
         if proc.returncode != 0:
-            return []
+            return None
         return proc.stdout.splitlines()
     except Exception:
-        return []
+        return None
 
 
 def list_worktrees(repo_path: str) -> "list[dict]":
@@ -130,7 +137,14 @@ def parse_status(wt_path: str) -> dict:
     info = {
         "branch": None, "detached": False, "upstream": None,
         "ahead": 0, "behind": 0, "tracked_changed": [], "untracked": [],
+        # True when the status call itself failed (timeout, index.lock
+        # contention from a concurrent session, non-zero exit). The defaults
+        # above then describe NOTHING — audit_worktree must report the
+        # failure, never read them as "clean".
+        "status_failed": lines is None,
     }
+    if lines is None:
+        return info
     for line in lines:
         if line.startswith("# branch.head "):
             head = line[len("# branch.head "):].strip()
@@ -295,6 +309,20 @@ def audit_worktree(
             "severity": "ATTENTION REQUIRED",
             "text": f"{path} — status check skipped: audit exceeded its {OVERALL_GIT_BUDGET:.0f}s "
                     "time budget (too many worktrees or slow git). State unknown, not confirmed clean.",
+            "action": "Re-run the audit, or check this worktree manually with `git status`.",
+        })
+        return findings
+
+    # `git status` itself failed (timeout, index.lock held by a concurrent
+    # session, transient git error). Same contract as truncation: an
+    # unanswered check must surface, never render as clean (2026-08-24
+    # slop-audit HIGH — a failed status previously printed "clean. No
+    # action needed.", byte-identical to a genuinely clean worktree).
+    if st.get("status_failed"):
+        findings.append({
+            "severity": "ATTENTION REQUIRED",
+            "text": f"{path} — `git status` failed (timeout, lock contention, or git error). "
+                    "State unknown, not confirmed clean.",
             "action": "Re-run the audit, or check this worktree manually with `git status`.",
         })
         return findings
