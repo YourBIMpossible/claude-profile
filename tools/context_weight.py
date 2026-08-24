@@ -34,8 +34,8 @@ DESC_TOTAL_WARN = 10_000 # all personal descriptions combined
 MEMORY_WARN_BYTES = 20_000
 MEMORY_FAIL_BYTES = 25_000   # harness guidance ceiling
 MEMORY_FAIL_LINES = 200      # harness guidance ceiling
-CLAUDEMD_WARN = 8_000        # all CLAUDE_MDS combined
-TOTAL_WARN = 32_000          # everything standing, combined
+CLAUDEMD_WARN = 20_000       # all CLAUDE_MDS combined (recalibrated 2026-08-24, owner-approved)
+TOTAL_WARN = 56_000          # everything standing, combined (recalibrated 2026-08-24)
 
 # Plugins expected enabled. Anything enabled but not listed => WARN (new context
 # source appeared without an audit). Update this list deliberately when adopting one.
