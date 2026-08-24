@@ -3,13 +3,14 @@ name: csuite
 version: 1.0.0
 description: >
   Explicit /csuite invocation only. Governance for BIMpossible strategic,
-  product, Revit/BIM, AI, security, commercial, and release-gate decisions:
-  feature proposals, model QA, architecture calls, roadmap, pilots, pricing,
+  product, Revit/BIM, AI, security, and release-gate decisions: feature
+  proposals, model QA, architecture calls, roadmap, pilots, pricing,
   integrations, write actions, incidents, post-release reviews. Governs
-  decisions before and at release gates — never reviews shipped code, fixes
-  defects, or tracks state. Not for: code/behavior audits (/audit for web,
-  /revit-functionality-audit for Add-Ins); UX review (/revit-tool-review);
-  status or what-is-blocking questions (/next).
+  decisions at release gates, not shipped code or project state. Not for:
+  code/behavior audits (/audit for web, /revit-functionality-audit for
+  Add-Ins); UX review (/revit-tool-review); status or what-is-blocking
+  questions (/next); trivial asks — factual questions, copy edits,
+  non-production tweaks.
 ---
 
 # BIMpossible Orchestrator (`/csuite`)

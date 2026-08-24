@@ -2,12 +2,13 @@
 name: revit-room-tag-phasing
 description: >-
   Diagnose and fix runaway/blank Revit room tags, and tag rooms in a loaded
-  architectural link — via mcp-server-for-revit. Use when a model is bloated by tens of
-  thousands of room tags, when "Tag All Rooms" produces blank tags, when tags reference
-  rooms in a linked model, or when building/repairing a "Retag All Rooms" tool. Triggers
-  on "why are there so many room tags", "my tags are blank", "tag rooms in the link
-  without the extras". Covers the LinkElementId overload and why phase is NOT a reliable
-  blank-tag predictor for explicit-target tagging (an unloaded link is).
+  architectural link — via mcp-server-for-revit. Use when a model is bloated or slow
+  from tens of thousands of room tags, when "Tag All Rooms" produces blank tags, when
+  tags reference rooms in a link, or building/repairing a "Retag All Rooms" tool.
+  Triggers on "why are there so many room tags", "my tags are blank", "clean up room
+  tags", "tag rooms in the link". Covers the LinkElementId overload
+  and why phase is NOT a reliable blank-tag predictor for explicit-target tagging (an
+  unloaded link is).
 ---
 
 # Revit Room-Tag Phasing & Linked-Room Tagging

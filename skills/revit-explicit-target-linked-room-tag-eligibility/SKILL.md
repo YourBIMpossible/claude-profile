@@ -2,12 +2,13 @@
 name: revit-explicit-target-linked-room-tag-eligibility
 description: >-
   Verify — don't assume — what makes an explicit-target Revit tag
-  (NewRoomTag(LinkElementId, ...) and similar APIs) render blank versus populated,
-  especially anything phase-related. Use before writing an eligibility/precondition
-  check for tagging or scheduling elements resolved through a RevitLinkInstance, or
-  when a rule is proposed from phase names, phase sequence, or GetPhaseStatus.
-  Triggers on "why is this tag blank", "should I check phase before tagging", or
-  reviewing a Retag-style tool. Room-tag-specific findings: revit-room-tag-phasing.
+  (NewRoomTag(LinkElementId, ...) or any explicit-target placement API) render blank
+  versus populated. The general method — use before any
+  eligibility/precondition check for tagging, annotating, or scheduling elements in a
+  RevitLinkInstance, or when a rule is proposed from phase names, phase sequence, or
+  Element.GetPhaseStatus. Triggers on "why is this tag blank", "should I check phase
+  before tagging", "gate this by phase", or reviewing a Retag-style tool. Room-tag
+  findings: revit-room-tag-phasing.
 ---
 
 # Explicit-Target Linked-Element Tag Eligibility — Verify, Don't Infer
