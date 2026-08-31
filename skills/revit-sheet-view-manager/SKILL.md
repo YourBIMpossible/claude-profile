@@ -3,10 +3,11 @@ name: revit-sheet-view-manager
 description: >
   General/bulk Revit view and sheet management via mcp-server-for-revit: create
   sheets/dependent views, assign scope boxes, trim grid extents, place viewports,
-  set sheet/title-block parameters in bulk, manage print sets, rename views/sheets —
-  even when phrased casually ("fix the grids", "add these to the print set").
-  EXCEPTION: matching EXISTING viewports to a per-sector template sheet is
-  revit-viewport-standardization's job — use it instead.
+  bulk-set sheet/title-block parameters, manage print sets, rename views/sheets —
+  even phrased casually ("fix the grids", "add these to the print set"). Route
+  elsewhere for: matching existing viewports to a template sheet
+  (revit-viewport-standardization), rule-driven bulk text cleanup
+  (revit-name-normalization).
 ---
 
 # Revit Sheet & View Manager
