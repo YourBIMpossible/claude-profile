@@ -1,10 +1,12 @@
 # Roadmap procedure (`<target> roadmap`)
 
-Answers a different question than drill. Drill answers "what's the one move" via cone-rank — correct
-for that, but it structurally buries pure product-development items: a leaf deliverable that unblocks
-nothing else in the store has `cone == 0` and can never rank #1, no matter how much product value it
-carries (item-model.md's hard constraint). `roadmap` doesn't rank against that axis at all — it shows
-everything, grouped by where it sits in the product, so nothing is hidden by the unlock-graph lens.
+Answers a broader question than drill. Drill names the single next move; `roadmap` shows *everything*,
+grouped by where it sits in the product, so you can pick across the whole arc rather than accept one
+ranked answer. (Historically drill also buried leaf product items under cone-rank — a deliverable that
+unblocks nothing had `cone == 0` and could never rank #1. The item-model.md ranking rewrite of
+2026-08-30 fixed that at the source: ranking is anchor-first and, on a flat graph, leverages
+finalization over cone. Roadmap's whole-arc view remains the right tool when you want breadth, not a
+single pick.)
 
 Never cache this output to a file. A file is a snapshot; the whole point of this mode is that there
 is no snapshot to go stale — it re-derives from the store and the live ledger on every call.
@@ -55,8 +57,9 @@ Phases themselves render in ascending numeric order; `Cross-cutting / ops` last.
 
 ## 5. Render
 
-1. Lead with the existing #1 critical-path move (drill's cone-rank, unchanged) — roadmap adds
-   breadth, it does not remove the depth answer.
+1. Lead with the #1 move from the ranking algorithm (item-model.md Step 0–2). Under roadmap-default
+   that is the earliest-incomplete-phase move, not a cone-rank sink — roadmap adds breadth around it,
+   it does not resurrect the old cone-first answer.
 2. Then every phase, in order, one line per item (same line format as drill — see item-model.md
    "Rendering"). Phase heading carries a one-line ledger status/percentage if the ledger states one.
 3. `UNTRACKED` lines render as `[UNTRACKED] <ledger wording>` with no id, no rank.

@@ -91,29 +91,74 @@ workspace sits in `landed`, and every source ledger blurs the two.
 Deterministic. Same store plus same probes must produce the same order every run — unstable ordering
 between sessions is the drift the user is trying to escape.
 
-Compute for each item:
+### Step 0 — Establish the anchor BEFORE sorting (this is the fix for goal-blind ranking)
+
+Ranking has no meaning without a goal. Pick the anchor first, every run:
+
+- **Stated focus** — if the project declares a current focus (a north-star file, a `focus:` key in the
+  registry, or the user has named one *this session*), rank **toward it**: items on the path to that
+  focus lead.
+- **Roadmap-default (the common case)** — if no focus is stated, **default to roadmap phase order**.
+  The #1 move comes from the **earliest incomplete phase** (per the live ledger read in `roadmap.md`
+  step 3), not from the deepest dependency cone. Close phases in sequence.
+
+**Never surface a launch / activation / ops-terminal item (e.g. `OPS-LAUNCH`) as the #1 move unless the
+user has set production as the stated focus.** Such items are *sinks* — many things point at them, so
+cone-rank mechanically drags the answer toward them — but reaching a sink is a goal the user chooses,
+never a default the graph picks. This is the exact failure that made prior runs keep pointing at
+"launch" while the real product work sat ignored.
+
+### Step 1 — Measure the graph before trusting cone
 
 ```
 cone(item) = size of the transitive closure of `unblocks`, following item ids
 ```
 
 Walk `unblocks` breadth-first. **Detect cycles**: if an id is revisited, stop that branch, count it
-once, and report the cycle in the output as a data defect to fix — do not silently loop or drop it.
-Unknown ids in `unblocks` count as 1 and are reported as dangling references.
+once, and report the cycle as a data defect — do not silently loop or drop it. Unknown ids count as 1
+and are reported as dangling references.
 
-Sort:
+Then check the graph's *shape*, because cone only carries signal when the graph has depth:
 
-1. `cone` descending — **primary axis: critical path.**
-2. `owner_gate == true AND effort == S` first — stranded finished value, near-zero cost to bank.
-3. `effort` ascending (S, M, L).
-4. `risk` descending.
-5. `id` ascending — stable tiebreak, guarantees reproducible output.
+- **Flat graph** — most actionable items have `cone == 0` and the top actionable cone is ≤ 1. Cone is
+  meaningless here (it degenerates to "point at the lone sink"). Do **not** rank by it → Step 2b.
+  *(This store is flat today: ~105 of 123 items unblock nothing; measure, don't assume.)*
+- **Deep graph** — several items with `cone ≥ 2` feed distinct downstream work. Only here does
+  cone-descending carry real unblock-leverage → Step 2a.
 
-Hard constraints:
+Report which regime you detected — it explains the ranking to the user.
 
-- An item with `cone == 0` can **never** be ranked #1.
+### Step 2 — Sort
+
+**2a. Deep graph (real dependency depth) with a stated production focus:** unblock-leverage is genuine.
+1. `cone` descending — critical path. 2. `owner_gate == true AND effort == S` — stranded finished
+value, near-zero cost to bank. 3. `effort` ascending. 4. `risk` descending. 5. `id` ascending.
+
+**2b. Flat graph OR roadmap-default (the common case here):** rank by **payoff / finalization
+leverage**, not cone.
+1. **Roadmap position** — items in the earliest incomplete phase first (roadmap-default anchor only).
+2. **Activates a dark feature** — a `landed`/`blocked_owner` item that flips a merged-but-off
+   capability live. A small step that lights up real product value: the biggest win per unit effort.
+3. `owner_gate == true AND effort == S` — other stranded finished value.
+4. `effort` ascending. 5. `risk` descending. 6. `id` ascending (stable tiebreak).
+
+### Two kinds of leverage — always name which one is driving the pick
+
+- **Unblock-leverage** — finishing X frees blocked code (cone). Real *only* in a deep graph.
+- **Visibility / finalization-leverage** — finishing X (verify a `landed` item live, or activate a
+  dark feature) frees no code; it clears the fog so the board becomes honest and the next big chunk
+  becomes pickable. When most value sits in `landed`, this is where the leverage is — surface it,
+  never bury it. A one-step switch that unlocks a large *accountable* workload can outrank a large
+  coding effort that unlocks nothing.
+
+### Hard constraints
+
 - The **#1 move** is the highest-ranked item whose status is `ready`, `blocked_owner`, or `landed`.
-  Other statuses are not actionable and are reported but never recommended.
+  Other statuses are reported but never recommended.
+- **There is no "cone == 0 can never be #1" rule.** *(Removed 2026-08-30 — it was the exact mechanism
+  that buried the flat field of real product work and forced every answer toward the cone sink.)* An
+  item that unblocks nothing is a valid #1 when it activates a dark capability or sits in the earliest
+  incomplete phase.
 - If the top actionable item is `blocked_owner`, say explicitly that it needs the owner, not a build
   session, and state precisely what action closes it.
 

@@ -4,7 +4,7 @@ description: >-
   Use when the user asks where a project stands, what to work on next, what is
   blocking production, what is left to finish, wants the whole roadmap to work
   through, or types "/next". Renders a cross-repo portfolio board and a
-  critical-path-ranked queue from the store at F:\Claude-Tools\state.
+  leverage-ranked, roadmap-anchored queue from the store at F:\Claude-Tools\state.
   Modes — /next = board; /next <target> = ranked drill; /next <target> roadmap =
   live phase view; /next <target> sync = reconcile the store;
   /next <target> init = bootstrap; /next all deep = full re-derive. Read-only on
@@ -28,7 +28,7 @@ live on every read. That is the whole design.
 |---|---|
 | Reports status, ranks work, names the next move | Fixing, committing, pushing, tagging |
 | Reads repos, ledgers, PRs, flags | Hunting defects → route to `/audit`, `/revit-functionality-audit` |
-| Writes `queue.yaml` (its own store) | **Never edits `BIMpossible_PHASE-STATUS.md` or `BIMpossible_WAVE-STATUS.md`** — owner-maintained. Report staleness and draft the row for the owner to paste. |
+| Writes `queue.yaml` (its own store) | **Never writes `BIMpossible_PHASE-STATUS.md` or `BIMpossible_WAVE-STATUS.md` directly** — those are updated by each session's own close-out when it ships wave-worthy work (`F:\BIMpossible\CLAUDE.md` § Session close-out — wave ledger), not by `/next`'s sync. Report staleness so the next close-out (or a backfill pass) catches it up. |
 | Verifies claims against machine evidence | Accepting a doc's word as verification |
 
 If the user's actual question is "is this code correct" or "what's broken", say so and route to the
@@ -78,7 +78,9 @@ Full ranked queue for one project (or `all`).
 3. **Run the `live_check` of the top 5 ranked items and any item with `status: landed`.** Landed items
    are where finished value strands, so they always get re-checked.
 4. Render the derived sections.
-5. Name exactly one **#1 move** with its `unblocks` list as the stated reason.
+5. Name exactly one **#1 move**, stating the **anchor** (stated focus vs roadmap-default) and which
+   **leverage** drives it (unblock vs finalization) as the reason — never a raw `unblocks` list, which
+   is meaningless on the flat graph this store actually has.
 
 If any `live_check` contradicts stored `verification`, see Anti-drift below — do not silently pick a side.
 
@@ -157,31 +159,26 @@ Terse. The source artifacts this replaces failed by being exhaustive, so length 
 - Never emit a `Prior:` chain, a nested history clause, or a paragraph inside a table cell.
 - When something is unknown, say "unknown" and name the probe that would settle it.
 
-## Canonical copy and project mirrors
+## Single home — global skill, one location
 
-This copy (`F:\Claude-Profile\skills\next`) is **canonical** for shared `next` mechanics — item
-model, ranking, reconcile procedure, roadmap mode. `BIMpossible_Workspace\.claude\skills\next` is
-a **project-local mirror**: same behavior, scoped description, no `all deep` (single-project
-workspace has no cross-project board to re-derive). Distinct from the data mirror in
-`reconcile.md` step 6 (`queue.yaml`/`QUEUE.md` copied into the workspace repo) — that publishes
-store *data*; this section is about keeping the *skill files* in sync.
+`next` is a **global, cross-project** skill with exactly one home: `F:\Claude-Profile\skills\next`
+(surfaced at the runtime path `~/.claude/skills/next` through a directory junction — same files, not
+a copy). It renders a cross-project portfolio board, so it is **not** repo-specific.
 
-Rule: when shared `next` behavior changes (item schema, ranking, reconcile steps, claiming), edit
-this canonical copy and mirror the same change into the workspace copy **in the same work item** —
-never as a separate follow-up pass. Project-specific wording (scoped description, dropped modes)
-stays local to the mirror.
+**Never create a project-local mirror of it.** A second copy in any repo's `.claude/skills` is drift
+waiting to happen — the former `BIMpossible-Workspace\.claude\skills\next` mirror silently diverged
+and was deleted 2026-08-30 for exactly this reason. If a repo needs `/next`, it uses the global skill;
+it does not carry its own copy. (Genuinely repo-specific skills — e.g. the workspace's `bim-*` skills
+— correctly live only in their repo and are unaffected by this rule.)
 
-To check for drift, diff the shared sections directly — no tooling beyond what already exists:
-
-```bash
-diff "F:/Claude-Profile/skills/next/reference/item-model.md" \
-     "F:/BIMpossible-Workspace/.claude/skills/next/reference/item-model.md"
-diff "F:/Claude-Profile/skills/next/reference/reconcile.md" \
-     "F:/BIMpossible-Workspace/.claude/skills/next/reference/reconcile.md"
-```
-
-Non-empty output beyond the known project-local deltas (scope line in `SKILL.md`, absent
-`all deep`) means the mirror has drifted — reconcile before trusting either copy.
+**Durable boundary — one home for behavior, snapshots only in repos.** Global skill logic,
+instructions, heuristics, references, and templates have exactly one canonical home: this global
+profile. A repository may contain *generated queue snapshots* (`queue.yaml`/`QUEUE.md`) for review or
+offline reading — but never an executable or authoritative mirror of the skill. The store *data*
+mirror in `reconcile.md` step 6 is that permitted case: it copies data plus the deterministic renderer
+for reading, not skill definition, and every published copy carries a provenance header marking it a
+repo-local snapshot whose canonical producer is this skill (exact header text: `reference/reconcile.md`
+step 6). A snapshot that could be read as configuration is drift; the header exists so it cannot.
 
 ## Reference
 

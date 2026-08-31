@@ -29,14 +29,17 @@ Read cheapest and most trustworthy first. Stop early if the delta is empty.
    working-tree state, tags, `gh pr list --state all --search "updated:>=<date>"`, CI status.
 2. **Deploy and runtime evidence**: feature-flag values, migration head, live-smoke logs, deploy
    records. This is what separates `landed` from `live`.
-3. **Owner ledgers** — `BIMpossible_PHASE-STATUS.md`, `BIMpossible_WAVE-STATUS.md`, and whatever
-   `ledgers:` the registry names. **Judgment source, never verification source.** A ledger claim
-   becomes `verification.level: claimed` until machine evidence confirms it.
+3. **Session-close-out ledgers** — `BIMpossible_PHASE-STATUS.md`, `BIMpossible_WAVE-STATUS.md`, and
+   whatever `ledgers:` the registry names. Written by each session's own close-out when it ships
+   wave-worthy work (`F:\BIMpossible\CLAUDE.md` § Session close-out — wave ledger), not by `sync`.
+   **Judgment source, never verification source.** A ledger claim becomes `verification.level:
+   claimed` until machine evidence confirms it.
 4. **Audit reports, build logs, decision logs** — for items and gates the ledgers missed.
 
 When a source in 3 or 4 contradicts a source in 1 or 2, the machine fact wins for the *fact*, and the
-disagreement is reported as a doc/reality mismatch. Do not edit the owner ledger to fix it — draft
-the corrected row and hand it to the owner.
+disagreement is reported as a doc/reality mismatch. `sync` never writes these ledgers itself — flag
+the mismatch in the report so the next session close-out (or a dedicated backfill pass) corrects the
+row.
 
 ## Per-item decisions
 
@@ -114,8 +117,34 @@ condition the per-project ledgers lose.
    (and `render_queue.py`/`projects.yaml` if they changed) into the mirror and commit **both together**
    through the normal workspace path — `Push-And-Verify.ps1` (PowerShell), never Bash git, never a
    hand-edit of the Markdown. The mirror's `.gitattributes` pins the store to LF so `--check` holds on
-   any checkout. Skip only if the sync changed no queue data. This is the one data-publish path — the
-   workspace `next` skill copy does not duplicate it.
+   any checkout. Skip only if the sync changed no queue data.
+
+   **The mirror is a disposable, read-only DATA snapshot — never a second definition of the skill.**
+   Global skill logic, instructions, heuristics, references, and templates have exactly one canonical
+   home: the global profile (`F:\Claude-Profile\skills\next`). A repo may hold generated *queue
+   snapshots* for offline reading; it must never hold an authoritative or executable mirror of `/next`
+   behavior. This publish path copies `queue.yaml`/`QUEUE.md` (data) plus the deterministic renderer
+   that regenerates the view — nothing that defines how the skill ranks or decides. The former
+   `.claude/skills/next` copy did define behavior and was deleted 2026-08-30 (see SKILL.md § Single
+   home); do not recreate it under any name.
+
+   **Provenance headers (required on the published copies, so a snapshot can never be mistaken for
+   config):**
+   - The published `queue.yaml` copy is stamped with this block at the top — added to the *mirror
+     copy only*, because the canonical `queue.yaml` in `F:\Claude-Tools\state` is the hand-editable
+     source and must NOT carry a "do not edit" banner:
+
+     ```yaml
+     # GENERATED — DO NOT EDIT
+     # Producer: global ~/.claude/skills/next
+     # Canonical skill home: F:\Claude-Profile\skills\next
+     # This file is a repository-local queue snapshot, not skill configuration.
+     ```
+   - The published `QUEUE.md` carries its provenance through `render_queue.py`'s own generated banner,
+     NOT a post-copy stamp — post-stamping the mirror would diverge it from the canonical byte-for-byte
+     and break `render_queue.py --check` on the checkout. The generator's banner is the single source
+     for that header; keep the canonical and the mirror identical. The banner must identify the
+     canonical producer and state that the file is a read model, not a definition of `/next` behavior.
 7. Report the diff: promoted, demoted, added, dropped, contradictions found, and whether the #1 move
    changed. If the #1 move changed, lead with that. Name the mirror commit/PR if one was published.
 
