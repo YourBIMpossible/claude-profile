@@ -114,7 +114,8 @@ condition the per-project ledgers lose.
 5. Advance watermarks for successfully-read projects only.
 6. **Publish the mirror (Option B, 2026-08-08).** The workspace repo carries a committed mirror at
    `F:\BIMpossible-Workspace\.tools\state`. Copy the regenerated `queue.yaml` + `QUEUE.md`
-   (and `render_queue.py`/`projects.yaml` if they changed) into the mirror and commit **both together**
+   (and any changed deterministic tooling — `render_queue.py`, `queue_store.py`, `projects.yaml`)
+   into the mirror and commit **both together**
    through the normal workspace path — `Push-And-Verify.ps1` (PowerShell), never Bash git, never a
    hand-edit of the Markdown. The mirror's `.gitattributes` pins the store to LF so `--check` holds on
    any checkout. Skip only if the sync changed no queue data.
@@ -123,8 +124,10 @@ condition the per-project ledgers lose.
    Global skill logic, instructions, heuristics, references, and templates have exactly one canonical
    home: the global profile (`F:\Claude-Profile\skills\next`). A repo may hold generated *queue
    snapshots* for offline reading; it must never hold an authoritative or executable mirror of `/next`
-   behavior. This publish path copies `queue.yaml`/`QUEUE.md` (data) plus the deterministic renderer
-   that regenerates the view — nothing that defines how the skill ranks or decides. The former
+   behavior. This publish path copies `queue.yaml`/`QUEUE.md` (data) plus the deterministic tooling
+   that regenerates and validates the view (`render_queue.py`, `queue_store.py`) — nothing that
+   defines how the skill ranks or decides. The renderer imports the store validator, so a mirror
+   that ships one without the other silently runs a stale dormancy gate — copy the pair. The former
    `.claude/skills/next` copy did define behavior and was deleted 2026-08-30 (see SKILL.md § Single
    home); do not recreate it under any name.
 

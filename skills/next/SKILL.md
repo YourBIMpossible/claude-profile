@@ -77,6 +77,20 @@ Full ranked queue for one project (or `all`).
 2. Rank them (see `reference/item-model.md`).
 3. **Run the `live_check` of the top 5 ranked items and any item with `status: landed`.** Landed items
    are where finished value strands, so they always get re-checked.
+   **Never run a `live_check` for an item scoped to a dormant project** (a `projects.yaml` entry
+   with `dormant: true` — an item whose `projects` are all dormant). A dormant repo is
+   reassessment-bound: its probes are suspended, non-executable metadata, so an in-scope
+   dormant item carries an empty `live_check` and `queue_store.py` hard-fails if one is added.
+   Treat any command text retained in such an item's evidence as historical provenance only —
+   do not execute it, and render the item **SUSPENDED** (never verified) until dormancy lifts. A
+   governance item scoped to a live project but referencing a dormant one via `affects_projects`
+   is probed normally; the dormancy ban is on running commands *against* the dormant repo.
+   **Mixed-scope items** (`projects` spanning a dormant *and* a live project) keep their live-leg
+   probes but must not carry any `live_check` command that targets the dormant checkout (by path,
+   directory name, or `owner/repo` slug — `queue_store.py` hard-fails on one, whatever the declared
+   legs). Such an item stores `verification.level: partial`, never `verified`, and renders a
+   **PARTIAL** badge — the live leg is real, the dormant leg stays unverified. Run only the
+   live-leg commands; never the dormant one. See `reference/item-model.md` § Dormant projects.
 4. Render the derived sections.
 5. Name exactly one **#1 move**, stating the **anchor** (stated focus vs roadmap-default) and which
    **leverage** drives it (unblock vs finalization) as the reason — never a raw `unblocks` list, which

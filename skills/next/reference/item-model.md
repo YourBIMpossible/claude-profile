@@ -33,7 +33,10 @@ re-parsed.
       ref: BIMpossible#187
       url: https://github.com/YourBIMpossible/BIMpossible/pull/187
   verification:
-    level: verified             # claimed | verified | contradicted
+    level: verified             # claimed | verified | partial | contradicted
+                                # partial: mixed dormant+live scope — live leg holds, dormant
+                                # leg unprobeable (see Dormant projects). suspended is a
+                                # render-only badge, never a stored level.
     by: "PR#187 merged 2936c32f; BIMPOSSIBLE_REVIT_LINK_SYNC_ENABLED default OFF"
     at: 2026-07-26
   live_check:                   # commands that re-settle the deterministic half on read
@@ -49,6 +52,52 @@ re-parsed.
 Required: `id`, `title`, `projects`, `status`, `unblocks`, `verification`, `source`.
 Everything else may be omitted; treat missing `effort` as `M`, missing `risk` as `0`,
 missing `owner_gate` as `false`, missing `owner` as `null`.
+
+Optional cross-project field:
+
+- `affects_projects: [<key>, ...]` — projects an item *governs or touches* without being scoped
+  to them for ranking. Use it for a workspace-owned governance item that must stay visible while
+  pointing at another project (the dormancy gate is the canonical case). Unlike `projects`, it
+  never puts the item on that project's board and never triggers a probe against it.
+
+## Dormant projects (reassessment-bound repos)
+
+A registry entry in `projects.yaml` may carry `dormant: true`. A dormant repo is under top-down
+reassessment: `/next` must never run, emit, or propose a command against it. The flag is machine-read,
+and the invariants are enforced deterministically, not by convention:
+
+- **No runnable probes.** An active item scoped *entirely* to dormant projects must carry an empty
+  `live_check`. `queue_store.py`'s `dormancy_defects` makes a non-empty one a hard load failure — the
+  exact condition that would let a drill run a command against the dormant repo. Retain any historical
+  command text only as non-executable `kind: log` evidence, labelled SUSPENDED.
+- **Not actionable, not #1.** Park such an item (`status: parked`); parked is outside
+  `ACTIONABLE_STATUSES`, so it can never rank as the #1 move.
+- **Never verified from stale evidence.** The renderer forces the badge to **SUSPENDED** for a
+  dormant-scoped item regardless of its stored `verification.level`, because an unprobed item cannot
+  be currently verified. Set the stored level to `claimed` to match.
+- **Gate visibility without reactivation.** Express the governing gate as a workspace-owned item with
+  `projects: [workspace]` and `affects_projects: [<dormant key>]` — never by flipping the dormant
+  project back to `active`. The board discloses every referenced dormant project explicitly.
+
+### Mixed-scope items (one item, dormant + live legs)
+
+An item whose `projects` include *both* a dormant and a live project (e.g.
+`projects: [workspace, families]`) is not all-dormant, so it keeps its live-leg probes — but two
+extra invariants apply, both machine-enforced by `dormancy_defects`:
+
+- **No command may target the dormant leg.** Every individual `live_check` command is scanned;
+  one that references a dormant checkout — by path (`F:/BIMpossible-Families`, either separator,
+  subpaths), by the checkout's directory name as a standalone segment (a relative path, an MSYS
+  `/f/...` path), or by a GitHub `owner/repo` slug reusing that name — is a hard load failure,
+  whatever the item's declared legs (mis-scoping an item to hide a dormant leg is not a bypass).
+  The live-leg commands stay runnable; only the dormant-targeting one must move to non-executable
+  evidence.
+- **`partial`, never `verified`.** The dormant leg is unprobeable, so a whole-item `verified`
+  over-claims. Store `verification.level: partial`; `dormancy_defects` rejects a mixed item stored
+  `verified`, and rejects `partial` on any item that is *not* mixed-dormant (the level is reserved
+  for exactly this shape). The renderer prints a **PARTIAL** badge and a `⏸ dormant leg … suspended`
+  marker so the active leg's evidence never hides the unverified one. (`partial` is a real stored
+  level; `SUSPENDED` remains render-only, for the all-dormant case above.)
 
 ## Claiming (concurrent-session safety)
 
@@ -186,6 +235,8 @@ Line format — one line, no wrapping into prose:
 Rules:
 - `unblocks N` is the cone size, not the raw list length.
 - Always print `verification.level` in caps. `CONTRADICTED` renders with both readings beneath it.
+  A dormant-scoped item renders `SUSPENDED` and a mixed dormant+live item renders `PARTIAL`
+  (both with a `⏸` leg marker) regardless of the stored level — see Dormant projects.
 - Multi-project items show all keys joined by `+`. This is the cross-repo signal — never hide it.
 - Never emit a `Prior:` chain, nested parenthetical history, or a paragraph in a cell. If an item
   needs more than one line, the extra content belongs at `notes_url`.
