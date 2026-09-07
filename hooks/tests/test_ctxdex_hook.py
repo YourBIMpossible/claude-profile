@@ -7,13 +7,18 @@ import json
 import subprocess
 import sys
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "ctxdex_autoindex.py")
 CTXDEX = "F:/Claude-Tools/ctxdex/ctxdex.py"
 PROJECT = "ctxdex-hook-selftest"
-CWD = "F:/AI-Dev/_scratch/ctxdex-hook-selftest"
+# Isolated synthetic scratch root under the OS temp dir — the self-test writes
+# fixture files at f"{CWD}-*.txt", so this MUST be a writable, throwaway location
+# outside any real tree (previously F:/AI-Dev/_scratch, which both created an
+# operative dependency on the retired AI-Dev root and littered that archive).
+CWD = str(Path(tempfile.gettempdir()) / "ctxdex-hook-selftest")
 DB_PATH = Path(f"F:/Claude-Tools/ctxdex/data/{PROJECT}.db")
 
 results = []
