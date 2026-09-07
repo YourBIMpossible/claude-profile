@@ -62,7 +62,8 @@ ALLOWED = [
 ]
 
 
-def main() -> None:
+def run_checks() -> list[str]:
+    """Run every fixture through the gate; return one line per mismatch."""
     failures = []
     for p in BLOCKED:
         rc = run_gate(p)
@@ -72,14 +73,26 @@ def main() -> None:
         rc = run_gate(p)
         if rc != 0:
             failures.append(f"expected ALLOW(0), got {rc}: {p[:90]}")
+    return failures
+
+
+def test_protect_paths_gate() -> None:
+    """pytest entry point - same fixtures as running this file directly."""
+    failures = run_checks()
+    assert not failures, "failing fixtures:\n  " + "\n  ".join(failures)
+
+
+def main() -> int:
+    failures = run_checks()
     total = len(BLOCKED) + len(ALLOWED)
     if failures:
         print(f"FAIL {len(failures)}/{total}:")
         for f in failures:
             print("  " + f)
-        sys.exit(1)
+        return 1
     print(f"OK - {total} fixtures ({len(BLOCKED)} blocked, {len(ALLOWED)} allowed)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
