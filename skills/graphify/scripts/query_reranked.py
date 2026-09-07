@@ -41,7 +41,9 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import NamedTuple
 
 GRAPHIFY = Path(
     r"C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\Scripts\graphify.exe"
@@ -180,23 +182,127 @@ def rebuild_output(target_stdout: str, reranked_node_lines: list[str]) -> str:
     return text + "\n" if target_stdout.endswith("\n") else text
 
 
-def rerank_query(cwd: Path, question: str, budget: int, extra_args: list[str]) -> str:
+class RerankResult(NamedTuple):
+    """Reranked output plus the two real phases measured around it.
+
+    retrieval_ms times the `graphify query` subprocess calls (target budget +
+    candidate pool, including any TRUNCATED retry); rerank_ms times the in-process
+    BM25 scoring and output splice. Both are genuine wall-clock spans around real
+    work -- never fabricated. The caller adds the end-to-end duration_ms.
+    """
+
+    text: str
+    retrieval_ms: float
+    rerank_ms: float
+
+
+def rerank_query(cwd: Path, question: str, budget: int, extra_args: list[str]) -> RerankResult:
+    _r0 = time.perf_counter()
     target_stdout = run_query_raw(cwd, question, budget, extra_args)
     node_lines, _ = parse_node_lines(target_stdout)
     node_cap = len(node_lines)
     if node_cap == 0:
-        return target_stdout
+        # Nothing to rerank: retrieval ran, scoring did not.
+        return RerankResult(target_stdout, (time.perf_counter() - _r0) * 1000, 0.0)
 
     pool_stdout = fetch_pool(cwd, question, extra_args)
-    pool_lines, pool_metas = parse_node_lines(pool_stdout)
+    retrieval_ms = (time.perf_counter() - _r0) * 1000
 
+    _s0 = time.perf_counter()
+    pool_lines, pool_metas = parse_node_lines(pool_stdout)
     docs = [tokenize(f"{m['label']} {m['src']}") for m in pool_metas]
     bm25 = BM25(docs)
     qtok = tokenize(question)
     order = sorted(range(len(pool_lines)), key=lambda i: -bm25.score(qtok, i))
     top_lines = [pool_lines[i] for i in order[:node_cap]]
+    text = rebuild_output(target_stdout, top_lines)
+    rerank_ms = (time.perf_counter() - _s0) * 1000
 
-    return rebuild_output(target_stdout, top_lines)
+    return RerankResult(text, retrieval_ms, rerank_ms)
+
+
+_TELEMETRY_WARNED: set[str] = set()
+
+
+def _warn_telemetry_failure(exc: BaseException) -> None:
+    """Surface a reranked-telemetry write failure without breaking the query.
+
+    The user's result has already been written to stdout by the time this runs,
+    so a logging failure must never change the exit path -- but it must not be
+    swallowed silently either (a signature drift in querylog would otherwise drop
+    the entire rerank arm invisibly). Emits ONE concise stderr line per unique
+    exception signature per process, so a persistent failure can't flood an
+    interactive session. Never calls back into querylog (no recursive telemetry)
+    and never prints result content, the corpus, or secrets -- only the exception
+    type and message.
+    """
+    sig = f"{type(exc).__name__}: {exc}"
+    if sig in _TELEMETRY_WARNED:
+        return
+    _TELEMETRY_WARNED.add(sig)
+    print(
+        f"[graphify] reranked-query telemetry was not recorded:\n{sig}",
+        file=sys.stderr,
+    )
+
+
+def _log_reranked(
+    args: argparse.Namespace,
+    cwd: Path,
+    result: str,
+    *,
+    duration_ms: float,
+    retrieval_ms: float | None = None,
+    rerank_ms: float | None = None,
+) -> None:
+    """Emit exactly ONE query-log record for a wrapper-reranked query.
+
+    The wrapper's own `graphify query` children all run with
+    GRAPHIFY_QUERY_LOG_DISABLE=1 (see run_query_raw), so the package never
+    logs them -- this call is the sole record for the query, stamped
+    rerank=True to distinguish it from a stock `graphify query` (which the
+    package logs itself with rerank=False).
+
+    corpus is resolved exactly as the stock CLI does (cli.py query path):
+    explicit --graph wins, else the GRAPHIFY_OUT-based default, anchored to the
+    same cwd the children ran in and .resolve()d -- so stock and reranked records
+    for one graph share an identical corpus key and never split into two groups.
+
+    Timing fields are NOT claimed equivalent to stock's traversal-only
+    duration_ms. duration_ms here is total wrapper wall time; retrieval_ms and
+    rerank_ms are the measured sub-phases (see RerankResult). Logging is
+    non-fatal: on any failure the query result still stands and a single
+    rate-limited stderr warning is emitted instead of a silent drop.
+    """
+    try:
+        from graphify import querylog
+        from graphify.paths import GRAPHIFY_OUT
+
+        graph_path = args.graph or str(Path(GRAPHIFY_OUT) / "graph.json")
+        gp = Path(graph_path)
+        if not gp.is_absolute():
+            gp = cwd / gp
+        corpus = str(gp.resolve())
+
+        extra: dict[str, object] = {"rerank": True}
+        if retrieval_ms is not None:
+            extra["retrieval_ms"] = round(retrieval_ms, 3)
+        if rerank_ms is not None:
+            extra["rerank_ms"] = round(rerank_ms, 3)
+
+        querylog.log_query(
+            kind="query",
+            question=args.question,
+            corpus=corpus,
+            result=result,
+            mode="bfs",  # rerank path is BFS-only; --dfs never reaches here
+            depth=2,
+            token_budget=args.budget,
+            duration_ms=duration_ms,
+            **extra,
+        )
+    except Exception as exc:
+        _warn_telemetry_failure(exc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -228,7 +334,17 @@ def main(argv: list[str] | None = None) -> int:
         return proc.returncode
 
     try:
-        sys.stdout.write(rerank_query(cwd, args.question, args.budget, extra_args))
+        _t0 = time.perf_counter()
+        rr = rerank_query(cwd, args.question, args.budget, extra_args)
+        sys.stdout.write(rr.text)
+        _log_reranked(
+            args,
+            cwd,
+            rr.text,
+            duration_ms=(time.perf_counter() - _t0) * 1000,
+            retrieval_ms=rr.retrieval_ms,
+            rerank_ms=rr.rerank_ms,
+        )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1

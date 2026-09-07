@@ -68,6 +68,38 @@ graphify query "QUESTION"
 # or: graphify query "QUESTION" --dfs --budget 3000
 ```
 
+**Reranked BFS path (when `GRAPHIFY_RERANK=1`):** if the environment variable
+`GRAPHIFY_RERANK` is set to `1`, route a **BFS** query through the BM25 reranker
+wrapper instead of the bare CLI:
+```bash
+python "F:\Claude-Profile\skills\graphify\scripts\query_reranked.py" --rerank "QUESTION" --budget 2000
+```
+The wrapper re-ranks the traversal's candidate nodes and writes **exactly one**
+query-log record stamped `rerank: true` (its internal `graphify query` children are
+suppressed with `GRAPHIFY_QUERY_LOG_DISABLE=1`, so nothing double-logs). Use the bare
+`graphify query` for `--dfs` and whenever `GRAPHIFY_RERANK` is unset — those record
+`rerank: false` via the CLI's own logger. The reranker is BFS-only; a `--dfs` query
+passes through unreranked even with the flag set. The record's `corpus` is resolved
+the same way the stock CLI resolves it (explicit `--graph`, else the `GRAPHIFY_OUT`
+default, `.resolve()`d), so reranked and stock records for one graph share an identical
+`corpus` key.
+
+**Timing fields — read them right.** The two logger arms do not measure the same thing:
+
+- Stock `duration_ms`: the stock CLI's in-process graph-traversal time only.
+- Reranked `duration_ms`: **total wrapper wall time** — includes the `graphify query`
+  retrieval subprocess(es), any `TRUNCATED` retry, candidate-pool retrieval, BM25
+  scoring, and result assembly. The reranked record also carries `retrieval_ms`
+  (subprocess retrieval) and `rerank_ms` (in-process scoring + splice) as measured
+  sub-phases.
+
+So compare the fields for **end-to-end operational latency**, not as an isolated
+traversal-cost comparison — a reranked `duration_ms` inherently spans 2–3 graphify
+invocations against stock's one. If a telemetry write ever fails, the wrapper still
+returns the query result and prints one concise `[graphify] reranked-query telemetry
+was not recorded: …` line to stderr (rate-limited to one per unique failure per run) —
+it is never silently dropped.
+
 If the CLI is unavailable, load `graphify-out/graph.json` and run the traversal inline:
 
 1. Find the 1-3 nodes whose label best matches the expanded tokens.
