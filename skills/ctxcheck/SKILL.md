@@ -66,6 +66,10 @@ py F:/Claude-Tools/ctxcheck/ctxcheck.py run claude-profile --strict
 
 ## Boundaries
 
-No hook, no MCP layer, no auto-run, no config files planted in target repos.
+No hook, no MCP layer, no config files planted in target repos. ctxcheck never
+runs *itself*; it is invoked externally on a schedule (wired 2026-09-07):
+`/audit` runs it first in both modes (`skills/audit/SKILL.md`, "Reality-check"),
+and the `bimpossible-weekly-full-audit` scheduled task runs it as its REALITY-CHECK
+step every Monday — FAILs become `CTX-` findings, WARNs a drift appendix.
 Scope guard per `docs/adr/0001`: ctxcheck reads and reports — it never indexes,
 rewrites, or fixes.

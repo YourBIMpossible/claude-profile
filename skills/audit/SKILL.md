@@ -60,6 +60,30 @@ Top to bottom. Do NOT restrict to recently-modified files. Re-examine the full c
 
 ---
 
+## Reality-check (ctxcheck) — every run, both modes, FIRST
+
+Before reviewing a single file, run the repo reality-check so the audit reasons from
+what the repo *is*, not what its docs claim (`skills/ctxcheck/SKILL.md`):
+
+```bash
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run bimpossible --json > "<scratch>/ctxcheck.json"
+py F:/Claude-Tools/ctxcheck/ctxcheck.py run bimpossible
+```
+
+- The summary line (`ctxcheck BIMpossible: N pass, N warn, N fail`) goes in the report
+  header, within the first 15 lines, as `**ctxcheck:** <summary line>`.
+- Every **FAIL** (a declared claim that no longer holds) is a finding with a `CTX-` prefix,
+  severity High, cited `file:line` from the JSON. A run with any FAIL prefixes the report
+  title with `DOCS DRIFT — `.
+- **WARNs** (discovered drift: missing path refs, unknown commit SHAs, stale docs) go in a
+  `## ctxcheck drift` appendix table, verified or refuted with grep/Read like any other
+  claim. Never auto-fix them here — a WARN is the owning repo's work; queue one line per
+  cluster via `/next` if it is not fixed in the same run.
+- If ctxcheck itself cannot run (missing config, exception), say so in the header line
+  and prefix the title with `RUN DEGRADED — `; do not report the lens as run.
+
+---
+
 ## Anti-slop checklist (every run, both modes)
 
 Apply `/slop-audit`'s three checks to the in-scope files (full method + per-language
