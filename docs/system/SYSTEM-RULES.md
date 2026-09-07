@@ -8,11 +8,13 @@ Never operate outside the project roots listed above (`F:\AI-Dev` is sandbox-onl
 ## Subfolder rules
 Before working in a subfolder, read its `system/SYSTEM-RULES.md` or `.claude/CLAUDE.md` if present. Subfolder rules ADD to these; if one contradicts a rule here, ask which applies before acting.
 
-## Folder structure (reorganized 2026-05-28)
-Project folders and `system/` live at the workspace root; tooling/transient folders live in `AI-Dev Working/`.
+## Folder structure (historical — pre-extraction layout, reorganized 2026-05-28)
+> Superseded by the 2026-08-22 extraction (see header). This describes the old single-root `F:\AI-Dev\` layout, retained for translating older docs via `RENAMES.md`. The live project roots are listed in the header; `F:\AI-Dev` is now the owner's personal sandbox only.
+
+Project folders and `system/` lived at the `F:\AI-Dev\` root; tooling/transient folders lived in `AI-Dev Working/`.
 - Projects (`F:\AI-Dev\`): **Add-Ins/** (Revit add-ins, C#, git), **AI-Brain-Data/** (Obsidian vault), **BIMpossible/** (platform code, git), **BIMpossible_Workspace/** (docs/planning, no code), **BIMpossible Site/** (marketing site), **BIMpossible-Prompts/** (prompt exports, flagged for consolidation), **Families by AI/**, **Laundry Gig/**, **Preseason Pick'em/** (contains Next.js `PreseasonPickem-app/`).
 - **system/** — top-level rules + personal context (this file, HOW-I-WORK.md, DecisionLog_Format.md, ZIMTools_ClaudeCode_Setup.md, RENAMES.md, `_backups/`). Kept at root so the global CLAUDE.md auto-read of `system/SYSTEM-RULES.md` works.
-- **AI-Dev Working/** — tooling + transient files: `scripts/`, `sandbox/` (wipeable), `inbox/`, `templates/` (incl. `Skills/`), `Settings/` (credentials, not version-controlled), `_backups/`, `.obsidian/`.
+- **AI-Dev Working/** — *archived 2026-09-06* to `F:\zArchive\ai-dev-extraction-20260906\` (untouched since 2026-05-28, no consumer). Formerly held tooling + transient files: `scripts/`, `sandbox/` (wipeable), `inbox/`, `templates/` (incl. `Skills/`), `Settings/` (credentials, not version-controlled), `_backups/`, `.obsidian/`.
 - Folder renamed/moved/removed? Record it in `system/RENAMES.md`, and consult it when older docs reference old paths.
 
 ## Backup policy (per-folder)
