@@ -30,7 +30,6 @@ SETTINGS = HOME / ".claude" / "settings.json"
 PROJECTS_DIR = HOME / ".claude" / "projects"
 CLAUDE_MDS = [
     Path("F:/Claude-Profile/CLAUDE.md"),
-    Path("F:/AI-Dev/CLAUDE.md"),
     Path("F:/BIMpossible/CLAUDE.md"),
 ]
 
