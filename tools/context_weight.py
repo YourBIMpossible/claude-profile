@@ -137,8 +137,12 @@ def main(skills_dir: Path | None = None, claude_mds: list[Path] | None = None,
             unmeasured.append(f"no */memory/MEMORY.md found under {projects_dir}")
     for mem in mems:
         proj = mem.parent.parent.name
-        mem_bytes = len(mem.read_bytes())
-        mem_lines = mem.read_text(encoding="utf-8", errors="replace").count("\n") + 1
+        try:
+            mem_bytes = len(mem.read_bytes())
+            mem_lines = mem.read_text(encoding="utf-8", errors="replace").count("\n") + 1
+        except OSError as e:
+            unmeasured.append(f"could not read {mem} ({e})")
+            continue
         mem_worst = max(mem_worst, mem_bytes)
         if mem_bytes >= MEMORY_FAIL_BYTES or mem_lines >= MEMORY_FAIL_LINES:
             fails.append(f"MEMORY.md ({proj}) {mem_bytes} bytes / {mem_lines} lines (ceiling {MEMORY_FAIL_BYTES}B / {MEMORY_FAIL_LINES} lines)")
