@@ -57,7 +57,12 @@ def build_estate(tmp: Path, *, skills=True, skill_files=True, claude_mds=2,
         if memory:
             mem = projects_dir / "proj" / "memory"
             mem.mkdir(parents=True)
-            (mem / "MEMORY.md").write_text("# Memory index\n", encoding="utf-8")
+            if memory == "unreadable":
+                # A directory named MEMORY.md matches the glob but cannot be read
+                # as a file — a portable stand-in for a locked/permission-denied file.
+                (mem / "MEMORY.md").mkdir()
+            else:
+                (mem / "MEMORY.md").write_text("# Memory index\n", encoding="utf-8")
 
     settings_path = tmp / "settings.json"
     if settings == "good":
@@ -123,6 +128,15 @@ def test_memory_glob_matching_nothing_fails():
     rc, out = run(memory=False)
     assert rc == 2, out
     assert "no */memory/MEMORY.md found under" in out
+    assert "CLEAN" not in out
+
+
+def test_unreadable_memory_md_is_unmeasured_not_a_crash():
+    # 2026-09-07 slop audit LOW-1: a present-but-unreadable MEMORY.md raised an
+    # uncaught OSError while the sibling CLAUDE.md/settings reads reported UNMEASURED.
+    rc, out = run(memory="unreadable")
+    assert rc == 2, out
+    assert "UNMEASURED: could not read" in out and "MEMORY.md" in out, out
     assert "CLEAN" not in out
 
 
