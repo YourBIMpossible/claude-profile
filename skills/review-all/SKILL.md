@@ -46,19 +46,32 @@ Compute the changed-file list; hand the **same** diff to every lens.
 ## Step 1 — Load the repo profile / select lenses
 
 Read `<repo-root>/.claude/review-profile.yaml`. If present it is authoritative for
-lens enable/disable, per-lens modes, `allow_autofix`, `read_only_sandbox`, and
-`local_verification`. If absent, fall back to the heuristics in
-`reference/review-profile.md`. Active lens set = enabled ∧ mode-includes-lens ∧
-(for conditional lenses) path triggers matched against the changed-file list.
+lens enable/disable, per-lens modes, `allow_autofix`, `read_only_sandbox`,
+`local_verification`, `contracts`, and `prior_reports_glob`. If absent, fall back
+to the heuristics in `reference/review-profile.md`. Active lens set = enabled ∧
+mode-includes-lens ∧ (for conditional lenses) `paths` or `content_patterns`
+triggers matched against the diff. A conditional lens the diff's *content* clearly
+implicates but whose triggers don't match may still be enabled as an orchestrator
+judgment call — disclose it in the output as an orchestrator override, naming the
+signal (`reference/review-profile.md` § `enabled_when`).
 
-## Step 2 — Ingest existing auto-gate findings (do NOT re-run them)
+## Step 2 — Ingest existing findings (do NOT re-run their source)
 
-If the repo runs mandatory per-file gate agents (e.g. BIMpossible's
-`backend-endpoint-reviewer` / `migration-reviewer` / `typescript-api-reviewer`
-per CLAUDE.md's agent-gates table), collect the findings they have **already**
-produced this session/PR and feed them into convergence as another provenance
-source. The point is to dedup against them — never to re-invoke and duplicate
-their cost.
+Two ingest-only sources, neither ever re-invoked:
+
+- **Auto-gate findings.** If the repo runs mandatory per-file gate agents (e.g.
+  BIMpossible's `backend-endpoint-reviewer` / `migration-reviewer` /
+  `typescript-api-reviewer` per CLAUDE.md's agent-gates table), collect the
+  findings they have **already** produced this session/PR and feed them into
+  convergence as another provenance source. The point is to dedup against them —
+  never to re-invoke and duplicate their cost.
+- **The prior `/review-all` report.** Locate the most recent report for this
+  branch via the profile's `prior_reports_glob`, or the fallback search in
+  `reference/review-profile.md`, and parse its retained + NOT RETAINED findings.
+  Hand this to convergence as the lineage source (`reference/convergence.md` §
+  Lineage tagging) — it tags each new finding `new` / `residual` / `fix-adjacent` /
+  `previously-not-retained` against it. No report found → note that explicitly;
+  every finding lineage-tags as `new`.
 
 ## Step 3 — Blind parallel fan-out
 
@@ -74,10 +87,13 @@ carrying the lens prompt. Every lens returns the finding contract in
 
 The layer `/bim-code-review` deliberately omits. Normalize → evidence-check →
 apply the retention gate → dedup by `root_cause_key` (union provenance, keep
-highest justified severity) → rank → split non-actionable noise into NOT
-RETAINED. Convergence MUST include the Step 2 auto-gate findings, so one defect
-surfaced by four sources becomes one finding with four provenances instead of
-four noisy variants. Full algorithm, retention gate, and output format:
+highest justified severity) → lineage-tag against the Step 2 prior report →
+action-tier each finding BLOCKER/FOLLOW-UP against the profile's `contracts` →
+rank → split non-actionable noise into NOT RETAINED. Convergence MUST include the
+Step 2 auto-gate findings, so one defect surfaced by four sources becomes one
+finding with four provenances instead of four noisy variants. Ends with a one-line
+stop/re-invoke recommendation — advisory only, never a merge gate. Full algorithm,
+retention gate, lineage tagging, action tiering, and output format:
 `reference/convergence.md`.
 
 ## Step 5 — Optional fix loop (`--fix`)
@@ -91,11 +107,13 @@ only (this is the surviving rule from the retired `converge-review`).
 
 ## Output
 
-Primary output is the **one converged ranked decision list**. Report-only by
-default. Group by root cause; per finding show severity, location, contributing
-lenses (provenance), why it was retained, and the remediation direction. Follow
-with a NOT RETAINED section for transparency. Do not emit raw per-lens dumps as
-the primary output — they are the discovery layer; attach them only as a deep-mode
+Primary output is the **one converged ranked decision list**, opening with a
+one-line stop/re-invoke recommendation and grouped BLOCKER-first then FOLLOW-UP
+(`reference/convergence.md` § Action tiering). Report-only by default. Per finding
+show severity, location, contributing lenses (provenance), lineage against the
+prior report, why it was retained, and the remediation direction. Follow with a
+NOT RETAINED section for transparency. Do not emit raw per-lens dumps as the
+primary output — they are the discovery layer; attach them only as a deep-mode
 appendix.
 
 ## Hard rules
@@ -117,6 +135,10 @@ appendix.
   failure/exploit path, a specific consequence, a feasible remediation, and
   sufficient evidence. Generic advice ("add validation", "use a safer library",
   bare OWASP items) is dropped to NOT RETAINED.
+- **BLOCKER/FOLLOW-UP tiering and the stop/re-invoke recommendation are advisory
+  only.** They guide the human's next action; the skill never merges, never
+  blocks a merge itself, and never re-invokes itself automatically on the strength
+  of its own recommendation.
 
 ## Relationship to existing commands
 
