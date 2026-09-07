@@ -13,7 +13,15 @@ Renders the AI-Dev dashboard from other systems' outputs. **This skill is a rend
 |---|---|---|
 | `refresh` (default) | Routine "update the dashboard" | Run the scheduled refresh; nothing hand-written. Correct even if today's 06:00 run already fired — it's idempotent and reports "already current" |
 | `ingest` | An audit/report just finished | `refresh` + rewrite one card's `audit` block |
-| `full` | "Rescan", "be thorough", days of cross-repo work | `refresh` + per-repo research + hand-patch narrative fields |
+| `full` | "Rescan", "be thorough", days of cross-repo work | `refresh` + per-repo research + hand-patch narrative fields **across every card** (see the completeness rule) |
+
+## The completeness rule — every card, every hand-maintained field
+
+The scheduled refresh owns only `progress` (bimpossible), `activity`, `lastActivity`, `generated`, and ledger-synced `progress.phases`. **Everything else is hand-maintained and only drifts:** `phase`, `focus`, `nextActions`, `recent`, `pendingDecisions`, `reminders`, `blockers`, `status`, `oneLiner`.
+
+A run that hand-patches the few cards you happened to look at and reports "up to date" is the **documented failure mode** — it repeatedly left panels a month stale while claiming done (real case, 2026-08-30: `recent`, `pendingDecisions`, and `reminders` sat at July / early-August content across most cards through three separate "done" reports, because each pass touched only the field the user pointed at). The user's standing instruction: stop making them find the stale panel.
+
+So, whenever a run hand-patches any narrative field, it **must account for all 12 cards and every hand-maintained field on each** — either refresh it, or positively confirm it is still current against the repo. "Confirmed current" is a valid, complete outcome for a genuinely idle card (a dormant project whose `recent[0]` already matches its last commit needs no edit). **"I didn't look at that card / that field" is not.** `check_narrative_freshness.py` (step 4) is the mechanical backstop: it flags any card whose real git activity has run >14 days ahead of its `recent[]` feed, and a non-empty flag list means the run is not done.
 
 ## Always, every mode
 
@@ -29,7 +37,7 @@ Renders the AI-Dev dashboard from other systems' outputs. **This skill is a rend
    data_js = data_js[:i] + "\n    " + new_block + ",\n    " + data_js[j:]
    ```
    Untouched fields stay byte-identical; a bad patch can't ship. Targeted `Edit` calls on a 130KB generated file are how you corrupt it.
-4. **Gate before commit:** `node --check data.js` **and** `python validate_dashboard.py` (0 warnings). Then read the actual diff.
+4. **Gate before commit:** `node --check data.js` **and** `python validate_dashboard.py` (0 warnings) **and** `python check_narrative_freshness.py`. The freshness check must print "all narrative feeds current" (exit 0); if it flags a card, that card's hand-maintained fields are stale — sweep them and re-run before committing. Do not report "done" while any card is flagged. Then read the actual diff. *(A card flagged purely because a brand-new commit landed mid-run, with nothing report-worthy in it, can be waved through — but say so explicitly; the default is to fix, not wave.)*
 5. **Commit `data.js` alone** unless you deliberately changed `index.html` too. Push; both deploys fire (Cloudflare Pages via `deploy.yml`, plus an incidental GitHub Pages mirror).
 6. **Verify the live bytes, not the commit.** Fetch cache-busted and assert on the *specific* card — several cards have a `lastRun`, so a bare `grep lastRun` proves nothing:
    ```bash
@@ -56,12 +64,14 @@ The report is a **point-in-time snapshot**. Before writing counts:
 
 ## Mode: full
 
-Fan out one read-only agent per repo with real activity (see superpowers:dispatching-parallel-agents), then hand-patch. Two failure modes that have actually bitten:
+Fan out read-only agents to cover **every card** (cluster the low-activity ones together; one agent per active repo), then hand-patch — obeying the completeness rule above: all 12 cards, every hand-maintained field, refreshed or confirmed-current. Ask each agent for the full field set it owns (`phase`/`focus`/`nextActions`/`recent`/`blockers`/`status`/`oneLiner`, plus `pendingDecisions`/`reminders` where present), newest-first dated `recent` entries included, each verdict cited to a commit/file/date. Three failure modes that have actually bitten:
 
 - **Check local-only work.** `git log --branches --not --remotes` and `git status`. Unpushed commits and uncommitted docs are invisible to every automated sync — a whole roadmap sat local-only and got missed.
 - **Read the canonical doc, not the summary.** A README's "Status" section may be a stale three-line gloss of a real `ROADMAP.md`. Find the doc that calls itself the source of truth. Don't stop at the first thing you find.
 
-Cards other than `bimpossible` have **no automated writer** for `progress`/`phase`/`focus`/`nextActions` — they only drift. Verify against the repo, never assume.
+Cards other than `bimpossible` have **no automated writer** for `progress`/`phase`/`focus`/`nextActions`/`recent`/`pendingDecisions`/`reminders`/`blockers`/`status`/`oneLiner` — they only drift. Verify against the repo, never assume. The `recent` feed is the most commonly-missed one because nothing errors when it goes stale — it just silently shows month-old highlights; `check_narrative_freshness.py` exists specifically to catch that.
+
+**Recovery chip — survive a process exit.** Background agents die with the parent process: when the session compacts or restarts mid-fan-out they get marked `failed` even though each already wrote its `research/<id>.json`, and the user is left with a dead-end notice instead of a way to continue. So the moment you fan the agents out, register a recovery chip with `spawn_task` — a self-contained prompt to re-run `/dashboard-update full` (idempotent: it only writes what still drifts, so a re-run after a partial run is safe). Hold the returned `task_id`; the instant you've consumed every agent's output *and* the sweep is committed, retire it with `dismiss_task`. If the process dies first, the chip survives and the user re-runs with one click. This is the general habit for any long background-agent fan-out, not just this skill — the chip is a dead-man's switch on orphaned work. Don't drop a chip for a fan-out you'll consume within the same turn, and never leave a redundant chip standing after success.
 
 ## The Toolkit tab
 
@@ -73,3 +83,5 @@ Cards other than `bimpossible` have **no automated writer** for `progress`/`phas
 - Writing counts straight off a report's summary line → check for post-report fixes first.
 - "Deploy succeeded" as proof it's live → fetch the bytes.
 - Patch built before syncing → rebase your work onto origin and re-apply.
+- Patched only the cards/panels the user pointed at → run `check_narrative_freshness.py`; every card must be fresh or explicitly confirmed-idle before "done."
+- Reporting "up to date" without having looked at `recent`, `pendingDecisions`, `reminders`, `blockers`, `status`, and `oneLiner` on **every** card → you've only done part of the board (the exact complaint this skill keeps earning).
