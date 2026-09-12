@@ -29,4 +29,4 @@
 
 ---
 
-This file is a personal profile, not a rules doc. For workspace-wide working style (foundations-first, complete-product-over-MVP, optimization priority, audit output format), see `F:\AI-Dev\system\WORKING-STYLE.md`.
+This file is a personal profile, not a rules doc. For workspace-wide working style (foundations-first, complete-product-over-MVP, optimization priority, audit output format), see `F:\Claude-Profile\docs\system\WORKING-STYLE.md`.
