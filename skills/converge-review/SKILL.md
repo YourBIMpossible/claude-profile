@@ -1,10 +1,6 @@
 ---
 name: converge-review
-description: >-
-  Minimal local-verification rule for BIMpossible pushes (2026-08-18
-  delivery-workflow rebuild — the old converge loop and Complete-Wave.ps1
-  hand-off are retired). Trigger phrases: "converge", "converge-review",
-  "get this push-ready".
+description: "Minimal local-verification rule for BIMpossible pushes. Trigger phrases: \"converge\", \"converge-review\", \"get this push-ready\"."
 ---
 
 # Converge-Review (retired to a one-line rule, 2026-08-18)

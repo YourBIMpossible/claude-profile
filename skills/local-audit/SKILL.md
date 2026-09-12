@@ -1,10 +1,6 @@
 ---
 name: local-audit
-description: >-
-  Run the local Ollama second-opinion audit over a whole repo in one step —
-  deterministic pre-pass discovers, local Qwen classifies, one report comes back.
-  Findings are the LOCAL model's (decorrelated backup), always HYPOTHESIS. On-demand
-  only, never scheduled. Read-only on the target repo. All traffic stays localhost.
+description: "Run the local Ollama second-opinion audit over a repo in one step - deterministic pre-pass, local Qwen classifies, one report. Findings are the LOCAL model's, always HYPOTHESIS. On-demand only. Read-only on the target repo; all traffic stays localhost."
 ---
 
 # Local audit — whole-repo second opinion, one command

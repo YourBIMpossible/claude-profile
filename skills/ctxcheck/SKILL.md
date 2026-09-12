@@ -1,6 +1,6 @@
 ---
 name: ctxcheck
-description: Repo reality-check CLI — validates that a repo's documented claims (anchor files, referenced paths, env/compose/endpoint contracts, commit/ADR links, claimed commands, doc freshness) still match reality. Use before implementing against docs/config, before a release or merge, after infra or repo-layout changes, or when about to rely on an old command, path, or ADR from documentation. Read-only against target repos; reports drift, never fixes it.
+description: "Repo reality-check CLI - validates that a repo's documented claims (anchor files, referenced paths, env/endpoint contracts, commit/ADR links, claimed commands, doc freshness) still match reality. Use before implementing against docs/config, before a release, or when about to rely on an old command, path, or ADR. Read-only; reports drift, never fixes it."
 ---
 
 # ctxcheck — repo reality-check

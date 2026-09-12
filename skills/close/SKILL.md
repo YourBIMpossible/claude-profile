@@ -1,6 +1,6 @@
 ---
 name: close
-description: Session closeout audit. Use when the user says "close", "complete", "status", "can we close this session?", or asks whether the session holds anything not yet on disk. Bare /close = execute closeout (externalize everything + verdict); "/close status" = read-only report. Never fixes or handles discovered items — out-of-scope findings become queue lines, not work.
+description: "Session closeout audit. Use when the user says \"close\", \"complete\", \"status\", or asks whether the session holds anything not yet on disk. Bare /close = execute closeout; \"/close status\" = read-only report. Never fixes discovered items - out-of-scope findings become queue lines."
 ---
 
 # close — session closeout

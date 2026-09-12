@@ -1,6 +1,6 @@
 ---
 name: context-budget
-description: Use when a session is burning tokens on large context, when tool output is about to flood the window (bulk greps, full-file reads, verbose builds, log dumps, MCP schema loads), or when the user asks to reduce token usage / stop wasting context. Enforces "big outputs go to files; small relevant slices stay in context."
+description: "Use when a session is burning tokens on large context, when tool output is about to flood the window (bulk greps, full-file reads, verbose builds, log dumps), or when the user asks to cut token usage. Enforces \"big outputs go to files; small slices stay in context.\""
 ---
 
 # Context Intake Budget

@@ -1,6 +1,6 @@
 ---
 name: ctxdex
-description: Local FTS5 index for durable recall over large content already seen once — fetched docs, big logs, exports, reference dirs. Use when a large artifact will be needed again later in a session or across sessions, when re-reading a big file just to find one section, or when the user says "index this", "search the index", or asks to recall something previously read. Not for live codebase search (use Grep) or code structure (use graphify).
+description: "Local FTS5 index for durable recall over large content already seen once - fetched docs, big logs, exports, reference dirs. Use when a large artifact will be needed again later, or when the user says \"index this\" / \"search the index\". Not for live codebase search (use Grep) or code structure (use graphify)."
 ---
 
 # ctxdex — local knowledge index

@@ -1,13 +1,6 @@
 ---
 name: review-all
-description: >-
-  Run every applicable code-review lens at once on a diff/branch/PR — generic
-  correctness (code-review), diff-scoped security, and repo-declared lenses (BIM
-  Standards+Spec, Revit lifecycle, concurrency) — as blind parallel subagents,
-  then converge to ONE deduplicated ranked verdict. Read-only by default; --fix
-  is explicit and gated. Use after a large coding session when you want all the
-  reviews at once instead of one at a time. Trigger phrases: "review-all",
-  "review everything", "run all reviews".
+description: "Run every applicable code-review lens at once on a diff/branch/PR - correctness, diff-scoped security, and repo-declared lenses - as blind parallel subagents, then converge to ONE deduplicated ranked verdict. Read-only by default; --fix is explicit and gated. Trigger phrases: \"review-all\", \"review everything\", \"run all reviews\"."
 ---
 
 # /review-all — unified multi-lens review orchestrator

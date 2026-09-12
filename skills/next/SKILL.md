@@ -1,14 +1,6 @@
 ---
 name: next
-description: >-
-  Use when the user asks where a project stands, what to work on next, what is
-  blocking production, what is left to finish, wants the whole roadmap to work
-  through, or types "/next". Renders a cross-repo portfolio board and a
-  leverage-ranked, roadmap-anchored queue from the store at F:\Claude-Tools\state.
-  Modes — /next = board; /next <target> = ranked drill; /next <target> roadmap =
-  live phase view; /next <target> sync = reconcile the store;
-  /next <target> init = bootstrap; /next all deep = full re-derive. Read-only on
-  repos — never fixes, commits, pushes, or hunts defects.
+description: "Use when the user asks where a project stands, what to work on next, what is blocking production, what is left to finish, or types \"/next\". Cross-repo portfolio board plus a leverage-ranked, roadmap-anchored queue. Modes: board, <target> drill, roadmap, sync, init, all deep. Read-only on repos - never fixes, commits, or pushes."
 ---
 
 # /next — production status and next-move
