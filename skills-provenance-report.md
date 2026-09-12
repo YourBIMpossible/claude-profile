@@ -30,8 +30,9 @@ Traced the git-history-stripped, hand-modified skills back to their upstream Git
 
 ## 4. taste-skill
 - **Upstream:** same repo, [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill), flagship `skills/taste-skill/SKILL.md` (v2, "design-taste-frontend"), 1206 lines.
-- **CONFIRMED 2026-08-30 — direct diff:** local `skills/taste-skill/SKILL.md` is **byte-for-byte identical** to upstream `main`, both 1206 lines. Zero diff.
-- **Action:** none needed — already current.
+- **CONFIRMED 2026-08-30 — direct diff:** local `skills/taste-skill/SKILL.md` was **byte-for-byte identical** to upstream `main`, both 1206 lines. Zero diff.
+- **Deliberate local deviation since 2026-09-11:** frontmatter `name:` is `taste-skill` (upstream: `design-taste-frontend`), so it matches the directory — the identity the runtime actually dispatches on, and the convention every other local skill follows. Body unchanged; do not "resync" this line away.
+- **Action:** none needed — current apart from that one line.
 
 ## 5. Remaining active skills — checked 2026-08-30, none vendored
 Scanned every active skill under `skills/` (audit, close, context-budget, converge-review, csuite, ctxcheck, ctxdex, dashboard-update, local-audit, next, all `revit-*`, slop-audit, tdd, wiki) for frontmatter `author`/`version` fields and any GitHub/marketplace reference in the body. None carry third-party attribution. `wiki`'s only GitHub link points at your own private `YourBIMpossible/BIMpossible_Workspace` repo (a doc cross-reference, not an origin). `csuite` has a `version: 1.0.0` field but no author — looks self-versioned, not vendored.
