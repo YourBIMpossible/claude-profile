@@ -120,6 +120,12 @@ condition the per-project ledgers lose.
    hand-edit of the Markdown. The mirror's `.gitattributes` pins the store to LF so `--check` holds on
    any checkout. Skip only if the sync changed no queue data.
 
+   **Subject names the snapshot scope, not just the trigger (2026-09-11).** The publish carries
+   every queue change since the last publish. Use `state: <specific scope>` only when the diff is
+   exactly that change; otherwise `state: mirror canonical queue catch-up through YYYY-MM-DD` or
+   `state: mirror <event> plus canonical catch-up through YYYY-MM-DD` (conventions + provenance
+   notes: the mirror's `README.md` § Mirror commit conventions).
+
    **The mirror is a disposable, read-only DATA snapshot — never a second definition of the skill.**
    Global skill logic, instructions, heuristics, references, and templates have exactly one canonical
    home: the global profile (`F:\Claude-Profile\skills\next`). A repo may hold generated *queue
