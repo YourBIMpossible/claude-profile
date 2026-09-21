@@ -16,8 +16,9 @@ import sys
 
 REMINDER = (
     "<decay-reminder>"
-    "File links: markdown links relative to cwd, forward slashes ([name](path/file.md:line)) - "
-    "never absolute backslash paths. "
+    "File links: a markdown link ONLY if the file is inside the CURRENT cwd (relative, forward slashes). "
+    "Any file outside cwd, or written before a cwd change: NO markdown link - print the full absolute path as plain text "
+    "AND deliver it with SendUserFile. Never assume the link opens; check cwd first. "
     "Reports: Done / Assumed / Left-Flags, no filler. "
     "Settled decisions (merged, closed, deliberately gated) stay settled - report once, never re-litigate."
     "</decay-reminder>"
