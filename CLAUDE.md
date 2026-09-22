@@ -37,10 +37,12 @@ route to them there — **that is the canonical location, do not re-fork it.**
 - **revit-functionality-audit** — auditing Add-Ins code/behavior/correctness (not UX).
 - **revit-tool-review** — reviewing, dissecting, or nitpicking a BIMpossible tool's usability, UX, flow, labels, defaults, or messaging. Route code-correctness findings to the functionality-audit track instead of fixing them.
 
-`F:\Revit-Assistant` is a **separate, newer** plugin (its own marketplace) for Revit-*model*
-working sessions (MCP-driven cleanup/audit against a live .rvt, not Add-Ins source) — currently
-holds `revit-safe-duplicate-cleanup`. Enable only in Revit-model sessions (`/plugin` toggle, or
-`enabledPlugins` in that session's `.claude/settings.json`); see `F:\Revit-Assistant\README.md`.
+`F:\Revit-Ops` (renamed from `Revit-Assistant` — avoid confusion with the BIMpossible Revit
+Assistant product) is a **separate, newer** plugin (its own marketplace) + knowledge base for
+Revit-*model* working sessions (MCP-driven cleanup/audit/fixes/health-checks against a live .rvt,
+not Add-Ins source, plus a `worklogs/` postmortem archive) — currently holds
+`revit-safe-duplicate-cleanup`. Enable only in Revit-model sessions (`/plugin` toggle, or
+`enabledPlugins` in that session's `.claude/settings.json`); see `F:\Revit-Ops\README.md`.
 Whether to consolidate the two locations is an open call — see that repo's README.
 
 ## Parallel sessions / worktrees (house rule)
