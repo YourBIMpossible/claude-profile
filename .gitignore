@@ -11,3 +11,7 @@ __pycache__/
 .coverage
 hooks/*.log*
 hooks/*.error.log
+
+# Machine-local trend history for tools/context_weight.py — append-only,
+# per-machine, never part of a repo snapshot.
+tools/context_weight*.jsonl
