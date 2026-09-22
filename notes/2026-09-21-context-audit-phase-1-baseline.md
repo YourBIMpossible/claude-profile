@@ -41,7 +41,7 @@ not-applicable.
 
 | Source | Bytes | % of its ceiling | Scenario(s) |
 |---|---|---|---|
-| global memory index (Claude-Profile MEMORY.md) | 15,272 (97 lines) | 61% of 25,000 | both |
+| global memory index (Claude-Profile MEMORY.md) | 15,272 (97 lines) | 61% of 25,000 | global_session (corrected §12; originally listed as "both") |
 | BIMpossible project memory index | 14,827 (59 lines) | 59% of 25,000 | bimpossible_session |
 | project CLAUDE.md (F:\BIMpossible\CLAUDE.md) | 12,202 | 61% of 20,000 | bimpossible_session |
 | global CLAUDE.md (wrapper 763B + profile 8,399B) | 9,162 | 46% of 20,000 | both |
@@ -50,26 +50,31 @@ not-applicable.
 
 ## 4. Live baseline totals (this run)
 
+**Corrected 2026-09-21 by the pre-Phase-2 load-model verification pass —
+see §12.** The original run below counted Claude-Profile's MEMORY.md
+(15,272B) into `bimpossible_session`. That was an unverified assumption,
+not a measurement; §12 checked it against evidence and found it false. The
+figures in this table are the corrected ones from the second, verified
+run.
+
 | Scenario | Total | % of 56,000B ceiling | Status |
 |---|---|---|---|
 | `global_session` | 29,330 B (~7,332 tok) | 52% | **CLEAN** |
-| `bimpossible_session` | 56,359 B (~14,089 tok) | **101%** | **FAIL** |
+| `bimpossible_session` | 41,087 B (~10,271 tok) | 73% | **CLEAN** (exceeds the 32,000B design target — informational only, not a gate) |
 
-**This is the headline finding.** Every session outside BIMpossible sits
-comfortably within budget. A session working inside `F:\BIMpossible`
-starts 359 bytes over the hard ceiling before a single message is sent —
-purely from standing context (skill descriptions + both CLAUDE.md files +
-both MEMORY.md files). v1's flattened single total (43,481B, "CLEAN") never
-surfaced this because it summed BIMpossible's project-only content into a
-number that looked fine on average; it hid a scenario that's actually over
-budget behind one that isn't.
+A session working inside `F:\BIMpossible` does not start over any real
+budget line: it exceeds only the informational 32KB design target (73% of
+the 56KB hard ceiling, well under the 45KB warning line). The original
+101%/FAIL reading in this section — kept below in §12 as superseded, not
+deleted — double-counted Claude-Profile's MEMORY.md into a scenario it
+never actually loads into; see §12 for the full evidence trail.
 
-Exit code: **2 (FAIL)** — correct: `bimpossible_session` breached
-`SCENARIO_FAIL_BYTES`.
+Exit code: **0 (CLEAN)**, confirmed by a live re-run after the correction
+(§12, step 3).
 
 ## 5. Top three measured contributors
 
-1. Claude-Profile MEMORY.md — 15,272B (~3,818 tok) — 61% of ceiling — both scenarios
+1. Claude-Profile MEMORY.md — 15,272B (~3,818 tok) — 61% of ceiling — global_session only (corrected §12; originally listed as "both scenarios")
 2. BIMpossible MEMORY.md — 14,827B (~3,706 tok) — 59% of ceiling — bimpossible_session
 3. BIMpossible CLAUDE.md — 12,202B (~3,050 tok) — 61% of ceiling — bimpossible_session
 
@@ -112,8 +117,15 @@ real cost.
 
 **First run under schema v2 — this is the baseline.** No prior v2-schema
 history existed before this run; `tools/context_weight.history.jsonl`
-(gitignored, machine-local) now holds exactly one record. All future runs
-compare against the most recent prior record and warn at >10% growth,
+(gitignored, machine-local) now holds a record from the original run
+(`bimpossible_session_bytes: 56359`, pre-correction) and a second record
+from the corrected re-run (§12) with `bimpossible_session_bytes: 41087`.
+The gap between them is the scenario-membership fix, not real growth or
+shrinkage of any tracked content — the tool's >10% growth-only trend check
+did not (and should not) flag it, since it only fires on increases. Anyone
+reading this history file directly should treat the first record as
+measured under the pre-correction (incorrect) scenario model. All future
+runs compare against the most recent prior record and warn at >10% growth,
 either on a scenario total or on any of the six principal per-source keys.
 
 ## 9. Content-quality classification
@@ -128,7 +140,7 @@ judged likely to be high-impact if it could be measured (§6). Taxonomy:
 |---|---|---|
 | Claude-Profile MEMORY.md (15,272B) | **consolidate** | Largest single contributor and growing fastest (10,084B on 2026-08-08 → 15,272B now, +51%); a `/consolidate-memory` pass was already flagged as owner's-call open work in the 2026-09-21 review note. |
 | BIMpossible MEMORY.md (14,827B) | **consolidate** + `scope_by_project` | Already correctly scoped (bimpossible_session only, per v2's fix) — but also large enough to be a consolidation candidate in its own right. |
-| BIMpossible CLAUDE.md (12,202B) | `scope_by_project` | Correctly scoped already; size (61% of its own 20,000B ceiling) is the direct cause of the bimpossible_session FAIL (§4) — a trim candidate, not a scoping problem. |
+| BIMpossible CLAUDE.md (12,202B) | `scope_by_project` | Correctly scoped already; size (61% of its own 20,000B ceiling) was mistakenly read as the cause of a bimpossible_session FAIL in the original run — that FAIL was a measurement error, corrected in §12, not this file's fault. Still a trim candidate on its own ceiling, not a scoping problem. |
 | global CLAUDE.md, wrapper+profile (9,162B) | `keep_always_on` | Needed in every session; well under its ceiling (46%). No action indicated by this measurement alone. |
 | personal skill descriptions (4,558B / 15 skills) | `keep_always_on` | Trigger/routing text, already trimmed per the 2026-08-08 audit; well under ceiling (46%). |
 | enabled-plugin skill descriptions (338B) | `keep_always_on` | Trivial cost (6% of ceiling). |
@@ -182,3 +194,92 @@ No content was trimmed, consolidated, retired, or otherwise remediated.
 §9's classifications are findings for a human decision, not actions taken.
 Per the task boundary, Phase 2 (remediation) does not start from this
 document — it starts from a separate, explicit go-ahead.
+
+## 12. Load-model verdict — pre-Phase-2 verification, 2026-09-21
+
+Before any Phase 2 memory cleanup could be justified by §4's original
+FAIL reading, this pass checked the one assumption that reading rested
+on: that `F:\Claude-Profile\MEMORY.md` actually loads into a Claude Code
+session rooted at `F:\BIMpossible`. It does not begin, and did not
+perform, Phase 2 remediation itself.
+
+**Verdict: disproven.** Claude-Profile's MEMORY.md does not load into a
+BIMpossible-rooted session. §4 and §5 above have been corrected
+accordingly; nothing else in this report changed as a result.
+
+**Evidence.** None of the five acceptable evidence types for cross-project
+loading were found, and the memory system's actual scoping mechanism was
+positively identified:
+
+1. **No config names the file as global/user memory.**
+   `C:\Users\Zeria\.claude\CLAUDE.md` (the always-loaded wrapper) contains
+   exactly one `@`-import — `@F:/Claude-Profile/CLAUDE.md` — and no
+   reference to any `MEMORY.md` path anywhere in its text.
+   `F:\Claude-Profile\CLAUDE.md` (what that import pulls in) likewise
+   contains no reference to any `MEMORY.md` path. `F:\BIMpossible\CLAUDE.md`
+   contains zero `@`-import lines and zero occurrences of the string
+   "MEMORY" (checked directly, `grep -n MEMORY` / `grep -n '^@'`, both
+   empty). `~/.claude/settings.json` contains zero occurrences of the
+   string "memory" (case-insensitive grep, empty); its one
+   `Claude-Profile`-related entry is `permissions.additionalDirectories`,
+   which grants filesystem *access* to that path for tool calls — not a
+   content-injection or memory-loading directive (this is exactly the
+   "directory name" / "file existence" non-proof the task's evidence
+   standard excludes).
+2. **No local hook reads or injects Profile memory into every session.**
+   Every SessionStart/UserPromptSubmit/PostToolUse hook registered in
+   `~/.claude/settings.json` was checked by source
+   (`session-start-pull.ps1`, `northstar_inject.py`,
+   `session_closure_audit.py`, `ctxdex_autoindex.py`): zero occurrences of
+   `MEMORY.md`, `memory/MEMORY`, `memory_path`, "user memory", or "profile
+   memory" in any of them.
+3. **No `@import`/include expands Profile memory into BIMpossible's
+   always-loaded sources** — covered by evidence item 1 above (no
+   `@`-import of any `MEMORY.md` path exists anywhere in the checked
+   files).
+4. **A documented local runtime contract does exist — and it establishes
+   the opposite of cross-loading.** This very session's own system prompt
+   (the harness's "auto memory" section) states the memory system lives at
+   `C:\Users\Zeria\.claude\projects\<encoded-session-cwd>\memory\` — keyed
+   to *this session's own* encoded working directory, not to a fixed
+   global path. That is confirmed structurally: `~/.claude/projects/`
+   holds one directory per distinct encoded working directory this
+   machine has used (`F--Claude-Profile`, `F--BIMpossible`, and many
+   others), and `F--Claude-Profile/memory/MEMORY.md` (15,272B, ~70 topic
+   files, all Claude-Profile/tooling-specific) and
+   `F--BIMpossible/memory/MEMORY.md` (14,827B, ~55 topic files, all
+   BIMpossible-specific) are two independently populated files with zero
+   filename overlap — the observable behavior of per-project isolation,
+   not shared/global loading.
+5. **No directly observable runtime artifact records the file as loaded
+   in a BIMpossible session** — none was found; this is why the verdict is
+   "disproven" (evidence against loading, from items 1–4 above) rather
+   than "unmeasured" (no evidence either way).
+
+**Scenario treatment.**
+- `global_session`: unchanged, 29,330B, CLEAN (52% of the 56,000B
+  ceiling). Claude-Profile's MEMORY.md correctly stays in this scenario —
+  it does load in a Claude-Profile-rooted session (this one).
+- `bimpossible_session` (measured): 56,359 − 15,272 = **41,087B**, status
+  recalculated: 32,000B design target exceeded (informational only, never
+  a gate — see §1) but the 45,000B warning line and the 56,000B hard
+  ceiling are both **not** breached → **CLEAN**.
+- No conditional total is shown (that display is only for Outcome C,
+  unmeasured — this is Outcome B, disproven, so no such figure applies).
+- Fix applied: `tools/context_weight.py`, the `global_memory_bytes`
+  source's `scenarios` tuple changed from `SCENARIOS` (both) to `(GLOBAL,)`
+  — one line, plus an explanatory comment citing this section. No other
+  source, threshold, or scenario definition changed.
+
+**Remaining uncertainty.** Both memory indexes remain legitimate
+consolidation candidates on size and growth alone (§9) — Claude-Profile's
+MEMORY.md grew +51% between 2026-08-08 and this baseline, and a
+`/consolidate-memory` pass was already flagged as owner's-call open work
+independent of this finding. What this pass withdraws is only the *hard-
+ceiling-breach* claim for `bimpossible_session`; it does not claim either
+file is well-sized, and does not recommend against a future consolidation
+pass on its own merits. This verification also did not re-examine the six
+UNMEASURED/optional harness-injected sources in §6 (plugin/hosted skill
+catalog, MCP instructions, deferred-tool catalog, agent-type descriptions,
+SessionStart preview/artifact) — those remain out of scope for this pass,
+unchanged from §6.

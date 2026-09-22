@@ -407,8 +407,19 @@ def run_scan(*,
         ))
 
     # ---- MEMORY.md, measured directly per project — never by subtraction
+    #
+    # global_memory_bytes (Claude-Profile's MEMORY.md) is scoped to GLOBAL
+    # only, not SCENARIOS. Verified 2026-09-21 (pre-Phase-2 load-model
+    # check): Claude Code's memory system is keyed per encoded session cwd
+    # (~/.claude/projects/<encoded-cwd>/memory/MEMORY.md) — a session
+    # rooted at F:\BIMpossible reads F--BIMpossible's own MEMORY.md, never
+    # Claude-Profile's. No @import, hook, or settings.json entry injects
+    # Claude-Profile's MEMORY.md content into a BIMpossible session; see
+    # notes/2026-09-21-context-audit-phase-1-baseline.md §12 for the
+    # evidence trail. Do not restore SCENARIOS here without new evidence
+    # meeting that section's proof bar.
     for key, label, path, scenarios in (
-        ("global_memory_bytes", "global memory index (Claude-Profile project)", global_memory_md, SCENARIOS),
+        ("global_memory_bytes", "global memory index (Claude-Profile project)", global_memory_md, (GLOBAL,)),
         ("project_memory_bytes", "BIMpossible project memory index", bimpossible_memory_md, (BIMPOSSIBLE,)),
     ):
         text, nbytes, nlines, err = _read_text_and_lines(path)
