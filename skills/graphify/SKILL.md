@@ -1,6 +1,6 @@
 ---
 name: graphify
-description: "Use only when explicitly invoked as /graphify - no auto-trigger. Turns any input (code, docs, papers, images, video) into a persistent knowledge graph with query/path/explain tools. Ordinary codebase lookup goes to Grep, not here."
+description: "Turns any input (code, docs, papers, images, video) into a persistent knowledge graph with query/path/explain tools. Select automatically and early for repository-understanding work that needs cross-file, structural, dependency, call-path, data-flow, architecture, impact, or implementation-discovery context, then read the relevant source before making claims or editing. Prefer direct read/Grep for known-file reads, exact symbol/string/error lookups, and narrow one-file changes; fall back to direct search when no graph exists or it is stale. /graphify remains the explicit force command but is not required."
 ---
 
 # /graphify

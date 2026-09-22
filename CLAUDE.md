@@ -24,7 +24,6 @@ Each skill's own description is already loaded — this section only says when t
 *without* being asked, and how the tracks route into each other.
 
 - **next** — asked where a project stands, what to work on next, what's blocking production, or what's left to finish. READ-ONLY on project repos: never fixes, commits, pushes, hunts defects, or edits the owner-maintained PHASE-STATUS/WAVE-STATUS ledgers. Code-correctness questions route to `/audit` or `/revit-functionality-audit`; UX questions to `/revit-tool-review`.
-- **graphify** — explicit `/graphify` only, no auto-trigger.
 
 ## Revit skills — project-scoped, not global
 `revit-viewport-standardization`, `revit-functionality-audit`, `revit-tool-review`, and 5 more
