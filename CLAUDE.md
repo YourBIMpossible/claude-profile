@@ -24,10 +24,25 @@ Each skill's own description is already loaded — this section only says when t
 *without* being asked, and how the tracks route into each other.
 
 - **next** — asked where a project stands, what to work on next, what's blocking production, or what's left to finish. READ-ONLY on project repos: never fixes, commits, pushes, hunts defects, or edits the owner-maintained PHASE-STATUS/WAVE-STATUS ledgers. Code-correctness questions route to `/audit` or `/revit-functionality-audit`; UX questions to `/revit-tool-review`.
+- **graphify** — explicit `/graphify` only, no auto-trigger.
+
+## Revit skills — project-scoped, not global
+`revit-viewport-standardization`, `revit-functionality-audit`, `revit-tool-review`, and 5 more
+(`revit-name-normalization`, `revit-room-tag-phasing`, `revit-sheet-view-manager`,
+`revit-mcp-ambient-transaction-mutation`, `revit-explicit-target-linked-room-tag-eligibility`)
+live in **`F:\BIMpossible-AddIns\.claude\skills\`** — moved there from global `~/.claude/skills`
+by AddIns commit `b1eb622` so they only trigger in sessions cwd'd into that repo (or its
+worktrees), not in every project. `bim-drift-auditor.md` and AddIns' own `CLAUDE.md` already
+route to them there — **that is the canonical location, do not re-fork it.**
 - **revit-viewport-standardization** — aligning, standardizing, or repairing Revit viewports, sector/sheet-set plan views, grid bubbles, annotation crops, or viewport titles through mcp-server-for-revit.
 - **revit-functionality-audit** — auditing Add-Ins code/behavior/correctness (not UX).
 - **revit-tool-review** — reviewing, dissecting, or nitpicking a BIMpossible tool's usability, UX, flow, labels, defaults, or messaging. Route code-correctness findings to the functionality-audit track instead of fixing them.
-- **graphify** — explicit `/graphify` only, no auto-trigger.
+
+`F:\Revit-Assistant` is a **separate, newer** plugin (its own marketplace) for Revit-*model*
+working sessions (MCP-driven cleanup/audit against a live .rvt, not Add-Ins source) — currently
+holds `revit-safe-duplicate-cleanup`. Enable only in Revit-model sessions (`/plugin` toggle, or
+`enabledPlugins` in that session's `.claude/settings.json`); see `F:\Revit-Assistant\README.md`.
+Whether to consolidate the two locations is an open call — see that repo's README.
 
 ## Parallel sessions / worktrees (house rule)
 Two Claude sessions must NEVER share one physical git checkout — uncommitted edits intermingle
