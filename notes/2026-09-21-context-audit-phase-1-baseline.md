@@ -283,3 +283,9 @@ UNMEASURED/optional harness-injected sources in §6 (plugin/hosted skill
 catalog, MCP instructions, deferred-tool catalog, agent-type descriptions,
 SessionStart preview/artifact) — those remain out of scope for this pass,
 unchanged from §6.
+
+**Validity condition.** Outcome B is valid for the currently observed
+local loading contract. Re-evaluate BIMpossible scenario membership if a
+future client/harness change introduces user-level memory, an explicit
+import of Claude-Profile MEMORY.md, or a SessionStart hook that reads and
+injects Claude-Profile memory into project-rooted sessions.
