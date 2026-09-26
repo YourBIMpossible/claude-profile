@@ -49,12 +49,13 @@ any moment without losing the job.
 
 - Sessions are disposable; files are not. A session may close the moment its state
   is externalized — never keep one open as storage.
-- Concurrency cap: ONE build lane + ONE portfolio session. A second build lane only
-  when work is genuinely parallel, in its own worktree.
+- Concurrency: 2–3 independently owned build lanes plus one portfolio session. Each
+  lane in its own worktree on its own branch; never two sessions in one checkout, never
+  two lanes on one branch, never a lane on a branch another session already holds.
 - Discovery mid-session → one line into the anchor's queue or the /next item store,
   NOT a new session.
-- Exit checklist before closing: commit + push the lane branch (draft PR per house
-  rule) · update the anchor · /next sync if statuses moved · close.
+- Exit checklist before closing: commit + push the lane branch (PR per the repo's own
+  delivery rule) · update the anchor · /next sync if statuses moved · close.
 - Pileup recovery: per open session ask "does it hold anything not on disk?"
   No → close it. Yes → checkpoint it first (one commit + anchor note), then close.
 
@@ -85,8 +86,9 @@ any moment without losing the job.
 
 ## Approvals
 
-- The four CONFIRM gates, checked per phase: irreversible/destructive · leaves the
-  machine · new dependency · architecture/data-model change.
+- The stop list in `F:\Claude-Profile\CLAUDE.md` is the only gate list; check it per
+  phase. A normal push/PR the repo pre-authorizes and a new dependency inside the mandate
+  are not stops.
 - Everything else: decide, act, and put "picked X over Y/Z because…" in the phase
   report. A mid-phase question is justified only when the answer changes the design.
 

@@ -30,10 +30,10 @@ Never modify files inside any `99_Archive/` folder (including renames or cosmeti
 - Cross-cutting / learning: `AI-Brain-Data/decision-log/YYYY-MM-DD.md`
 - BIMpossible-specific: `BIMpossible_Workspace/01_BuildLog/YYYY-MM-DD.md`
 - Add-Ins app-level: `Add-Ins/decision-log/YYYY-MM-DD.md`
-When unsure which applies, ask.
+When unsure which applies, use the repo-specific one and say so.
 
 ## Communication style
-Direct; no filler, affirmations, or restating. Flag things that seem wrong/incomplete and say why briefly. One clarifying question at a time. Pros/cons before recommendations. Confirm before large documents or destructive operations. No re-explaining known things; no unsolicited rewrites of documents just written.
+Direct; no filler, affirmations, or restating. Flag things that seem wrong/incomplete and say why briefly. Questions only when the answer changes the design; one at a time. Confirm before destructive operations (the canonical stop list is `F:\Claude-Profile\CLAUDE.md`). No re-explaining known things; no unsolicited rewrites of documents just written.
 
 ## Working style
 `system/WORKING-STYLE.md` (read at session start). Applies to all work unless overridden per task (e.g., "hotfix only", "MVP spike").
