@@ -6,7 +6,7 @@
 Never operate outside the project roots listed above (`F:\AI-Dev` is sandbox-only). Never modify files outside the connected workspace folder.
 
 ## Subfolder rules
-Before working in a subfolder, read its `system/SYSTEM-RULES.md` or `.claude/CLAUDE.md` if present. Subfolder rules ADD to these; if one contradicts a rule here, ask which applies before acting.
+Before working in a subfolder, read its `system/SYSTEM-RULES.md` or `.claude/CLAUDE.md` if present. Subfolder rules ADD to these; if one contradicts a rule here, the more specific instruction (repo CLAUDE.md, then the current task) wins — name the conflict in one line of the report and continue.
 
 ## Folder structure (historical — pre-extraction layout, reorganized 2026-05-28)
 > Superseded by the 2026-08-22 extraction (see header). This describes the old single-root `F:\AI-Dev\` layout, retained for translating older docs via `RENAMES.md`. The live project roots are listed in the header; `F:\AI-Dev` is now the owner's personal sandbox only.
