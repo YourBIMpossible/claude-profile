@@ -22,4 +22,4 @@ See something worth fixing that's out of scope? Mention it in one or two sentenc
 Real work, but only when I explicitly request it. Don't treat subsystems as default candidates for prior-art comparison. When I do ask, structured output (ranked issues, evidence, effort) is welcome.
 
 ## Per-project overrides
-Subfolder rules may add to this file. If one contradicts the above, flag it and ask before acting.
+Subfolder rules may add to this file. The more specific instruction (repo CLAUDE.md, then the current task) wins; name the conflict in one line of the report and keep going.
