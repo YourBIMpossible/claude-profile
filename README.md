@@ -9,7 +9,7 @@ Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claud
 **Prerequisites**: Claude Code installed and signed in; Git installed; GitHub
 credentials configured on this machine (for the clone path below).
 
-**Bootstrap replaces four live files.** It backs each up first, as
+**Bootstrap replaces these live files.** It backs each up first, as
 `<original-name>.pre-profile-backup-<timestamp>`, and never touches the backups
 afterward - to undo, delete what bootstrap wrote and rename the backup back.
 
@@ -17,7 +17,8 @@ afterward - to undo, delete what bootstrap wrote and rename the backup back.
 |---|---|
 | `~/.claude/CLAUDE.md` | one-line pointer at this repo |
 | `~/.claude/skills` | moved aside, replaced by a junction into this repo |
-| `~/.claude/settings.json` | generated from `settings.template.json` |
+| `~/.claude/settings.json` | generated from `settings.template.json`; hook entries the template does not own (e.g. another repo's hooks) are carried over |
+| `~/.claude/hooks/*` | pinned copies of `hooks/*.py`, `*.ps1` and `closure_audit_repos.json`; a differing installed copy is backed up first |
 | `%APPDATA%\Claude\claude_desktop_config.json` | generated from the template in `mcp/` |
 
 Note that skills are *replaced, not merged*: any skill that exists only on this

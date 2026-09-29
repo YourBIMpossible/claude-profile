@@ -14,10 +14,15 @@ review). Content (skills text, CLAUDE.md) may live behind the junction;
 Install procedure:
 1. Source of truth lives here (`hooks/*.py`, `*.ps1`), reviewed via the normal
    PR flow.
-2. Installing = a deliberate `Copy-Item` of the reviewed version to
-   `C:\Users\Zeria\.claude\hooks\`, then pointing settings.json at that copy.
+2. Installing = running `bootstrap.ps1`, which copies every reviewed hook here to
+   `C:\Users\Zeria\.claude\hooks\` (backing up any differing installed copy) and
+   regenerates settings.json from `settings.template.json`, whose registrations
+   point only at those copies (`__CLAUDE_HOOKS_DIR__`). A new hook must be
+   registered in the template in the same change —
+   `hooks/tests/test_bootstrap_install.py` fails when a hook ships unregistered.
 3. Updating a hook is the same act again — diff the source against the installed
-   copy first (`git diff` won't show it; use `fc`/`Compare-Object`).
+   copy first (`git diff` won't show it; use `fc`/`Compare-Object`). A manual
+   `Copy-Item` of one reviewed file remains fine for a single-hook update.
 4. A pinned copy that must know the repo's location hardcodes it (see
    `session-start-pull.ps1`'s `$repoRoot`); never derive it from
    `$PSScriptRoot`/`__file__` in an installed copy.

@@ -1,6 +1,8 @@
 {
   "permissions": {
-    "additionalDirectories": ["__ADDITIONAL_DIRECTORIES__"]
+    "additionalDirectories": [
+      "__ADDITIONAL_DIRECTORIES__"
+    ]
   },
   "model": "claude-sonnet-5",
   "enabledPlugins": {
@@ -54,8 +56,157 @@
           {
             "type": "command",
             "command": "powershell",
-            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "__HOOK_SCRIPT_PATH__"],
+            "args": [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "__CLAUDE_HOOKS_DIR__/session-start-pull.ps1"
+            ],
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/northstar_inject.py"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/session_closure_audit.py"
+            ],
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/graphify_hint.py"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/session_closure_audit.py"
+            ],
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/evidence_evacuate.py"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/ctxdex_autoindex.py"
+            ],
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__mcp-server-for-revit__send_code_to_revit",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "You decide whether Revit C# just executed via MCP contains a REUSABLE pattern worth capturing as a Claude Code skill.\n\nTool call JSON:\n$ARGUMENTS\n\nAnswer ok=true (take no action) in ALL of these cases:\n- Simple read, query, count, or listing.\n- One-off exploration or a debugging probe.\n- The call failed, errored, or returned an error string.\n- It is executing a workflow an existing skill already documents: per-sector viewport/template alignment, grid bubble extents, annotation crops, viewport titles, sheet or view creation, scope box assignment, print sets, bulk sheet parameters, renaming.\n- Trivial glue with no non-obvious API knowledge.\n\nAnswer ok=false ONLY for genuinely hard-won reusable knowledge: a non-obvious Revit API gotcha or workaround, a multi-step operation with ordering or transaction constraints that is easy to get wrong, or a batch workflow the user would plausibly re-run on another model.\n\nWhen ok=false, set reason to exactly: \"SKILL-WORTHY PATTERN: <one sentence naming the specific reusable technique>. Ask the user whether to capture this as a skill before the session ends.\" Name the actual technique - never a generic description.\n\nBias hard toward ok=true. A false flag costs the user attention; a missed pattern costs nothing, since they can always ask.",
+            "continueOnBlock": true,
+            "timeout": 30,
+            "statusMessage": "Checking for skill-worthy pattern"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/decay_reminder.py"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/northstar_inject.py"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/protect_paths_gate.py"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/evidence_evacuate.py"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/graphify_hint.py"
+            ],
+            "timeout": 10
           }
         ]
       }
