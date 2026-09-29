@@ -80,10 +80,15 @@ is a byte-identical passthrough to the stock `graphify query`.
 
 **Telemetry:** every wrapper call logs one record stamped `rerank: true|false` and
 `via: "wrapper"` (child `graphify query` processes run with `GRAPHIFY_QUERY_LOG_DISABLE=1`,
-so nothing double-logs; a failed passthrough, rc != 0, is not logged). A bare
-`graphify query` outside the wrapper still logs through the CLI's own logger with **no**
-`rerank` or `via` field; the installed package offers no way to stamp it, so the adoption
-audit reports such records as unlabelled bare-CLI calls, outside both measurement arms. The record's
+so nothing double-logs; a failed passthrough, rc != 0, is not logged).
+
+**Direct CLI is outside the supported contract and uninstrumented.** A bare `graphify query`
+still logs through the CLI's own logger with **no** `rerank` or `via` field; the installed
+package offers no way to stamp it. That is deliberate, not a gap to patch: no call-rewriting
+hook and no site-packages edit (an upgrade erases it). The adoption audit keeps such records
+visible as their own category, "unlabelled bare CLI", and never counts them in the reranked
+or stock arm. Should direct CLI ever become part of the contract, the durable fix is an
+upstream `rerank=false` writer change in graphify itself. The record's
 `corpus` is resolved the way the stock CLI resolves it (explicit `--graph`, else the
 `GRAPHIFY_OUT` default, `.resolve()`d), so all records for one graph share one `corpus` key.
 
