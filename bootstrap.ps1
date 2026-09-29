@@ -1,5 +1,11 @@
 #Requires -Version 5.1
 
+param(
+    # Install hook sources even when they have uncommitted changes. Off by default:
+    # the pinned copies under ~/.claude/hooks must be reviewed (committed) code (C1).
+    [switch]$AllowUncommittedHooks
+)
+
 $ErrorActionPreference = 'Stop'
 
 function ConvertTo-ForwardSlash {
@@ -140,6 +146,40 @@ only the CLAUDE.md @import that does not.)
 "@
 }
 
+# Hook preflight, before anything is written. Bootstrap installs these files as
+# pinned copies that run on every prompt or tool call (C1 in hooks/README.md), so
+# every hook the template registers must exist here, and the code being pinned must
+# be committed - a pinned copy of an uncommitted edit is exactly the
+# unreviewed-code hazard C1 exists to prevent.
+$hookDataFiles = @('closure_audit_repos.json')
+$hookSources = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'hooks') -File |
+    Where-Object { $_.Extension -in @('.py', '.ps1') -or $hookDataFiles -contains $_.Name })
+$settingsTemplatePath = Join-Path $repoRoot 'settings.template.json'
+$templateHookFiles = @([regex]::Matches((Get-Content -Raw -LiteralPath $settingsTemplatePath), '__CLAUDE_HOOKS_DIR__/([^"/]+)') |
+    ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+$missingHookSources = @($templateHookFiles | Where-Object { @($hookSources.Name) -notcontains $_ })
+if ($missingHookSources.Count -gt 0) {
+    throw "settings.template.json registers hooks missing from hooks/: $($missingHookSources -join ', ')"
+}
+$hooksRevision = 'unknown (no git)'
+if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath (Join-Path $repoRoot '.git'))) {
+    $hookPaths = @($hookSources | ForEach-Object { 'hooks/' + $_.Name })
+    $hooksDirty = @(& git -C $repoRoot status --porcelain -- $hookPaths)
+    if ($LASTEXITCODE -ne 0) { throw "git status failed in $repoRoot (exit $LASTEXITCODE)" }
+    if ($hooksDirty.Count -gt 0 -and -not $AllowUncommittedHooks) {
+        throw @"
+Hook sources have uncommitted changes:
+  $($hooksDirty -join "`n  ")
+
+Bootstrap installs them as pinned copies under ~/.claude/hooks (C1), which must be
+reviewed code. Commit (or discard) these changes and run bootstrap again, or pass
+-AllowUncommittedHooks to install them anyway.
+"@
+    }
+    $sha = (& git -C $repoRoot rev-parse --short HEAD).Trim()
+    $hooksRevision = $sha + $(if ($hooksDirty.Count -gt 0) { ' (with uncommitted hook changes)' } else { '' })
+}
+
 $claudeDir = Join-Path $env:USERPROFILE '.claude'
 if (-not (Test-Path -LiteralPath $claudeDir)) {
     New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
@@ -197,9 +237,7 @@ $hooksDir = Join-Path $claudeDir 'hooks'
 if (-not (Test-Path -LiteralPath $hooksDir)) {
     New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 }
-$hookDataFiles = @('closure_audit_repos.json')
-$hookSources = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'hooks') -File |
-    Where-Object { $_.Extension -in @('.py', '.ps1') -or $hookDataFiles -contains $_.Name })
+Write-Host "Installing pinned hooks from revision $hooksRevision -> $hooksDir"
 foreach ($source in $hookSources) {
     $bytes = [System.IO.File]::ReadAllBytes($source.FullName)
     if ($source.Name -eq 'session-start-pull.ps1') {
@@ -224,7 +262,6 @@ foreach ($source in $hookSources) {
 }
 
 # 5. Generate settings.json from template
-$settingsTemplatePath = Join-Path $repoRoot 'settings.template.json'
 $settingsRaw = Get-Content -Raw -LiteralPath $settingsTemplatePath
 
 $dirsJson = ($additionalDirs | ForEach-Object { $_ | ConvertTo-Json }) -join ",`n      "
@@ -235,6 +272,11 @@ $settingsRaw = $settingsRaw.Replace('"__ADDITIONAL_DIRECTORIES__"', $dirsJson)
 $hooksDirForward = ConvertTo-ForwardSlash $hooksDir
 if ($hooksDirForward -match '"') { throw "Hooks directory path contains a double quote: $hooksDirForward" }
 $settingsRaw = $settingsRaw.Replace('__CLAUDE_HOOKS_DIR__', $hooksDirForward)
+
+$leftoverTokens = @([regex]::Matches($settingsRaw, '__[A-Z_]+__') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+if ($leftoverTokens.Count -gt 0) {
+    throw "Generated settings.json still contains unresolved tokens: $($leftoverTokens -join ', ')"
+}
 
 try {
     $generated = $settingsRaw | ConvertFrom-Json

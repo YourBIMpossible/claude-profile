@@ -55,13 +55,16 @@ class BootstrapSandbox(unittest.TestCase):
         self.hooks_dir = self.claude / "hooks"
         self.addCleanup(remove_sandbox, self.root)
 
-    def run_bootstrap(self) -> subprocess.CompletedProcess:
+    def run_bootstrap(self, repo: Path = REPO, *args: str, expect_ok: bool = True) -> subprocess.CompletedProcess:
         env = {**os.environ, "USERPROFILE": str(self.home), "APPDATA": str(self.appdata)}
         proc = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(REPO / "bootstrap.ps1")],
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(repo / "bootstrap.ps1"), *args],
             env=env, capture_output=True, text=True, timeout=180,
         )
-        self.assertEqual(proc.returncode, 0, f"bootstrap failed:\n{proc.stdout}\n{proc.stderr}")
+        if expect_ok:
+            self.assertEqual(proc.returncode, 0, f"bootstrap failed:\n{proc.stdout}\n{proc.stderr}")
+        else:
+            self.assertNotEqual(proc.returncode, 0, f"bootstrap should have refused:\n{proc.stdout}")
         return proc
 
     def settings(self) -> dict:
@@ -203,6 +206,61 @@ class Reinstall(BootstrapSandbox):
         self.run_bootstrap()
         self.assertEqual((self.claude / "settings.json").read_text(encoding="utf-8"), before)
         self.assertEqual(sorted(p.name for p in self.claude.rglob("*.pre-profile-backup-*")), backups)
+
+
+class Preflight(BootstrapSandbox):
+    """Refusals, run against a committed throwaway copy of the installer."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = self.root / "repo"
+        (self.repo / "hooks").mkdir(parents=True)
+        (self.repo / "skills").mkdir()
+        for name in ("bootstrap.ps1", "settings.template.json"):
+            shutil.copy2(REPO / name, self.repo / name)
+        shutil.copytree(REPO / "mcp", self.repo / "mcp")
+        for source in HOOK_SOURCES:
+            shutil.copy2(source, self.repo / "hooks" / source.name)
+        self.git("init", "-q")
+        self.commit()
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        *args], check=True, capture_output=True)
+
+    def commit(self) -> None:
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "fixture")
+
+    def edit_template(self, old: str, new: str) -> None:
+        template = self.repo / "settings.template.json"
+        text = template.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        template.write_text(text.replace(old, new), encoding="utf-8")
+        self.commit()
+
+    def test_uncommitted_hook_source_is_refused_before_any_write(self) -> None:
+        with open(self.repo / "hooks" / "decay_reminder.py", "a", encoding="utf-8") as f:
+            f.write("# unreviewed edit\n")
+        proc = self.run_bootstrap(self.repo, expect_ok=False)
+        self.assertIn("uncommitted", proc.stdout + proc.stderr)
+        self.assertFalse(self.claude.exists(), "bootstrap wrote to the profile before refusing")
+
+        self.run_bootstrap(self.repo, "-AllowUncommittedHooks")
+        installed = (self.hooks_dir / "decay_reminder.py").read_text(encoding="utf-8")
+        self.assertTrue(installed.endswith("# unreviewed edit\n"))
+
+    def test_template_hook_missing_from_hooks_is_refused_before_any_write(self) -> None:
+        self.edit_template("__CLAUDE_HOOKS_DIR__/decay_reminder.py", "__CLAUDE_HOOKS_DIR__/not_shipped.py")
+        proc = self.run_bootstrap(self.repo, expect_ok=False)
+        self.assertIn("not_shipped.py", proc.stdout + proc.stderr)
+        self.assertFalse(self.claude.exists())
+
+    def test_unresolved_template_token_never_reaches_settings(self) -> None:
+        self.edit_template('"theme": "dark"', '"theme": "__UNKNOWN_TOKEN__"')
+        proc = self.run_bootstrap(self.repo, expect_ok=False)
+        self.assertIn("__UNKNOWN_TOKEN__", proc.stdout + proc.stderr)
+        self.assertFalse((self.claude / "settings.json").exists())
 
 
 if __name__ == "__main__":

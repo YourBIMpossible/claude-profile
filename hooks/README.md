@@ -20,6 +20,10 @@ Install procedure:
    point only at those copies (`__CLAUDE_HOOKS_DIR__`). A new hook must be
    registered in the template in the same change —
    `hooks/tests/test_bootstrap_install.py` fails when a hook ships unregistered.
+   Before writing anything, bootstrap refuses when a hook source has uncommitted
+   changes (only reviewed code is pinned; `-AllowUncommittedHooks` overrides) or
+   when the template registers a hook missing from `hooks/`, and it never writes a
+   settings.json with an unresolved `__TOKEN__`.
 3. Updating a hook is the same act again — diff the source against the installed
    copy first (`git diff` won't show it; use `fc`/`Compare-Object`). A manual
    `Copy-Item` of one reviewed file remains fine for a single-hook update.
