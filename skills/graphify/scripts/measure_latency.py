@@ -34,8 +34,7 @@ WRAPPER = SCRIPTS_DIR / "query_reranked.py"
 
 def timed_call(repo: Path, question: str, budget: int, rerank: bool) -> float:
     cmd = [sys.executable, str(WRAPPER), question, "--budget", str(budget)]
-    if rerank:
-        cmd.append("--rerank")
+    cmd.append("--rerank" if rerank else "--no-rerank")
     env = dict(os.environ)
     env["GRAPHIFY_QUERY_LOG_DISABLE"] = "1"
     env["PYTHONHASHSEED"] = "0"

@@ -15,9 +15,21 @@ Scope, matching the evaluated method exactly:
     has already built its candidate pool and BEFORE the pool is truncated
     to the caller's token budget -- it only changes which prefix of the
     pool survives truncation and in what order, never what BFS discovers.
-  - Default is passthrough. With --rerank omitted (or false), this script
-    execs `graphify query` unchanged and streams its stdout/stderr/exit
-    code through -- byte-identical to calling graphify directly.
+  - The rerank gate is GRAPHIFY_RERANK=1 in the environment; --rerank /
+    --no-rerank override it for one call. Gate off (or --dfs) is passthrough:
+    `graphify query` runs unchanged and its stdout/stderr/exit code are
+    relayed byte-identically.
+
+Graph resolution: when --graph is omitted and `<cwd>/graphify-out/graph.json`
+does not exist, resolve_graph.resolve() finds the canonical graph (repo
+subfolder, parent, or the main checkout behind a worktree) and passes it as
+--graph. Without that, graphify errors from any folder but the graph's own.
+
+Telemetry: every query run through this wrapper writes exactly ONE query-log
+record, stamped rerank=true or rerank=false, with via="wrapper" and wall-clock
+duration_ms. Child `graphify query` calls always run with logging disabled.
+A bare `graphify query` (not through this wrapper) is logged by the package
+itself with no rerank field; readers treat a missing field as stock/false.
 
 How reranking works: graphify fuses candidate-selection and truncation into
 one budget-parameterized call, so there's no internal seam to hook. Instead
@@ -44,6 +56,10 @@ import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import resolve_graph  # noqa: E402
 
 GRAPHIFY = Path(
     r"C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\Scripts\graphify.exe"
@@ -246,31 +262,34 @@ def _warn_telemetry_failure(exc: BaseException) -> None:
     )
 
 
-def _log_reranked(
+def _log_wrapped(
     args: argparse.Namespace,
     cwd: Path,
     result: str,
     *,
+    reranked: bool,
     duration_ms: float,
     retrieval_ms: float | None = None,
     rerank_ms: float | None = None,
 ) -> None:
-    """Emit exactly ONE query-log record for a wrapper-reranked query.
+    """Emit exactly ONE query-log record for a query run through this wrapper.
 
     The wrapper's own `graphify query` children all run with
-    GRAPHIFY_QUERY_LOG_DISABLE=1 (see run_query_raw), so the package never
-    logs them -- this call is the sole record for the query, stamped
-    rerank=True to distinguish it from a stock `graphify query` (which the
-    package logs itself with rerank=False).
+    GRAPHIFY_QUERY_LOG_DISABLE=1 (see run_query_raw / _passthrough), so the
+    package never logs them -- this call is the sole record for the query,
+    stamped rerank=True or rerank=False. (A bare `graphify query` outside the
+    wrapper is logged by the package with no rerank field at all.)
 
     corpus is resolved exactly as the stock CLI does (cli.py query path):
     explicit --graph wins, else the GRAPHIFY_OUT-based default, anchored to the
     same cwd the children ran in and .resolve()d -- so stock and reranked records
     for one graph share an identical corpus key and never split into two groups.
 
-    Timing fields are NOT claimed equivalent to stock's traversal-only
-    duration_ms. duration_ms here is total wrapper wall time; retrieval_ms and
-    rerank_ms are the measured sub-phases (see RerankResult). Logging is
+    Timing fields are NOT claimed equivalent to the package's traversal-only
+    duration_ms. duration_ms here is total wrapper wall time for both arms
+    (so rerank=true and rerank=false wrapper records compare like for like);
+    retrieval_ms and rerank_ms are the measured reranked sub-phases (see
+    RerankResult). Logging is
     non-fatal: on any failure the query result still stands and a single
     rate-limited stderr warning is emitted instead of a silent drop.
     """
@@ -284,7 +303,7 @@ def _log_reranked(
             gp = cwd / gp
         corpus = str(gp.resolve())
 
-        extra: dict[str, object] = {"rerank": True}
+        extra: dict[str, object] = {"rerank": reranked, "via": "wrapper"}
         if retrieval_ms is not None:
             extra["retrieval_ms"] = round(retrieval_ms, 3)
         if rerank_ms is not None:
@@ -295,7 +314,7 @@ def _log_reranked(
             question=args.question,
             corpus=corpus,
             result=result,
-            mode="bfs",  # rerank path is BFS-only; --dfs never reaches here
+            mode="dfs" if args.dfs else "bfs",
             depth=2,
             token_budget=args.budget,
             duration_ms=duration_ms,
@@ -305,15 +324,63 @@ def _log_reranked(
         _warn_telemetry_failure(exc)
 
 
-def main(argv: list[str] | None = None) -> int:
+def rerank_gate_on() -> bool:
+    return os.environ.get("GRAPHIFY_RERANK", "").strip().lower() in ("1", "true", "yes")
+
+
+def _resolve_graph_arg(args: argparse.Namespace, cwd: Path) -> None:
+    """Fill args.graph from resolve_graph when graphify's cwd default is absent."""
+    if args.graph is not None:
+        return
+    from graphify.paths import GRAPHIFY_OUT
+
+    if (cwd / GRAPHIFY_OUT / "graph.json").is_file():
+        return
+    found = resolve_graph.resolve(cwd)
+    if found is not None:
+        args.graph = found.graph
+
+
+def _passthrough(cmd: list[str], cwd: Path) -> tuple[int, bytes]:
+    """Run stock `graphify query`, relay its output byte-identically, return (rc, stdout)."""
+    env = dict(os.environ)
+    env["GRAPHIFY_QUERY_LOG_DISABLE"] = "1"
+    proc = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True)
+    sys.stdout.flush()
+    sys.stdout.buffer.write(proc.stdout)
+    sys.stdout.buffer.flush()
+    sys.stderr.flush()
+    sys.stderr.buffer.write(proc.stderr)
+    sys.stderr.buffer.flush()
+    return proc.returncode, proc.stdout
+
+
+def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
+    """Parse wrapper args; unknown args pass through to `graphify query`.
+
+    args.rerank is resolved to a bool: --rerank / --no-rerank win, otherwise
+    the GRAPHIFY_RERANK environment gate decides.
+    """
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("question")
     ap.add_argument("--budget", type=int, default=2000)
     ap.add_argument("--dfs", action="store_true")
     ap.add_argument("--context")
     ap.add_argument("--graph")
-    ap.add_argument("--rerank", action="store_true", default=False)
+    gate = ap.add_mutually_exclusive_group()
+    gate.add_argument("--rerank", dest="rerank", action="store_true", default=None)
+    gate.add_argument("--no-rerank", dest="rerank", action="store_false")
+    ap.set_defaults(rerank=None)
     args, unknown = ap.parse_known_args(argv)
+    if args.rerank is None:
+        args.rerank = rerank_gate_on()
+    return args, unknown
+
+
+def main(argv: list[str] | None = None) -> int:
+    args, unknown = parse_args(argv)
+    cwd = Path.cwd()
+    _resolve_graph_arg(args, cwd)
 
     extra_args = list(unknown)
     if args.context is not None:
@@ -323,24 +390,33 @@ def main(argv: list[str] | None = None) -> int:
     if args.dfs:
         extra_args.append("--dfs")
 
-    cwd = Path.cwd()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     if args.dfs or not args.rerank:
-        proc = subprocess.run(
+        _t0 = time.perf_counter()
+        rc, out = _passthrough(
             [str(GRAPHIFY), "query", args.question, "--budget", str(args.budget), *extra_args],
-            cwd=str(cwd),
+            cwd,
         )
-        return proc.returncode
+        if rc == 0:
+            _log_wrapped(
+                args,
+                cwd,
+                out.decode("utf-8", errors="replace"),
+                reranked=False,
+                duration_ms=(time.perf_counter() - _t0) * 1000,
+            )
+        return rc
 
     try:
         _t0 = time.perf_counter()
         rr = rerank_query(cwd, args.question, args.budget, extra_args)
         sys.stdout.write(rr.text)
-        _log_reranked(
+        _log_wrapped(
             args,
             cwd,
             rr.text,
+            reranked=True,
             duration_ms=(time.perf_counter() - _t0) * 1000,
             retrieval_ms=rr.retrieval_ms,
             rerank_ms=rr.rerank_ms,

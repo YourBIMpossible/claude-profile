@@ -11,8 +11,12 @@ Run: python -m unittest test_query_reranked -v
 
 from __future__ import annotations
 
+import io
+import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -167,7 +171,7 @@ class TestRerankQueryMocked(unittest.TestCase):
         with mock.patch.object(qr, "run_query_raw", side_effect=fake_run_query_raw):
             out = qr.rerank_query(Path("."), "firm hub isolation", 2000, [])
 
-        node_lines = [l for l in out.splitlines() if l.startswith("NODE ")]
+        node_lines = [l for l in out.text.splitlines() if l.startswith("NODE ")]
         target_node_count = sum(
             1 for l in self.TARGET_STDOUT.splitlines() if l.startswith("NODE ")
         )
@@ -186,7 +190,7 @@ class TestRerankQueryMocked(unittest.TestCase):
         pool_lines = {
             l for l in self.POOL_STDOUT.splitlines() if l.startswith("NODE ")
         }
-        out_lines = {l for l in out.splitlines() if l.startswith("NODE ")}
+        out_lines = {l for l in out.text.splitlines() if l.startswith("NODE ")}
         self.assertTrue(out_lines.issubset(pool_lines))
 
     def test_empty_target_short_circuits_without_pool_call(self):
@@ -200,22 +204,122 @@ class TestRerankQueryMocked(unittest.TestCase):
         with mock.patch.object(qr, "run_query_raw", side_effect=fake_run_query_raw):
             out = qr.rerank_query(Path("."), "nonsense query", 2000, [])
 
-        self.assertEqual(out, empty_stdout)
+        self.assertEqual(out.text, empty_stdout)
+        self.assertEqual(out.rerank_ms, 0.0)
         self.assertEqual(calls["n"], 1)  # never fetched a pool for an empty result
 
 
 class TestArgParsing(unittest.TestCase):
-    def test_rerank_defaults_off(self):
-        import argparse
-        ap = argparse.ArgumentParser(add_help=False)
-        ap.add_argument("question")
-        ap.add_argument("--budget", type=int, default=2000)
-        ap.add_argument("--dfs", action="store_true")
-        ap.add_argument("--rerank", action="store_true", default=False)
-        args, _ = ap.parse_known_args(["some question"])
+    def _parse(self, argv, gate=""):
+        with mock.patch.dict(os.environ, {"GRAPHIFY_RERANK": gate}):
+            return qr.parse_args(argv)[0]
+
+    def test_gate_off_defaults_to_passthrough(self):
+        args = self._parse(["some question"])
         self.assertFalse(args.rerank)
         self.assertFalse(args.dfs)
         self.assertEqual(args.budget, 2000)
+
+    def test_env_gate_turns_rerank_on(self):
+        self.assertTrue(self._parse(["q"], gate="1").rerank)
+
+    def test_no_rerank_overrides_env_gate(self):
+        self.assertFalse(self._parse(["q", "--no-rerank"], gate="1").rerank)
+
+    def test_rerank_flag_overrides_gate_off(self):
+        self.assertTrue(self._parse(["q", "--rerank"], gate="").rerank)
+
+    def test_unknown_args_pass_through(self):
+        _, unknown = qr.parse_args(["q", "--some-future-flag", "v"])
+        self.assertEqual(unknown, ["--some-future-flag", "v"])
+
+
+class TestGraphResolution(unittest.TestCase):
+    def _args(self, graph=None):
+        return mock.Mock(graph=graph)
+
+    def test_explicit_graph_is_never_replaced(self):
+        args = self._args("custom/graph.json")
+        with mock.patch.object(qr.resolve_graph, "resolve") as res:
+            qr._resolve_graph_arg(args, Path(tempfile.gettempdir()))
+        res.assert_not_called()
+        self.assertEqual(args.graph, "custom/graph.json")
+
+    def test_cwd_graph_wins_without_resolution(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "graphify-out").mkdir()
+            (Path(td) / "graphify-out" / "graph.json").write_text("{}")
+            args = self._args()
+            with mock.patch.object(qr.resolve_graph, "resolve") as res:
+                qr._resolve_graph_arg(args, Path(td))
+            res.assert_not_called()
+            self.assertIsNone(args.graph)
+
+    def test_resolved_graph_fills_missing_arg(self):
+        found = qr.resolve_graph.ResolvedGraph("G:/r/backend/graphify-out/graph.json",
+                                               "G:/r/backend", "repo-subdir", "G:/r/backend")
+        with tempfile.TemporaryDirectory() as td:
+            args = self._args()
+            with mock.patch.object(qr.resolve_graph, "resolve", return_value=found):
+                qr._resolve_graph_arg(args, Path(td))
+            self.assertEqual(args.graph, found.graph)
+
+    def test_no_graph_anywhere_leaves_arg_unset(self):
+        with tempfile.TemporaryDirectory() as td:
+            args = self._args()
+            with mock.patch.object(qr.resolve_graph, "resolve", return_value=None):
+                qr._resolve_graph_arg(args, Path(td))
+            self.assertIsNone(args.graph)
+
+
+class TestPassthroughTelemetry(unittest.TestCase):
+    """Passthrough queries log exactly one wrapper record stamped rerank=false."""
+
+    STDOUT = b"Traversal: BFS | 1 nodes found\n\nNODE Foo [src=a.py loc=L1]\n"
+
+    def _run(self, rc, argv):
+        completed = subprocess.CompletedProcess([], rc, stdout=self.STDOUT, stderr=b"")
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "q.log"
+            graph = Path(td) / "graphify-out" / "graph.json"
+            graph.parent.mkdir()
+            graph.write_text("{}")
+            env = {"GRAPHIFY_QUERY_LOG": str(log), "GRAPHIFY_RERANK": "",
+                   "GRAPHIFY_QUERY_LOG_DISABLE": ""}
+            with (
+                mock.patch.dict(os.environ, env),
+                mock.patch.object(qr.subprocess, "run", return_value=completed) as run,
+                mock.patch.object(qr.Path, "cwd", return_value=Path(td)),
+                mock.patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+                mock.patch.object(sys, "stderr", io.TextIOWrapper(io.BytesIO())),
+            ):
+                code = qr.main(argv)
+            records = ([json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()]
+                       if log.exists() else [])
+            return code, records, run
+
+    def test_success_logs_one_rerank_false_record(self):
+        code, records, run = self._run(0, ["find foo"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(records), 1)
+        rec = records[0]
+        self.assertIs(rec["rerank"], False)
+        self.assertEqual(rec["via"], "wrapper")
+        self.assertEqual(rec["kind"], "query")
+        self.assertEqual(rec["mode"], "bfs")
+        self.assertEqual(rec["nodes_returned"], 1)
+        self.assertEqual(run.call_args.kwargs["env"]["GRAPHIFY_QUERY_LOG_DISABLE"], "1")
+
+    def test_dfs_logs_mode_dfs_even_with_gate_forced_on(self):
+        code, records, _ = self._run(0, ["find foo", "--dfs", "--rerank"])
+        self.assertEqual(code, 0)
+        self.assertEqual(records[0]["mode"], "dfs")
+        self.assertIs(records[0]["rerank"], False)
+
+    def test_failed_query_logs_nothing(self):
+        code, records, _ = self._run(2, ["find foo"])
+        self.assertEqual(code, 2)
+        self.assertEqual(records, [])
 
 
 @unittest.skipUnless(
@@ -223,7 +327,16 @@ class TestArgParsing(unittest.TestCase):
     "graphify binary or BIMpossible backend graph not available on this machine",
 )
 class TestLiveIntegration(unittest.TestCase):
-    """Real subprocess calls against the real BIMpossible backend graph."""
+    """Real subprocess calls against the real BIMpossible backend graph.
+
+    Query logging is forced off for every child so a test run never writes
+    records into the real query log.
+    """
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"GRAPHIFY_QUERY_LOG_DISABLE": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     QUESTION = "how does firm hub isolation work"
 
@@ -235,7 +348,7 @@ class TestLiveIntegration(unittest.TestCase):
         )
         wrapped = subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parent / "query_reranked.py"),
-             self.QUESTION, "--budget", "600"],
+             self.QUESTION, "--budget", "600", "--no-rerank"],
             cwd=str(BIMPOSSIBLE_BACKEND),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
@@ -243,7 +356,10 @@ class TestLiveIntegration(unittest.TestCase):
 
     def test_reranked_output_is_subset_of_real_traversal_pool(self):
         reference_pool = subprocess.run(
-            [str(qr.GRAPHIFY), "query", self.QUESTION, "--budget", "30000"],
+            # POOL_RETRY_BUDGET, not POOL_BUDGET: at 30000 this query's pool is
+            # TRUNCATED and the wrapper retries bigger, so a 30000 reference
+            # would miss nodes the wrapper legitimately draws from.
+            [str(qr.GRAPHIFY), "query", self.QUESTION, "--budget", str(qr.POOL_RETRY_BUDGET)],
             cwd=str(BIMPOSSIBLE_BACKEND),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )

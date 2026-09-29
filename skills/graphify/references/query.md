@@ -68,25 +68,32 @@ graphify query "QUESTION"
 # or: graphify query "QUESTION" --dfs --budget 3000
 ```
 
-**Reranked BFS path (when `GRAPHIFY_RERANK=1`):** if the environment variable
-`GRAPHIFY_RERANK` is set to `1`, route a **BFS** query through the BM25 reranker
-wrapper instead of the bare CLI:
+**Run every query through the wrapper** (it resolves the graph, applies the reranker gate,
+and writes exactly one query-log record):
 ```bash
-python "F:\Claude-Profile\skills\graphify\scripts\query_reranked.py" --rerank "QUESTION" --budget 2000
+python "F:\Claude-Profile\skills\graphify\scripts\query_reranked.py" "QUESTION" --graph "<resolved graph.json>" --budget 2000
+# or: ... --dfs --budget 3000
 ```
-The wrapper re-ranks the traversal's candidate nodes and writes **exactly one**
-query-log record stamped `rerank: true` (its internal `graphify query` children are
-suppressed with `GRAPHIFY_QUERY_LOG_DISABLE=1`, so nothing double-logs). Use the bare
-`graphify query` for `--dfs` and whenever `GRAPHIFY_RERANK` is unset — those record
-`rerank: false` via the CLI's own logger. The reranker is BFS-only; a `--dfs` query
-passes through unreranked even with the flag set. The record's `corpus` is resolved
-the same way the stock CLI resolves it (explicit `--graph`, else the `GRAPHIFY_OUT`
-default, `.resolve()`d), so reranked and stock records for one graph share an identical
-`corpus` key.
+Omit `--graph` only when cwd resolves on its own (`scripts/resolve_graph.py`); the wrapper
+resolves the same way (cwd walk, repo subfolders like `backend\`, worktree -> main checkout).
+
+**Gate precedence:** `--rerank` / `--no-rerank` on the command line win; otherwise
+`GRAPHIFY_RERANK=1` turns reranking on. The reranker is BFS-only: `--dfs`, or the gate off,
+is a byte-identical passthrough to the stock `graphify query`.
+
+**Telemetry:** every wrapper call logs one record stamped `rerank: true|false` and
+`via: "wrapper"` (child `graphify query` processes run with `GRAPHIFY_QUERY_LOG_DISABLE=1`,
+so nothing double-logs; a failed passthrough, rc != 0, is not logged). A bare
+`graphify query` outside the wrapper still logs through the CLI's own logger with **no**
+`rerank` field — readers treat a missing field as stock (`rerank: false`). The record's
+`corpus` is resolved the way the stock CLI resolves it (explicit `--graph`, else the
+`GRAPHIFY_OUT` default, `.resolve()`d), so all records for one graph share one `corpus` key.
 
 **Timing fields — read them right.** The two logger arms do not measure the same thing:
 
-- Stock `duration_ms`: the stock CLI's in-process graph-traversal time only.
+- Stock `duration_ms` (records with no `via` field): the stock CLI's in-process graph-traversal time only.
+- Wrapper passthrough `duration_ms` (`via: "wrapper"`, `rerank: false`): wrapper wall time
+  around one stock subprocess — not comparable to the traversal-only figure above.
 - Reranked `duration_ms`: **total wrapper wall time** — includes the `graphify query`
   retrieval subprocess(es), any `TRUNCATED` retry, candidate-pool retrieval, BM25
   scoring, and result assembly. The reranked record also carries `retrieval_ms`

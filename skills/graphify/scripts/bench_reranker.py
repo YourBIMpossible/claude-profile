@@ -40,8 +40,7 @@ WRAPPER = SCRIPTS_DIR / "query_reranked.py"
 def run_query_via_wrapper(repo: Path, question: str, budget: int, rerank: bool) -> list[str]:
     """Same contract as measure_recall.run_query, routed through the wrapper."""
     cmd = [sys.executable, str(WRAPPER), question, "--budget", str(budget)]
-    if rerank:
-        cmd.append("--rerank")
+    cmd.append("--rerank" if rerank else "--no-rerank")
     env = dict(os.environ)
     env["GRAPHIFY_QUERY_LOG_DISABLE"] = "1"
     env["PYTHONHASHSEED"] = "0"
