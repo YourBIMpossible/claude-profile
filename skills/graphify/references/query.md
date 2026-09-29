@@ -62,16 +62,13 @@ If the list is empty, say so plainly and stop — do not proceed to traversal.
 
 Build the **expanded query string** by joining the selected tokens with spaces. Use this string as `QUESTION` below — NOT the original user question. (The original question is preserved only for `save-result` at the end.)
 
-Prefer the CLI when it is installed:
+**Run every query through the wrapper** — never a bare `graphify query`. The wrapper resolves
+the graph, applies the reranker gate, and writes exactly one query-log record stamped
+`rerank: true|false`; a bare CLI call writes an unlabelled record the adoption audit cannot
+place in either arm. Run it from any directory, no `cd` first; forward slashes work in both
+bash and PowerShell:
 ```bash
-graphify query "QUESTION"
-# or: graphify query "QUESTION" --dfs --budget 3000
-```
-
-**Run every query through the wrapper** (it resolves the graph, applies the reranker gate,
-and writes exactly one query-log record):
-```bash
-python "F:\Claude-Profile\skills\graphify\scripts\query_reranked.py" "QUESTION" --graph "<resolved graph.json>" --budget 2000
+python "F:/Claude-Profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --graph "<resolved graph.json>" --budget 2000
 # or: ... --dfs --budget 3000
 ```
 Omit `--graph` only when cwd resolves on its own (`scripts/resolve_graph.py`); the wrapper
@@ -85,7 +82,8 @@ is a byte-identical passthrough to the stock `graphify query`.
 `via: "wrapper"` (child `graphify query` processes run with `GRAPHIFY_QUERY_LOG_DISABLE=1`,
 so nothing double-logs; a failed passthrough, rc != 0, is not logged). A bare
 `graphify query` outside the wrapper still logs through the CLI's own logger with **no**
-`rerank` field — readers treat a missing field as stock (`rerank: false`). The record's
+`rerank` or `via` field; the installed package offers no way to stamp it, so the adoption
+audit reports such records as unlabelled bare-CLI calls, outside both measurement arms. The record's
 `corpus` is resolved the way the stock CLI resolves it (explicit `--graph`, else the
 `GRAPHIFY_OUT` default, `.resolve()`d), so all records for one graph share one `corpus` key.
 

@@ -11,6 +11,7 @@ import dataclasses
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,19 @@ sys.path.insert(0, str(SKILL_SCRIPTS))
 
 import resolve_graph as rg  # noqa: E402
 from test_resolve_graph import make_graph, make_repo, make_worktree  # noqa: E402
+
+def git_bash() -> str | None:
+    """Git Bash (the shell sessions use), never WSL's System32 bash."""
+    found = shutil.which("bash")
+    if found and "system32" not in found.lower() and "windowsapps" not in found.lower():
+        return found
+    git = shutil.which("git")
+    if git:
+        for cand in (Path(git).parents[1] / "bin" / "bash.exe", Path(git).parents[1] / "usr" / "bin" / "bash.exe"):
+            if cand.exists():
+                return str(cand)
+    return None
+
 
 _spec = importlib.util.spec_from_file_location("graphify_hint", HOOK)
 hint = importlib.util.module_from_spec(_spec)
@@ -105,7 +119,7 @@ class HookIO(unittest.TestCase):
         self.assertEqual(rc, 0)
         text = self.ctx(out, "SessionStart")
         self.assertIn(str(self.graph), text)
-        self.assertIn(hint.WRAPPER, text)
+        self.assertIn(hint.query_command(str(self.graph)), text)
         self.assertIn("subagent", text)
 
     def test_worktree_hint_maps_paths_to_local_checkout(self):
@@ -118,8 +132,29 @@ class HookIO(unittest.TestCase):
         _, out = run_hook({"hook_event_name": "SubagentStart", "agent_type": "Explore", "cwd": str(self.wt)})
         text = self.ctx(out, "SubagentStart")
         self.assertIn(str(self.graph), text)
-        self.assertIn(hint.WRAPPER, text)
+        self.assertIn(hint.query_command(str(self.graph)), text)
         self.assertNotIn("delegate", text)
+
+    def test_command_is_shell_neutral_and_needs_no_cd(self):
+        # 2026-09-29 acceptance run: a session ran `cd F:\...` in Git Bash, the
+        # backslashes were eaten and the first query failed; the retry worked.
+        _, out = run_hook({"hook_event_name": "SessionStart", "cwd": str(self.web)})
+        cmd_line = next(l.strip() for l in self.ctx(out, "SessionStart").splitlines()
+                        if l.strip().startswith("python "))
+        self.assertNotIn("\\", cmd_line)
+        self.assertNotIn("cd ", cmd_line)
+        self.assertIn("no `cd`", self.ctx(out, "SessionStart"))
+
+    @unittest.skipUnless(git_bash(), "Git Bash not found")
+    def test_command_runs_from_unrelated_cwd_in_bash(self):
+        stub = Path(self._td.name).resolve() / "stub wrapper.py"
+        stub.write_text("import sys, json; print(json.dumps(sys.argv[1:]))", encoding="utf-8")
+        cmd = hint.query_command(str(self.graph)).replace(Path(hint.WRAPPER).as_posix(), stub.as_posix())
+        res = subprocess.run([git_bash(), "-c", cmd], cwd=tempfile.gettempdir(),
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argv = json.loads(res.stdout)
+        self.assertEqual(Path(argv[argv.index("--graph") + 1]), self.graph)
 
     def test_no_graph_emits_nothing(self):
         for event in ("SessionStart", "SubagentStart"):

@@ -138,6 +138,17 @@ def resolve(cwd: str | Path) -> dict | None:
 # ---- end resolver ----
 
 
+def query_command(graph: str) -> str:
+    """The wrapper command the model should run, shell-neutral.
+
+    Forward slashes and double quotes survive both Git Bash and PowerShell; a
+    backslash path passed through bash `cd` loses its separators (2026-09-29
+    acceptance run: the first query failed that way, the retry succeeded).
+    The wrapper takes --graph, so it runs correctly from any cwd.
+    """
+    return f'python "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
+
+
 def build_hint(r: dict, *, subagent: bool) -> str:
     graph = r["graph"]
     try:
@@ -158,8 +169,9 @@ def build_hint(r: dict, *, subagent: bool) -> str:
         lines.append(f"  Result paths (src=...) are relative to {r['graph_root']}.")
     lines += [
         "Use it FIRST for cross-file code questions: how a feature/flow works, what calls or uses X,",
-        "where data flows, what a change would affect, how an area is structured. Run:",
-        f'  python "{WRAPPER}" "<question>" --graph "{graph}"',
+        "where data flows, what a change would affect, how an area is structured. Run it exactly as",
+        "written, from any directory -- no `cd` first (forward slashes work in bash and PowerShell):",
+        f'  {query_command(graph)}',
         "  (add --dfs to trace one specific path; --budget N caps output, default 2000). Then read the",
         "  cited source before making claims. If it errors or returns 0 nodes, fall back to Grep/Read.",
         "Skip it and use Grep/Read directly for: a known file, an exact symbol/string/error lookup,",
