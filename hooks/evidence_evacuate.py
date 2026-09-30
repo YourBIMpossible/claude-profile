@@ -20,8 +20,8 @@ Contract:
   costs one listing plus one stat per packet (sources are hashed only against
   a same-size candidate copy) and writes nothing.
 - One shared time budget (TOTAL_BUDGET_S, under the 30 s hook timeout) covers
-  every pre-check and evacuator call; a checkout the budget cannot reach is a
-  deferred failure.
+  every checkout, including the pre-check hashing; a checkout the budget
+  cannot reach or finish checking is a deferred failure.
 - A failure in one checkout is logged and the rest are still processed.
 - Exit 0 always (a Stop hook exiting 2 would block the stop). stdout is empty
   on success; on any failure it carries {"systemMessage": ...} so the user
@@ -58,6 +58,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 DEFAULT_ARCHIVE = "F:/Evidence-Archive/EC-LIVE"
 DEFAULT_EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
@@ -99,10 +100,15 @@ def _size(path: Path) -> int | None:
 
 
 class BudgetSpent(Exception):
-    """The shared time budget ran out during a checkout's pre-check."""
+    """The shared budget ran out before every store file was checked."""
+
+    def __init__(self, found: int) -> None:
+        super().__init__(found)
+        self.found = found
 
 
-def missing_ids(checkout: Path, archive: Path, deadline: float | None = None) -> list[str]:
+def missing_ids(checkout: Path, archive: Path,
+                remaining: Callable[[], float] | None = None) -> list[str]:
     """Store files with no byte-identical copy in the archive.
 
     A file named with a packet id is archived when packets/<id>.json holds the
@@ -110,8 +116,11 @@ def missing_ids(checkout: Path, archive: Path, deadline: float | None = None) ->
     the evacuator's quarantine holds <sha12>__<filename> with the same bytes.
     A partial, empty or differing copy is not archived, so the evacuator runs
     again and reports it. A source is hashed only when a same-size candidate
-    copy exists, so an unarchived packet costs one stat. Raises BudgetSpent
-    once `deadline` (time.monotonic) passes.
+    copy exists, so an unarchived packet costs one stat.
+
+    With `remaining`, the budget is checked before each file and
+    BudgetSpent is raised once it drops below MIN_CALL_S, so hashing a large
+    store can never run the hook past its timeout.
     """
     store = checkout / PACKETS_REL
     if not store.is_dir():
@@ -120,10 +129,10 @@ def missing_ids(checkout: Path, archive: Path, deadline: float | None = None) ->
     quarantine = archive / "quarantine"
     missing: list[str] = []
     for entry in os.scandir(store):
-        if deadline is not None and time.monotonic() > deadline:
-            raise BudgetSpent
         if not entry.name.endswith(".json") or not entry.is_file():
             continue
+        if remaining is not None and remaining() < MIN_CALL_S:
+            raise BudgetSpent(len(missing))
         size = entry.stat().st_size
         m = PACKET_ID_IN_NAME.search(entry.name)
         candidates = [archived / f"{m.group(1)}.json"] if m is not None else []
@@ -157,9 +166,10 @@ class Run:
 
 def evacuate(checkout: Path, archive: Path, evacuator: Path, why: str, run: Run) -> None:
     try:
-        missing = missing_ids(checkout, archive, run.deadline)
-    except BudgetSpent:
-        run.fail(f"deferred: time budget spent while checking {checkout}")
+        missing = missing_ids(checkout, archive, run.remaining)
+    except BudgetSpent as exc:
+        run.fail(f"deferred: time budget spent while checking {checkout} "
+                 f"({exc.found} packet(s) unarchived so far, rest unchecked)")
         return
     if not missing:
         return
@@ -351,7 +361,7 @@ if __name__ == "__main__":
             print(json.dumps({"systemMessage":
                               f"Evidence evacuation hook crashed: {type(exc).__name__} (log: {LOG_PATH})"}),
                   flush=True)
-        except OSError:  # stdout is gone; its unflushed buffer would turn exit 0 into 120
-            os._exit(0)
+        except (OSError, ValueError):  # stdout broken or closed; an unflushed buffer
+            os._exit(0)                # would turn exit 0 into 120
         sys.exit(0)
     sys.exit(code if sweep else 0)
