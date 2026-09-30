@@ -25,8 +25,14 @@ Contract:
 - A failure in one checkout is logged and the rest are still processed.
 - Exit 0 always (a Stop hook exiting 2 would block the stop). stdout is empty
   on success; on any failure it carries {"systemMessage": ...} so the user
-  sees the unarchived packets instead of only the log. A SessionEnd failure is
-  also written to evidence_evacuate.pending and shown by the next Stop.
+  sees the unarchived packets instead of only the log.
+- A SessionEnd failure is also appended as one entry to the
+  evidence_evacuate.pending/ directory (write-then-rename, never replacing
+  another entry). A Stop reads the entries present when it starts, runs its
+  own bounded evacuation, prints them, and only then deletes exactly those
+  entries: a Stop killed or failing before output leaves them for the next
+  Stop, and an entry appended meanwhile is untouched. An unreadable entry or
+  directory is shown as a failure and never deleted.
 - Log actions and failures to evidence_evacuate.log beside this script.
 
 Sweep mode (backstop for worktrees removed without a session ending in them):
@@ -46,6 +52,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -59,9 +66,10 @@ TOTAL_BUDGET_S = 25.0      # hook timeout in settings is 30 s
 MIN_CALL_S = 2.0           # below this an evacuator call is deferred, not started
 LOG_PATH = Path(os.environ.get("EVIDENCE_EVACUATE_LOG")
                 or Path(__file__).with_name("evidence_evacuate.log"))
-# SessionEnd failures are written here and shown by the next Stop: a
-# systemMessage printed while a session is closing may never be displayed.
-PENDING_PATH = LOG_PATH.with_name(LOG_PATH.stem + ".pending")
+# SessionEnd failures are appended here, one file each, and shown by the next
+# Stop: a systemMessage printed while a session is closing may never be displayed.
+PENDING_DIR = LOG_PATH.with_name(LOG_PATH.stem + ".pending")
+PENDING_SUFFIX = ".msg"
 
 
 def log(msg: str) -> None:
@@ -225,23 +233,55 @@ def system_message(failures: list[str]) -> str:
 
 
 def write_pending(message: str) -> None:
+    """Append one SessionEnd failure for a later Stop; never replaces an entry."""
+    name = f"{time.time_ns()}-{os.getpid()}-{secrets.token_hex(4)}"
+    tmp = PENDING_DIR / (name + ".tmp")
     try:
-        PENDING_PATH.write_text(message + "\n", encoding="utf-8")
+        PENDING_DIR.mkdir(exist_ok=True)
+        tmp.write_text(message, encoding="utf-8")
+        os.replace(tmp, PENDING_DIR / (name + PENDING_SUFFIX))
     except OSError as exc:
         log(f"ERROR could not record SessionEnd failures for the next Stop: {exc}")
 
 
-def take_pending() -> str:
-    """Return and clear the failures a previous SessionEnd could not show."""
+def read_pending() -> tuple[list[Path], list[str]]:
+    """Pending SessionEnd failures: (entries to acknowledge once shown, texts to show).
+
+    An unreadable entry or directory yields a text but no entry, so it is shown
+    on every Stop until repaired instead of vanishing.
+    """
     try:
-        text = PENDING_PATH.read_text(encoding="utf-8").strip()
+        names = sorted(e.name for e in os.scandir(PENDING_DIR) if e.name.endswith(PENDING_SUFFIX))
     except FileNotFoundError:
-        return ""
-    try:
-        PENDING_PATH.unlink()
-    except OSError as exc:  # shown now; a stale note repeats rather than vanishes
-        log(f"ERROR could not clear {PENDING_PATH.name}: {exc}")
-    return text
+        return [], []
+    except OSError as exc:
+        msg = (f"pending failure records unreadable ({PENDING_DIR.name}: "
+               f"{type(exc).__name__}); earlier session-end failures may be hidden")
+        log(f"ERROR {msg}")
+        return [], [msg]
+    entries: list[Path] = []
+    texts: list[str] = []
+    for name in names:
+        path = PENDING_DIR / name
+        try:
+            texts.append(path.read_text(encoding="utf-8").strip())
+            entries.append(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"pending failure record {name} unreadable: {type(exc).__name__}"
+            log(f"ERROR {msg}")
+            texts.append(msg)
+    return entries, texts
+
+
+def acknowledge(entries: list[Path]) -> None:
+    """Delete the entries a Stop has already printed, and nothing else."""
+    for path in entries:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:  # shown now; a stale entry repeats rather than vanishes
+            log(f"ERROR could not clear shown pending entry {path.name}: {exc}")
 
 
 def main(argv: list[str]) -> int:
@@ -266,15 +306,17 @@ def main(argv: list[str]) -> int:
     if event == "SessionEnd":
         roots = sorted({str(repo_root(c)) for c in checkouts})
         checkouts += [c for c in checkouts_for_sweep(roots) if c not in checkouts]
-    carried = "" if event == "SessionEnd" else take_pending()
+    carried, carried_texts = ([], []) if event == "SessionEnd" else read_pending()
     evacuate_all(checkouts, archive, evacuator, event, run)
     message = system_message(run.failures) if run.failures else ""
     if message and event == "SessionEnd":
         write_pending(message)
-    if carried:
-        message = f"{message} Earlier session end: {carried}".strip()
+    if carried_texts:
+        message = f"{message} Earlier session end: {' | '.join(carried_texts)}".strip()
     if message:
-        print(json.dumps({"systemMessage": message}))
+        sys.stdout.write(json.dumps({"systemMessage": message}) + "\n")
+        sys.stdout.flush()
+    acknowledge(carried)  # only after the output is out; an interrupted Stop keeps them
     return 0
 
 

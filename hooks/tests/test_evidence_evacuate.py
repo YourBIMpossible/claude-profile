@@ -61,21 +61,130 @@ def lane(root: Path, name: str = "lane") -> tuple[Path, Path, dict]:
     return wt, wt / ".evidence-compiler" / "packets", {"hook_event_name": "Stop", "cwd": str(wt)}
 
 
-def test_session_end_failure_reaches_next_stop(root: Path) -> None:
-    """A SessionEnd failure is carried to the next Stop, then cleared."""
-    wt, store, stop = lane(root)
-    make_packet(store, "ep_abababababababab")
-    missing = {"EVIDENCE_EVACUATOR": str(root / "missing.py")}
-    run(root, {"hook_event_name": "SessionEnd", "cwd": str(wt)}, env_extra=missing)
-    check("SessionEnd failure recorded for the next Stop", (root / "hook.pending").is_file())
-    other, _, other_stop = lane(root, "clean")
-    other.mkdir(parents=True)
-    p, _ = run(root, other_stop)
-    check("next Stop shows the carried SessionEnd failure",
-          p.returncode == 0 and "Earlier session end" in system_message(p)
-          and "evacuator not found" in system_message(p))
-    p, _ = run(root, other_stop)
-    check("carried failure is shown once", not p.stdout and not (root / "hook.pending").exists())
+def pending(root: Path) -> list[Path]:
+    d = root / "hook.pending"
+    return sorted(d.glob("*.msg")) if d.is_dir() else []
+
+
+def session_end_failure(root: Path, name: str) -> None:
+    """A real SessionEnd whose evacuator is missing: appends one pending entry."""
+    wt, store, _ = lane(root, name)
+    make_packet(store, f"ep_{abs(hash(name)) % 16**16:016x}")
+    run(root, {"hook_event_name": "SessionEnd", "cwd": str(wt)},
+        env_extra={"EVIDENCE_EVACUATOR": str(root / "missing.py"), "EVIDENCE_EVACUATE_BUDGET_S": "25"})
+    shutil.rmtree(wt)  # the lane is gone; only the pending entry remembers it
+
+
+def clean_stop(root: Path) -> dict:
+    wt, _, stop = lane(root, "clean")
+    wt.mkdir(parents=True, exist_ok=True)
+    return stop
+
+
+def test_two_session_end_failures_both_shown(root: Path) -> None:
+    """Every pending SessionEnd failure is shown, once; none overwrites another."""
+    session_end_failure(root, "first")
+    session_end_failure(root, "second")
+    check("two SessionEnd failures: two pending entries", len(pending(root)) == 2)
+    stop = clean_stop(root)
+    p, _ = run(root, stop)
+    msg = system_message(p)
+    check("next Stop shows both carried failures",
+          p.returncode == 0 and "Earlier session end" in msg
+          and "worktrees" in msg and "first" in msg and "second" in msg, msg)
+    check("shown entries are acknowledged", pending(root) == [])
+    p, _ = run(root, stop)
+    check("a successful Stop does not replay acknowledged failures", p.returncode == 0 and not p.stdout)
+
+
+def test_interrupted_stop_keeps_pending(root: Path) -> None:
+    """A Stop killed, or failing to write its output, acknowledges nothing."""
+    session_end_failure(root, "first")
+    session_end_failure(root, "second")
+    before = pending(root)
+    check("interrupted Stop: two entries pending beforehand", len(before) == 2)
+    started = root / "evacuator.pid"
+    slow = root / "slow_evacuator.py"
+    slow.write_text("import os, sys, time\n"
+                    "open(os.environ['TEST_STARTED'], 'w').write(str(os.getpid()))\n"
+                    "time.sleep(30)\n", encoding="utf-8")
+    wt, store, stop = lane(root, "busy")
+    make_packet(store, "ep_5555555555555555")
+    env = {**os.environ, "EVIDENCE_LIVE_ARCHIVE": str(root / "archive"),
+           "EVIDENCE_EVACUATOR": str(slow), "EVIDENCE_EVACUATE_LOG": str(root / "hook.log"),
+           "TEST_STARTED": str(started)}
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    proc = subprocess.Popen([sys.executable, HOOK], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, env=env)
+    proc.stdin.write(json.dumps(stop).encode("utf-8"))
+    proc.stdin.close()
+    deadline = time.monotonic() + 20
+    while not (started.is_file() and started.read_text()) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    check("interrupted Stop: killed while its evacuator runs", started.is_file())
+    proc.kill()  # the harness timeout, mid-evacuation
+    proc.wait()
+    proc.stdout.close()
+    if started.is_file():
+        os.kill(int(started.read_text()), 9)
+    check("Stop killed before output: both entries still pending", pending(root) == before)
+
+    fast = {**env, "EVIDENCE_EVACUATOR": EVACUATOR}
+    proc = subprocess.Popen([sys.executable, HOOK], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=fast)
+    proc.stdout.close()  # nobody reads: the systemMessage write fails
+    proc.stdin.write(json.dumps(stop).encode("utf-8"))
+    proc.stdin.close()
+    proc.wait(timeout=60)
+    check("Stop whose output fails: both entries still pending", pending(root) == before)
+
+    p, _ = run(root, stop)
+    msg = system_message(p)
+    check("the next Stop shows both", "first" in msg and "second" in msg and pending(root) == [], msg)
+
+
+def test_append_during_stop_survives(root: Path) -> None:
+    """An entry appended while a Stop runs is not acknowledged by that Stop."""
+    session_end_failure(root, "older")
+    older = pending(root)
+    during = root / "appending_evacuator.py"
+    during.write_text(
+        "import json, os, subprocess, sys\n"
+        "subprocess.run([sys.executable, os.environ['TEST_HOOK']],\n"
+        "               input=json.dumps({'hook_event_name': 'SessionEnd', 'cwd': sys.argv[2]}).encode(),\n"
+        "               env={**os.environ, 'EVIDENCE_EVACUATOR': os.environ['TEST_MISSING']})\n",
+        encoding="utf-8")
+    wt, store, stop = lane(root, "busy")
+    make_packet(store, "ep_6666666666666666")
+    p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATOR": str(during), "TEST_HOOK": HOOK,
+                                      "TEST_MISSING": str(root / "missing.py")})
+    after = pending(root)
+    check("Stop shows the older entry", "older" in system_message(p), system_message(p))
+    check("older entry acknowledged, the one appended during Stop kept",
+          len(after) == 1 and after[0] not in older, str(after))
+    shutil.rmtree(wt)
+    p, _ = run(root, clean_stop(root))
+    check("the next Stop shows the newer entry, then it is cleared",
+          "busy" in system_message(p) and pending(root) == [], system_message(p))
+
+
+def test_unreadable_pending_is_visible(root: Path) -> None:
+    """An unreadable entry or pending directory is a visible failure, never silent."""
+    session_end_failure(root, "readable")
+    bad = root / "hook.pending" / "0-0-bad.msg"
+    bad.write_bytes(b"\xff\xfe\xfa not utf-8")
+    stop = clean_stop(root)
+    p, _ = run(root, stop)
+    msg = system_message(p)
+    check("unreadable entry is shown; the readable one too",
+          "0-0-bad.msg unreadable" in msg and "readable" in msg, msg)
+    check("unreadable entry is kept, readable one acknowledged", pending(root) == [bad])
+    bad.unlink()
+    (root / "hook.pending").rmdir()
+    (root / "hook.pending").write_text("not a directory", encoding="utf-8")
+    p, _ = run(root, stop)
+    check("unreadable pending directory is shown", "pending failure records unreadable" in system_message(p),
+          system_message(p))
 
 
 def test_budget_covers_precheck(root: Path) -> None:
@@ -294,7 +403,8 @@ def main() -> int:
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    for case in (test_session_end_failure_reaches_next_stop, test_partial_copy_is_retried, test_id_mismatch_is_settled,
+    for case in (test_two_session_end_failures_both_shown, test_interrupted_stop_keeps_pending,
+                 test_append_during_stop_survives, test_unreadable_pending_is_visible, test_partial_copy_is_retried, test_id_mismatch_is_settled,
                  test_budget_is_shared, test_session_end_sweeps_siblings,
                  test_bad_checkout_does_not_stop_sweep, test_budget_covers_precheck,
                  test_precheck_hashes_only_candidates):
