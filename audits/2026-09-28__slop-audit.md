@@ -17,7 +17,7 @@ evacuator, not a stub.
 
 ### M1 — A partial or failed archive copy counts as archived, so the packet is never retried — VERIFIED
 `hooks/evidence_evacuate.py:74` decides a packet is archived with `(archived / f"{id}.json").exists()`.
-But the evacuator (`F:/Claude-Tools/evidence-archive/evacuate_worktree.py:162-184`) leaves its
+But the evacuator (Claude-Tools `evidence-archive/evacuate_worktree.py:162-184`) leaves its
 target file in place when it errors or is interrupted.
 **Failure scenario:**
 - The hook kills the evacuator at its 25 s timeout (`:96-101`) after `open(target,"xb")` but
@@ -39,7 +39,7 @@ evacuator should write to a temp name and rename only after verifying.
 `hooks/evidence_evacuate.py:89-106`. A missing evacuator, a timeout, or a non-zero evacuator
 exit is logged to `hooks/evidence_evacuate.log` and nowhere else. Nothing reads that log
 (no closeout, `/close`, or health check references it).
-**Failure scenario:** someone moves `F:/Claude-Tools/evidence-archive/evacuate_worktree.py` or
+**Failure scenario:** someone moves Claude-Tools `evidence-archive/evacuate_worktree.py` or
 the evacuator starts exiting non-zero. Every turn then logs `ERROR`, but the archive stops
 growing without anyone noticing. Packets die with their worktrees, which is the loss the hook
 exists to prevent.
@@ -94,3 +94,19 @@ This is moot today because nothing calls sweep (L2).
 | hooks/evidence_evacuate.py:74 | file existence treated as archived | swallows-a-real-failure | M1 |
 | hooks/evidence_evacuate.py:142-143 | bad stdin JSON → `{}` | justified-but-silent | falls back to `$CLAUDE_PROJECT_DIR`; still evacuates |
 | hooks/evidence_evacuate.py:154-155 | top-level `except Exception` | justified-and-logged | documented fail-open |
+
+
+## Disposition ledger (2026-09-29)
+
+| Finding | Disposition | Where |
+|---|---|---|
+| M1 | FIXED: a packet counts as archived only when a byte-identical copy exists. The evacuator also publishes through staging plus a no-overwrite link, so no partial file can reach `packets/` | PR #17, merged `a81a5a5`; claude-tools PR #14 |
+| L1 | FIXED: any failure is surfaced as a `systemMessage` while the hook stays fail-open with exit 0; `--sweep` exits 1 and prints failures | PR #17 |
+| L2 | FIXED: SessionEnd sweeps the repo root and every `.claude/worktrees/*` sibling, with no new scheduled configuration | PR #17 |
+| L3 | FIXED: a hash-matching quarantine entry `<sha12>__<name>` settles the file, ending receipt churn | PR #17 |
+| L4 | FIXED: one shared 25 s budget across checkouts; an unreached checkout is a recorded deferral | PR #17 |
+| L5 | FIXED: a failure in one checkout is recorded and the remaining checkouts are still processed | PR #17 |
+
+Installed: the pinned `~/.claude/hooks/evidence_evacuate.py` was reinstalled using bootstrap step 5a (backup, then byte copy of the committed source) at `a81a5a5`. It was later replaced by the PR #20 hook: as observed on 2026-09-29 the installed file's SHA-256 (`aa0e243b…`) matches `hooks/evidence_evacuate.py` at `f760b33`, and the `a81a5a5` copy is kept as the dated backup `evidence_evacuate.py.pre-profile-backup-20260929-213342`. The Stop and SessionEnd registrations are unchanged. PR #18 is unmerged and not installed; the installed hash is rechecked immediately before #18 is installed from merged `master`.
+
+**Re-check on changed paths:** all 28 original findings are gone (silent-catch census, counter-integrity and tested-but-dead re-run on the changed paths; 331 tests pass). The re-check found three new LOW gaps in the fixes themselves: N1, a failed staged write left a `.part` in `staging/` (claude-tools PR #15); N2, a SessionEnd `systemMessage` may never be shown; and N3, the hook's pre-check hashed every packet outside the time budget. N3's budget bound merged in claude-profile PR #20 (`f760b33`). N2 and N3's stat-before-hash are in claude-profile PR #18, reconciled with `master` through PR #21 at `2d4d846` (54/54 focused hook checks; the merged-master hook fails 9 pending-entry checks, then aborts). PR #18 and claude-tools PR #15 are open and await the owner's merge; the #18 hook is not installed. Outside the audited list, `evidence-capture/pipeline.py` `record_pending` swallowed `OSError`. It is fixed locally in claude-tools at `36e0d8e` (branch `claude/record-pending-visible`): an unwritable pending record is logged as a lost episode. That code is not yet published, so this audit remains open.
