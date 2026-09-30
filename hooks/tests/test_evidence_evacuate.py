@@ -61,6 +61,59 @@ def lane(root: Path, name: str = "lane") -> tuple[Path, Path, dict]:
     return wt, wt / ".evidence-compiler" / "packets", {"hook_event_name": "Stop", "cwd": str(wt)}
 
 
+def test_session_end_failure_reaches_next_stop(root: Path) -> None:
+    """A SessionEnd failure is carried to the next Stop, then cleared."""
+    wt, store, stop = lane(root)
+    make_packet(store, "ep_abababababababab")
+    missing = {"EVIDENCE_EVACUATOR": str(root / "missing.py")}
+    run(root, {"hook_event_name": "SessionEnd", "cwd": str(wt)}, env_extra=missing)
+    check("SessionEnd failure recorded for the next Stop", (root / "hook.pending").is_file())
+    other, _, other_stop = lane(root, "clean")
+    other.mkdir(parents=True)
+    p, _ = run(root, other_stop)
+    check("next Stop shows the carried SessionEnd failure",
+          p.returncode == 0 and "Earlier session end" in system_message(p)
+          and "evacuator not found" in system_message(p))
+    p, _ = run(root, other_stop)
+    check("carried failure is shown once", not p.stdout and not (root / "hook.pending").exists())
+
+
+def test_budget_covers_precheck(root: Path) -> None:
+    """The pre-check is inside the budget: a spent budget defers before hashing."""
+    wt, store, stop = lane(root)
+    for i in range(3):
+        make_packet(store, f"ep_{i:016x}")
+    run(root, stop)
+    p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATE_BUDGET_S": "-1"})
+    check("spent budget during pre-check is a surfaced deferral",
+          p.returncode == 0 and "while checking" in system_message(p))
+
+
+def test_precheck_hashes_only_candidates(root: Path) -> None:
+    """An unarchived packet costs a stat, not a hash; an archived one is hashed once each side."""
+    sys.path.insert(0, str(Path(HOOK).parent))
+    import evidence_evacuate as hook
+    wt, store, stop = lane(root)
+    make_packet(store, "ep_aaaaaaaaaaaaaaaa")
+    calls: list[Path] = []
+    real = hook._sha256
+
+    def counted(path: Path) -> str:
+        calls.append(path)
+        return real(path)
+
+    hook._sha256 = counted
+    try:
+        first = hook.missing_ids(wt, root / "archive")
+        run(root, stop)
+        n = len(calls)
+        second = hook.missing_ids(wt, root / "archive")
+    finally:
+        hook._sha256 = real
+    check("unarchived packet: missing, no hash", first == ["ep_aaaaaaaaaaaaaaaa"] and n == 0)
+    check("archived packet: settled with one hash per side", second == [] and len(calls) == 2)
+
+
 def test_partial_copy_is_retried(root: Path) -> None:
     """M1: an empty or truncated archive copy is not 'archived'."""
     wt, store, stop = lane(root)
@@ -137,10 +190,10 @@ def test_bad_checkout_does_not_stop_sweep(root: Path) -> None:
     b, b_store, _ = lane(root, "b-good")
     make_packet(a_store, "ep_8888888888888888")
     make_packet(b_store, "ep_9999999999999999")
-    def unreadable(path: Path) -> str:
-        if "a-bad" in str(path):
-            raise PermissionError(13, "denied", str(path))
-        return real(path)
+    def unreadable(checkout: Path, *args) -> list[str]:
+        if "a-bad" in str(checkout):
+            raise PermissionError(13, "denied", str(checkout))
+        return real(checkout, *args)
 
     env = {"EVIDENCE_LIVE_ARCHIVE": str(root / "archive"), "EVIDENCE_EVACUATOR": EVACUATOR,
            "EVIDENCE_EVACUATE_LOG": str(root / "hook.log")}
@@ -148,12 +201,12 @@ def test_bad_checkout_does_not_stop_sweep(root: Path) -> None:
     os.environ.update(env)
     sys.path.insert(0, str(Path(HOOK).parent))
     import evidence_evacuate as hook  # LOG_PATH is read at import
-    real = hook._sha256
-    hook._sha256 = unreadable
+    real = hook.missing_ids
+    hook.missing_ids = unreadable
     try:
         code = hook.main(["--sweep", str(root / "repo")])
     finally:
-        hook._sha256 = real
+        hook.missing_ids = real
         for k, v in saved.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -241,9 +294,10 @@ def main() -> int:
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    for case in (test_partial_copy_is_retried, test_id_mismatch_is_settled,
+    for case in (test_session_end_failure_reaches_next_stop, test_partial_copy_is_retried, test_id_mismatch_is_settled,
                  test_budget_is_shared, test_session_end_sweeps_siblings,
-                 test_bad_checkout_does_not_stop_sweep):
+                 test_bad_checkout_does_not_stop_sweep, test_budget_covers_precheck,
+                 test_precheck_hashes_only_candidates):
         root = Path(tempfile.mkdtemp(prefix="ec-evacuate-selftest-"))
         try:
             case(root)

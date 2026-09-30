@@ -17,13 +17,16 @@ Contract:
   exists: <archive>/packets/<id>.json, or the evacuator's quarantine entry
   <archive>/quarantine/*/<sha12>__<filename>. A missing, partial or differing
   copy sends the checkout to the evacuator again. A turn that wrote no packet
-  costs one listing plus one hash per packet and writes nothing.
+  costs one listing plus one stat per packet (sources are hashed only against
+  a same-size candidate copy) and writes nothing.
 - One shared time budget (TOTAL_BUDGET_S, under the 30 s hook timeout) covers
-  every checkout; a checkout the budget cannot reach is a deferred failure.
+  every pre-check and evacuator call; a checkout the budget cannot reach is a
+  deferred failure.
 - A failure in one checkout is logged and the rest are still processed.
 - Exit 0 always (a Stop hook exiting 2 would block the stop). stdout is empty
   on success; on any failure it carries {"systemMessage": ...} so the user
-  sees the unarchived packets instead of only the log.
+  sees the unarchived packets instead of only the log. A SessionEnd failure is
+  also written to evidence_evacuate.pending and shown by the next Stop.
 - Log actions and failures to evidence_evacuate.log beside this script.
 
 Sweep mode (backstop for worktrees removed without a session ending in them):
@@ -38,6 +41,7 @@ EVIDENCE_EVACUATE_BUDGET_S (seconds, default TOTAL_BUDGET_S).
 from __future__ import annotations
 
 import datetime as dt
+import glob
 import hashlib
 import json
 import os
@@ -55,6 +59,9 @@ TOTAL_BUDGET_S = 25.0      # hook timeout in settings is 30 s
 MIN_CALL_S = 2.0           # below this an evacuator call is deferred, not started
 LOG_PATH = Path(os.environ.get("EVIDENCE_EVACUATE_LOG")
                 or Path(__file__).with_name("evidence_evacuate.log"))
+# SessionEnd failures are written here and shown by the next Stop: a
+# systemMessage printed while a session is closing may never be displayed.
+PENDING_PATH = LOG_PATH.with_name(LOG_PATH.stem + ".pending")
 
 
 def log(msg: str) -> None:
@@ -74,21 +81,27 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _same_copy(copy: Path, size: int, digest: str) -> bool:
+def _size(path: Path) -> int | None:
     try:
-        return copy.stat().st_size == size and _sha256(copy) == digest
+        return path.stat().st_size
     except FileNotFoundError:
-        return False
+        return None
 
 
-def missing_ids(checkout: Path, archive: Path) -> list[str]:
+class BudgetSpent(Exception):
+    """The shared time budget ran out during a checkout's pre-check."""
+
+
+def missing_ids(checkout: Path, archive: Path, deadline: float | None = None) -> list[str]:
     """Store files with no byte-identical copy in the archive.
 
     A file named with a packet id is archived when packets/<id>.json holds the
     same bytes; anything else (malformed, id mismatch, no id) is archived when
     the evacuator's quarantine holds <sha12>__<filename> with the same bytes.
     A partial, empty or differing copy is not archived, so the evacuator runs
-    again and reports it.
+    again and reports it. A source is hashed only when a same-size candidate
+    copy exists, so an unarchived packet costs one stat. Raises BudgetSpent
+    once `deadline` (time.monotonic) passes.
     """
     store = checkout / PACKETS_REL
     if not store.is_dir():
@@ -97,17 +110,22 @@ def missing_ids(checkout: Path, archive: Path) -> list[str]:
     quarantine = archive / "quarantine"
     missing: list[str] = []
     for entry in os.scandir(store):
+        if deadline is not None and time.monotonic() > deadline:
+            raise BudgetSpent
         if not entry.name.endswith(".json") or not entry.is_file():
             continue
         size = entry.stat().st_size
-        digest = _sha256(Path(entry.path))
         m = PACKET_ID_IN_NAME.search(entry.name)
-        if m is not None and _same_copy(archived / f"{m.group(1)}.json", size, digest):
-            continue
-        if quarantine.is_dir() and any(
-                _same_copy(q, size, digest)
-                for q in quarantine.glob(f"*/{digest[:12]}__{entry.name}")):
-            continue
+        candidates = [archived / f"{m.group(1)}.json"] if m is not None else []
+        if quarantine.is_dir():
+            candidates += [Path(q) for q in glob.glob(
+                os.path.join(glob.escape(str(quarantine)), "*", "*__" + glob.escape(entry.name)))]
+        candidates = [c for c in candidates if _size(c) == size]
+        if candidates:
+            digest = _sha256(Path(entry.path))
+            if any((c.parent.parent != quarantine or c.name.startswith(digest[:12] + "__"))
+                   and _sha256(c) == digest for c in candidates):
+                continue
         missing.append(m.group(1) if m is not None else entry.name)
     return missing
 
@@ -128,7 +146,11 @@ class Run:
 
 
 def evacuate(checkout: Path, archive: Path, evacuator: Path, why: str, run: Run) -> None:
-    missing = missing_ids(checkout, archive)
+    try:
+        missing = missing_ids(checkout, archive, run.deadline)
+    except BudgetSpent:
+        run.fail(f"deferred: time budget spent while checking {checkout}")
+        return
     if not missing:
         return
     if not evacuator.is_file():
@@ -202,6 +224,26 @@ def system_message(failures: list[str]) -> str:
     return f"{head} {detail} (log: {LOG_PATH})"
 
 
+def write_pending(message: str) -> None:
+    try:
+        PENDING_PATH.write_text(message + "\n", encoding="utf-8")
+    except OSError as exc:
+        log(f"ERROR could not record SessionEnd failures for the next Stop: {exc}")
+
+
+def take_pending() -> str:
+    """Return and clear the failures a previous SessionEnd could not show."""
+    try:
+        text = PENDING_PATH.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
+    try:
+        PENDING_PATH.unlink()
+    except OSError as exc:  # shown now; a stale note repeats rather than vanishes
+        log(f"ERROR could not clear {PENDING_PATH.name}: {exc}")
+    return text
+
+
 def main(argv: list[str]) -> int:
     if os.environ.get("EVIDENCE_EVACUATE", "1") == "0":
         return 0
@@ -224,9 +266,15 @@ def main(argv: list[str]) -> int:
     if event == "SessionEnd":
         roots = sorted({str(repo_root(c)) for c in checkouts})
         checkouts += [c for c in checkouts_for_sweep(roots) if c not in checkouts]
+    carried = "" if event == "SessionEnd" else take_pending()
     evacuate_all(checkouts, archive, evacuator, event, run)
-    if run.failures:
-        print(json.dumps({"systemMessage": system_message(run.failures)}))
+    message = system_message(run.failures) if run.failures else ""
+    if message and event == "SessionEnd":
+        write_pending(message)
+    if carried:
+        message = f"{message} Earlier session end: {carried}".strip()
+    if message:
+        print(json.dumps({"systemMessage": message}))
     return 0
 
 
