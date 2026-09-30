@@ -17,7 +17,7 @@ function Backup-IfRealFile {
     param([string]$Path, [string]$ExpectedContent)
     if (-not (Test-Path -LiteralPath $Path)) { return }
     $existing = Read-Utf8Text $Path
-    if ($existing -and ($existing.Trim() -eq $ExpectedContent.Trim())) { return }
+    if ($existing -and ($existing.Trim() -ceq $ExpectedContent.Trim())) { return }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupPath = "$Path.pre-profile-backup-$stamp"
     Copy-Item -LiteralPath $Path -Destination $backupPath -Force
@@ -97,20 +97,34 @@ function Get-JsonLeafPaths {
     }
 }
 
-function Write-SettingsPlan {
-    # Prints the JSON paths that differ and how (added/removed/changed) - never values.
-    # Names under /env are masked because a variable's name can itself be sensitive.
+function Get-SettingsChanges {
+    # One Kind/Path record per JSON leaf path whose parsed value differs between Before
+    # and After. Values and paths compare case-sensitively; formatting and key order
+    # do not count.
     param($Before, $After)
-    $b = @{}; $a = @{}
+    $b = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::Ordinal)
+    $a = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::Ordinal)
     if ($null -ne $Before) { Get-JsonLeafPaths -Node $Before -Path '' -Into $b }
-    Get-JsonLeafPaths -Node $After -Path '' -Into $a
-    $lines = New-Object System.Collections.Generic.SortedSet[string]
+    if ($null -ne $After) { Get-JsonLeafPaths -Node $After -Path '' -Into $a }
+    foreach ($k in $b.Keys) {
+        if (-not $a.ContainsKey($k)) { [pscustomobject]@{ Kind = 'removed'; Path = $k } }
+        elseif (-not [string]::Equals($a[$k], $b[$k], [System.StringComparison]::Ordinal)) { [pscustomobject]@{ Kind = 'changed'; Path = $k } }
+    }
+    foreach ($k in $a.Keys) {
+        if (-not $b.ContainsKey($k)) { [pscustomobject]@{ Kind = 'added'; Path = $k } }
+    }
+}
+
+function Write-SettingsPlan {
+    # Prints the change counts and each changed path with its change type - never
+    # values. Names under /env are masked because a variable's name can be sensitive.
+    param([object[]]$Changes)
     $counts = @{ added = 0; removed = 0; changed = 0 }
-    foreach ($k in @($b.Keys) + @($a.Keys)) {
-        $kind = if (-not $a.ContainsKey($k)) { 'removed' } elseif (-not $b.ContainsKey($k)) { 'added' } elseif ($a[$k] -ne $b[$k]) { 'changed' } else { $null }
-        if (-not $kind) { continue }
-        $shown = $k -replace '^/env/.*', '/env/*'
-        if ($lines.Add("  $kind $shown")) { $counts[$kind]++ }
+    $lines = New-Object 'System.Collections.Generic.SortedSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($c in @($Changes)) {
+        if ($null -eq $c) { continue }
+        $counts[$c.Kind]++
+        [void]$lines.Add("  $($c.Kind) $($c.Path -creplace '^/env/.*', '/env/*')")
     }
     Write-Host "settings.json plan: $($counts.added) added, $($counts.removed) removed, $($counts.changed) changed"
     foreach ($line in $lines) { Write-Host $line }
@@ -409,6 +423,9 @@ if (Test-Path -LiteralPath $settingsPath) {
     } catch {
         throw "Existing settings.json is not valid JSON; refusing to replace it. Fix or move it, then run bootstrap again: $($_.Exception.Message)"
     }
+    if ($null -eq $existing) {
+        throw "Existing settings.json is JSON null, not a settings object; refusing to replace it."
+    }
     if ($null -ne $existing -and -not (Test-JsonObject $existing)) {
         throw "Existing settings.json is not a JSON object; refusing to replace it."
     }
@@ -439,11 +456,13 @@ if ($null -ne $existing) {
     if ($lost.Count -gt 0) { throw "Settings merge would drop top-level keys: $($lost -join ', ') - refusing to write." }
 }
 $settingsRaw = ConvertTo-Json -InputObject $merged -Depth 32
-$currentRaw = if (Test-Path -LiteralPath $settingsPath) { Read-Utf8Text $settingsPath } else { $null }
-if ($null -ne $currentRaw -and $currentRaw.Trim() -eq $settingsRaw.Trim()) {
+# Decide on parsed values, not text: a file Claude Code re-saved in its own formatting
+# is still correct, and rewriting it would only churn backups.
+$changes = @(Get-SettingsChanges -Before $existing -After $merged)
+if ($null -ne $existing -and $changes.Count -eq 0) {
     Write-Host "settings.json already correct - left untouched"
 } else {
-    Write-SettingsPlan -Before $existing -After $merged
+    Write-SettingsPlan -Changes $changes
     Backup-IfRealFile -Path $settingsPath -ExpectedContent $settingsRaw
     [System.IO.File]::WriteAllText($settingsPath, $settingsRaw, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "Wrote settings.json"

@@ -346,7 +346,7 @@ class SettingsPreservation(BootstrapSandbox):
         self.assertIsNone(s["model"], "an explicit null is the user's value and is kept")
 
     def test_malformed_settings_is_refused_untouched(self) -> None:
-        for raw in ("{not json", '{"permissions": "not-an-object"}', '["an", "array"]'):
+        for raw in ("{not json", '{"permissions": "not-an-object"}', '["an", "array"]', "null"):
             with self.subTest(raw=raw):
                 original = self.write_existing(raw)
                 proc = self.run_bootstrap(expect_ok=False)
@@ -364,6 +364,61 @@ class SettingsPreservation(BootstrapSandbox):
                 self.assertIn("settings.json is empty", proc.stdout + proc.stderr)
                 self.assertEqual((self.claude / "settings.json").read_bytes(), original)
                 self.assertEqual(self.backups(), [], "a refused run made a backup")
+
+    def test_case_only_change_is_written_and_backed_up(self) -> None:
+        self.run_bootstrap()
+        path = self.claude / "settings.json"
+        text = path.read_text(encoding="utf-8")
+        prefix = self.hooks_dir.as_posix()
+        self.assertIn(prefix, text)
+        stale = text.replace(prefix, prefix.upper())
+        self.assertNotEqual(stale, text, "sandbox path has no letters to change case")
+        path.write_text(stale, encoding="utf-8")
+        proc = self.run_bootstrap()
+        self.assertEqual(path.read_text(encoding="utf-8"), text, "case-only difference was not rewritten")
+        self.assertRegex(proc.stdout, r"(?m)^  changed /hooks/")
+        self.assertEqual(len(self.backups()), 1, "the case-only rewrite made no backup")
+        self.assertEqual(self.backups()[0].read_text(encoding="utf-8"), stale)
+
+    def test_formatting_only_difference_is_left_untouched(self) -> None:
+        self.write_existing(self.existing())
+        self.run_bootstrap()
+        path = self.claude / "settings.json"
+        reformatted = json.dumps(json.loads(path.read_text(encoding="utf-8-sig")), indent=2, ensure_ascii=False) + "\n"
+        path.write_bytes(reformatted.encode("utf-8"))
+        backups = self.backups()
+        proc = self.run_bootstrap()
+        self.assertEqual(path.read_bytes(), reformatted.encode("utf-8"), "a formatting-only difference was rewritten")
+        self.assertEqual(self.backups(), backups, "a formatting-only difference made a backup")
+        self.assertIn("settings.json already correct", proc.stdout)
+
+    def test_plan_masks_changed_env_names_and_values(self) -> None:
+        # The merge itself never changes env, so drive the plan function directly with a
+        # before/after pair that adds, removes and changes env entries.
+        before = {"env": {"KEEP_NAME_HIDDEN": "old-secret-value", "REMOVED_NAME_HIDDEN": "gone-secret-value"}, "theme": "dark"}
+        after = {"env": {"KEEP_NAME_HIDDEN": "new-secret-value", "ADDED_NAME_HIDDEN": "added-secret-value"}, "theme": "Dark"}
+        script = (
+            "$ErrorActionPreference = 'Stop'\n"
+            "$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:BOOTSTRAP_PATH, [ref]$null, [ref]$null)\n"
+            "$wanted = 'Test-JsonObject', 'Get-JsonLeafPaths', 'Get-SettingsChanges', 'Write-SettingsPlan'\n"
+            "foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {\n"
+            "    if ($wanted -contains $f.Name) { . ([scriptblock]::Create($f.Extent.Text)) }\n"
+            "}\n"
+            "$before = $env:PLAN_BEFORE | ConvertFrom-Json\n"
+            "$after = $env:PLAN_AFTER | ConvertFrom-Json\n"
+            "Write-SettingsPlan -Changes (Get-SettingsChanges -Before $before -After $after)\n"
+        )
+        env = {**os.environ, "BOOTSTRAP_PATH": str(REPO / "bootstrap.ps1"),
+               "PLAN_BEFORE": json.dumps(before), "PLAN_AFTER": json.dumps(after)}
+        proc = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                              env=env, capture_output=True, text=True, timeout=60)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertIn("settings.json plan: 1 added, 1 removed, 2 changed", out)
+        for line in ("  added /env/*", "  removed /env/*", "  changed /env/*", "  changed /theme"):
+            self.assertIn(line, out)
+        for leaked in ("KEEP_NAME_HIDDEN", "REMOVED_NAME_HIDDEN", "ADDED_NAME_HIDDEN", "secret-value", "dark", "Dark"):
+            self.assertNotIn(leaked, out, f"plan output leaked {leaked!r}")
 
     def test_directory_entries_deduplicate_across_case_and_slashes(self) -> None:
         detected = Path("F:/BIMpossible")
