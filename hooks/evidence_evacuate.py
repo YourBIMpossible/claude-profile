@@ -32,7 +32,8 @@ Contract:
   own bounded evacuation, prints them, and only then deletes exactly those
   entries: a Stop killed or failing before output leaves them for the next
   Stop, and an entry appended meanwhile is untouched. An unreadable entry or
-  directory is shown as a failure and never deleted.
+  directory is shown as a failure and never deleted. A .tmp left by a
+  SessionEnd killed mid-write is shown once older than STALE_TMP_S.
 - Log actions and failures to evidence_evacuate.log beside this script.
 
 Sweep mode (backstop for worktrees removed without a session ending in them):
@@ -70,6 +71,7 @@ LOG_PATH = Path(os.environ.get("EVIDENCE_EVACUATE_LOG")
 # Stop: a systemMessage printed while a session is closing may never be displayed.
 PENDING_DIR = LOG_PATH.with_name(LOG_PATH.stem + ".pending")
 PENDING_SUFFIX = ".msg"
+STALE_TMP_S = 60.0         # an unrenamed .tmp older than this is an interrupted SessionEnd
 
 
 def log(msg: str) -> None:
@@ -248,10 +250,20 @@ def read_pending() -> tuple[list[Path], list[str]]:
     """Pending SessionEnd failures: (entries to acknowledge once shown, texts to show).
 
     An unreadable entry or directory yields a text but no entry, so it is shown
-    on every Stop until repaired instead of vanishing.
+    on every Stop until repaired instead of vanishing. A .tmp older than
+    STALE_TMP_S is a SessionEnd killed between write and rename: shown and
+    acknowledged like an entry. An entry another Stop acknowledged meanwhile is
+    skipped.
     """
+    def stale_tmp(e: os.DirEntry) -> bool:
+        try:
+            return e.name.endswith(".tmp") and time.time() - e.stat().st_mtime > STALE_TMP_S
+        except FileNotFoundError:  # renamed into place meanwhile
+            return False
+
     try:
-        names = sorted(e.name for e in os.scandir(PENDING_DIR) if e.name.endswith(PENDING_SUFFIX))
+        names = sorted(e.name for e in os.scandir(PENDING_DIR)
+                       if e.name.endswith(PENDING_SUFFIX) or stale_tmp(e))
     except FileNotFoundError:
         return [], []
     except OSError as exc:
@@ -264,12 +276,18 @@ def read_pending() -> tuple[list[Path], list[str]]:
     for name in names:
         path = PENDING_DIR / name
         try:
-            texts.append(path.read_text(encoding="utf-8").strip())
-            entries.append(path)
+            text = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            continue
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"pending failure record {name} unreadable: {type(exc).__name__}"
             log(f"ERROR {msg}")
             texts.append(msg)
+            continue
+        if name.endswith(".tmp"):
+            text = f"(interrupted record) {text}"
+        texts.append(text)
+        entries.append(path)
     return entries, texts
 
 
@@ -329,7 +347,11 @@ if __name__ == "__main__":
         if sweep:
             print(f"FAIL unhandled {type(exc).__name__}: {exc}")
             sys.exit(1)
-        print(json.dumps({"systemMessage":
-                          f"Evidence evacuation hook crashed: {type(exc).__name__} (log: {LOG_PATH})"}))
+        try:
+            print(json.dumps({"systemMessage":
+                              f"Evidence evacuation hook crashed: {type(exc).__name__} (log: {LOG_PATH})"}),
+                  flush=True)
+        except OSError:  # stdout is gone; its unflushed buffer would turn exit 0 into 120
+            os._exit(0)
         sys.exit(0)
     sys.exit(code if sweep else 0)

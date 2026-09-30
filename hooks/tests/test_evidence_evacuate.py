@@ -75,6 +75,11 @@ def session_end_failure(root: Path, name: str) -> None:
     shutil.rmtree(wt)  # the lane is gone; only the pending entry remembers it
 
 
+def shown(msg: str, name: str) -> bool:
+    """The carried message names that lane's checkout path (not just the word)."""
+    return str(Path(".claude") / "worktrees" / name) in msg
+
+
 def clean_stop(root: Path) -> dict:
     wt, _, stop = lane(root, "clean")
     wt.mkdir(parents=True, exist_ok=True)
@@ -91,7 +96,7 @@ def test_two_session_end_failures_both_shown(root: Path) -> None:
     msg = system_message(p)
     check("next Stop shows both carried failures",
           p.returncode == 0 and "Earlier session end" in msg
-          and "worktrees" in msg and "first" in msg and "second" in msg, msg)
+          and shown(msg, "first") and shown(msg, "second"), msg)
     check("shown entries are acknowledged", pending(root) == [])
     p, _ = run(root, stop)
     check("a successful Stop does not replay acknowledged failures", p.returncode == 0 and not p.stdout)
@@ -136,11 +141,12 @@ def test_interrupted_stop_keeps_pending(root: Path) -> None:
     proc.stdin.write(json.dumps(stop).encode("utf-8"))
     proc.stdin.close()
     proc.wait(timeout=60)
-    check("Stop whose output fails: both entries still pending", pending(root) == before)
+    check("Stop whose output fails: exit 0, both entries still pending",
+          proc.returncode == 0 and pending(root) == before, f"rc={proc.returncode}")
 
     p, _ = run(root, stop)
     msg = system_message(p)
-    check("the next Stop shows both", "first" in msg and "second" in msg and pending(root) == [], msg)
+    check("the next Stop shows both", shown(msg, "first") and shown(msg, "second") and pending(root) == [], msg)
 
 
 def test_append_during_stop_survives(root: Path) -> None:
@@ -159,13 +165,32 @@ def test_append_during_stop_survives(root: Path) -> None:
     p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATOR": str(during), "TEST_HOOK": HOOK,
                                       "TEST_MISSING": str(root / "missing.py")})
     after = pending(root)
-    check("Stop shows the older entry", "older" in system_message(p), system_message(p))
+    check("Stop shows the older entry", shown(system_message(p), "older"), system_message(p))
     check("older entry acknowledged, the one appended during Stop kept",
           len(after) == 1 and after[0] not in older, str(after))
     shutil.rmtree(wt)
     p, _ = run(root, clean_stop(root))
     check("the next Stop shows the newer entry, then it is cleared",
-          "busy" in system_message(p) and pending(root) == [], system_message(p))
+          shown(system_message(p), "busy") and pending(root) == [], system_message(p))
+
+
+def test_interrupted_record_is_shown(root: Path) -> None:
+    """A SessionEnd killed between write and rename leaves a .tmp: shown once stale, never lost."""
+    pend = root / "hook.pending"
+    pend.mkdir()
+    stale = pend / "1-1-stale.tmp"
+    stale.write_text("evacuator not found: lost-lane", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(stale, (old, old))
+    fresh = pend / "2-2-fresh.tmp"
+    fresh.write_text("still being written", encoding="utf-8")
+    stop = clean_stop(root)
+    p, _ = run(root, stop)
+    msg = system_message(p)
+    check("stale .tmp is shown as an interrupted record",
+          "(interrupted record) evacuator not found: lost-lane" in msg and "still being written" not in msg, msg)
+    check("stale .tmp acknowledged, a fresh one (a write in progress) left alone",
+          not stale.exists() and fresh.exists())
 
 
 def test_unreadable_pending_is_visible(root: Path) -> None:
@@ -177,7 +202,7 @@ def test_unreadable_pending_is_visible(root: Path) -> None:
     p, _ = run(root, stop)
     msg = system_message(p)
     check("unreadable entry is shown; the readable one too",
-          "0-0-bad.msg unreadable" in msg and "readable" in msg, msg)
+          "0-0-bad.msg unreadable" in msg and shown(msg, "readable"), msg)
     check("unreadable entry is kept, readable one acknowledged", pending(root) == [bad])
     bad.unlink()
     (root / "hook.pending").rmdir()
@@ -404,7 +429,8 @@ def main() -> int:
         shutil.rmtree(root, ignore_errors=True)
 
     for case in (test_two_session_end_failures_both_shown, test_interrupted_stop_keeps_pending,
-                 test_append_during_stop_survives, test_unreadable_pending_is_visible, test_partial_copy_is_retried, test_id_mismatch_is_settled,
+                 test_append_during_stop_survives, test_interrupted_record_is_shown,
+                 test_unreadable_pending_is_visible, test_partial_copy_is_retried, test_id_mismatch_is_settled,
                  test_budget_is_shared, test_session_end_sweeps_siblings,
                  test_bad_checkout_does_not_stop_sweep, test_budget_covers_precheck,
                  test_precheck_hashes_only_candidates):
