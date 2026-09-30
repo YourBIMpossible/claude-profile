@@ -17,7 +17,7 @@ afterward - to undo, delete what bootstrap wrote and rename the backup back.
 |---|---|
 | `~/.claude/CLAUDE.md` | one-line pointer at this repo |
 | `~/.claude/skills` | moved aside, replaced by a junction into this repo |
-| `~/.claude/settings.json` | generated from `settings.template.json`; hook entries the template does not own (e.g. another repo's hooks) are carried over |
+| `~/.claude/settings.json` | merged with `settings.template.json`: the template's hooks replace the ones it owns, `permissions.additionalDirectories` gains the detected project folders, missing plugin and marketplace entries are added, and every other existing key (permissions rules, `autoMode`, `env`, your own values) is kept. An empty or unparseable file is refused, never replaced; a changed file is backed up first |
 | `~/.claude/hooks/*` | pinned copies of `hooks/*.py`, `*.ps1` and `closure_audit_repos.json`; a differing installed copy is backed up first |
 | `%APPDATA%\Claude\claude_desktop_config.json` | generated from the template in `mcp/` |
 
@@ -81,9 +81,11 @@ pushed - not made locally on one machine.
   `~/.claude/CLAUDE.md` - it is a generated one-line pointer and bootstrap
   rewrites it.
 - **Settings**: edit `settings.template.json` here, then re-run `bootstrap.ps1`.
-  A change made in-app (e.g. via `/config`) lands only in the *generated*
-  `~/.claude/settings.json` and will be replaced the next time bootstrap runs.
-  The same applies to MCP servers via `mcp/claude_desktop_config.template.json`.
+  The template's hooks are authoritative; its other values are defaults that only
+  fill keys a machine does not have yet, so a change made in-app (e.g. via
+  `/config`) is kept, and a changed template default does not override it.
+  MCP servers come from `mcp/claude_desktop_config.template.json`, whose
+  `mcpServers` block replaces the installed one.
 
 Then on your other machines, the SessionStart hook (or a manual `git pull`)
 picks it up.

@@ -16,12 +16,104 @@ function ConvertTo-ForwardSlash {
 function Backup-IfRealFile {
     param([string]$Path, [string]$ExpectedContent)
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    $existing = Get-Content -Raw -LiteralPath $Path -ErrorAction SilentlyContinue
+    $existing = Read-Utf8Text $Path
     if ($existing -and ($existing.Trim() -eq $ExpectedContent.Trim())) { return }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupPath = "$Path.pre-profile-backup-$stamp"
     Copy-Item -LiteralPath $Path -Destination $backupPath -Force
     Write-Host "Backed up existing file to $backupPath"
+}
+
+function Read-Utf8Text {
+    # Windows PowerShell 5.1's Get-Content -Raw decodes a BOM-less file with the ANSI
+    # code page, which corrupts non-ASCII text that is written back. Read as UTF-8.
+    param([string]$Path)
+    return [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+}
+
+function Test-JsonObject {
+    param($Value)
+    return $Value -is [System.Management.Automation.PSCustomObject]
+}
+
+function Merge-ProfileSettings {
+    # The settings.json to write: the existing settings with only the Profile-owned
+    # parts updated. hooks come from the generated settings (already merged with the
+    # existing hooks the template does not own); permissions.additionalDirectories is
+    # the union of existing and detected entries; enabledPlugins and
+    # extraKnownMarketplaces gain the template's missing entries without overriding
+    # existing ones; every other template key is a default, used only when the key is
+    # absent. Keys the template does not know are kept as they are.
+    param($Existing, $Generated)
+    $out = [ordered]@{}
+    if ($null -ne $Existing) { foreach ($p in $Existing.PSObject.Properties) { $out[$p.Name] = $p.Value } }
+    foreach ($p in $Generated.PSObject.Properties) {
+        $name = $p.Name
+        $current = if ($out.Contains($name)) { $out[$name] } else { $null }
+        if ($name -eq 'hooks') {
+            $out[$name] = $p.Value
+        } elseif ($name -eq 'permissions') {
+            $perm = [ordered]@{}
+            if ($null -ne $current) { foreach ($q in $current.PSObject.Properties) { $perm[$q.Name] = $q.Value } }
+            foreach ($q in $p.Value.PSObject.Properties) {
+                if ($q.Name -ne 'additionalDirectories' -and -not $perm.Contains($q.Name)) { $perm[$q.Name] = $q.Value }
+            }
+            # Collect with += rather than an if-expression: PowerShell unrolls a
+            # one-element array returned from an expression into a bare string.
+            $candidates = @()
+            if ($perm.Contains('additionalDirectories')) { $candidates += @($perm['additionalDirectories']) }
+            $candidates += @($p.Value.additionalDirectories)
+            $dirs = New-Object System.Collections.ArrayList
+            $seen = @{}
+            foreach ($d in $candidates) {
+                if ([string]::IsNullOrWhiteSpace([string]$d)) { continue }
+                $key = (ConvertTo-ForwardSlash ([string]$d)).TrimEnd('/').ToLowerInvariant()
+                if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; [void]$dirs.Add($d) }
+            }
+            $perm['additionalDirectories'] = [object[]]$dirs.ToArray()
+            $out[$name] = [pscustomobject]$perm
+        } elseif ($name -in @('enabledPlugins', 'extraKnownMarketplaces')) {
+            $map = [ordered]@{}
+            if ($null -ne $current) { foreach ($q in $current.PSObject.Properties) { $map[$q.Name] = $q.Value } }
+            foreach ($q in $p.Value.PSObject.Properties) { if (-not $map.Contains($q.Name)) { $map[$q.Name] = $q.Value } }
+            $out[$name] = [pscustomobject]$map
+        } elseif (-not $out.Contains($name)) {
+            $out[$name] = $p.Value
+        }
+    }
+    return [pscustomobject]$out
+}
+
+function Get-JsonLeafPaths {
+    # Flattens parsed JSON into path -> compact JSON text; an array is one leaf, so a
+    # changed hook event reports its event path, never a command or its arguments.
+    param($Node, [string]$Path, [System.Collections.IDictionary]$Into)
+    if (Test-JsonObject $Node) {
+        $props = @($Node.PSObject.Properties)
+        if ($props.Count -eq 0) { $Into[$Path] = '{}' }
+        foreach ($p in $props) { Get-JsonLeafPaths -Node $p.Value -Path "$Path/$($p.Name)" -Into $Into }
+    } else {
+        $Into[$Path] = ConvertTo-Json -InputObject $Node -Depth 32 -Compress
+    }
+}
+
+function Write-SettingsPlan {
+    # Prints the JSON paths that differ and how (added/removed/changed) - never values.
+    # Names under /env are masked because a variable's name can itself be sensitive.
+    param($Before, $After)
+    $b = @{}; $a = @{}
+    if ($null -ne $Before) { Get-JsonLeafPaths -Node $Before -Path '' -Into $b }
+    Get-JsonLeafPaths -Node $After -Path '' -Into $a
+    $lines = New-Object System.Collections.Generic.SortedSet[string]
+    $counts = @{ added = 0; removed = 0; changed = 0 }
+    foreach ($k in @($b.Keys) + @($a.Keys)) {
+        $kind = if (-not $a.ContainsKey($k)) { 'removed' } elseif (-not $b.ContainsKey($k)) { 'added' } elseif ($a[$k] -ne $b[$k]) { 'changed' } else { $null }
+        if (-not $kind) { continue }
+        $shown = $k -replace '^/env/.*', '/env/*'
+        if ($lines.Add("  $kind $shown")) { $counts[$kind]++ }
+    }
+    Write-Host "settings.json plan: $($counts.added) added, $($counts.removed) removed, $($counts.changed) changed"
+    foreach ($line in $lines) { Write-Host $line }
 }
 
 function Find-JsonObjectSpan {
@@ -299,13 +391,31 @@ $settingsPath = Join-Path $claudeDir 'settings.json'
 # into the installed hooks directory or this repo's hooks/ are the template's,
 # so the template's version replaces them. Anything else under the repo (a skill
 # script, say) is machine-specific and is kept.
+# settings.json is shared with the user: Claude Code, /config, /permissions and
+# hand edits all write it. Only the Profile-owned parts are updated
+# (Merge-ProfileSettings); every other key is kept, and a file that cannot be read
+# as a settings object is refused rather than replaced.
 $preserved = @()
+$existing = $null
 if (Test-Path -LiteralPath $settingsPath) {
-    $existing = $null
+    # An empty file is not a fresh install - something truncated it - and ConvertFrom-Json
+    # would read it as "no settings", so the template would silently replace it.
+    $existingText = Read-Utf8Text $settingsPath
+    if ([string]::IsNullOrWhiteSpace($existingText)) {
+        throw "Existing settings.json is empty; refusing to replace it. Restore it from a backup or delete it, then run bootstrap again."
+    }
     try {
-        $existing = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
+        $existing = $existingText | ConvertFrom-Json
     } catch {
-        Write-Warning "Existing settings.json is not valid JSON; it is backed up, but none of its hooks can be carried over."
+        throw "Existing settings.json is not valid JSON; refusing to replace it. Fix or move it, then run bootstrap again: $($_.Exception.Message)"
+    }
+    if ($null -ne $existing -and -not (Test-JsonObject $existing)) {
+        throw "Existing settings.json is not a JSON object; refusing to replace it."
+    }
+    foreach ($key in @('hooks', 'permissions', 'enabledPlugins', 'extraKnownMarketplaces')) {
+        if ($null -ne $existing -and $null -ne $existing.$key -and -not (Test-JsonObject $existing.$key)) {
+            throw "Existing settings.json has a '$key' value that is not a JSON object; refusing to replace it."
+        }
     }
     if ($existing -and $existing.hooks) {
         $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }))
@@ -319,16 +429,25 @@ if ($preserved.Count -gt 0) {
         } else {
             $generated.hooks | Add-Member -NotePropertyName $hookEvent -NotePropertyValue @($item.Group)
         }
-        foreach ($handler in $item.Group.hooks) {
-            Write-Host "Kept machine-specific $hookEvent hook not owned by the template: $(@($handler.command) + @($handler.args) -join ' ')"
-        }
+        Write-Host "Kept $(@($item.Group.hooks).Count) machine-specific $hookEvent hook(s) not owned by the template"
     }
-    $settingsRaw = $generated | ConvertTo-Json -Depth 32
 }
-
-Backup-IfRealFile -Path $settingsPath -ExpectedContent $settingsRaw
-[System.IO.File]::WriteAllText($settingsPath, $settingsRaw, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "Wrote settings.json"
+$merged = Merge-ProfileSettings -Existing $existing -Generated $generated
+if ($null -ne $existing) {
+    $mergedKeys = @($merged.PSObject.Properties.Name)
+    $lost = @($existing.PSObject.Properties.Name | Where-Object { $mergedKeys -notcontains $_ })
+    if ($lost.Count -gt 0) { throw "Settings merge would drop top-level keys: $($lost -join ', ') - refusing to write." }
+}
+$settingsRaw = ConvertTo-Json -InputObject $merged -Depth 32
+$currentRaw = if (Test-Path -LiteralPath $settingsPath) { Read-Utf8Text $settingsPath } else { $null }
+if ($null -ne $currentRaw -and $currentRaw.Trim() -eq $settingsRaw.Trim()) {
+    Write-Host "settings.json already correct - left untouched"
+} else {
+    Write-SettingsPlan -Before $existing -After $merged
+    Backup-IfRealFile -Path $settingsPath -ExpectedContent $settingsRaw
+    [System.IO.File]::WriteAllText($settingsPath, $settingsRaw, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "Wrote settings.json"
+}
 
 # 6. Generate claude_desktop_config.json from template
 $mcpTemplatePath = Join-Path $repoRoot 'mcp\claude_desktop_config.template.json'
@@ -365,7 +484,7 @@ if (-not (Test-Path -LiteralPath $mcpConfigPath)) {
     [System.IO.File]::WriteAllText($mcpConfigPath, $mcpRaw, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "Wrote claude_desktop_config.json (new file)"
 } else {
-    $existingRaw = Get-Content -Raw -LiteralPath $mcpConfigPath
+    $existingRaw = Read-Utf8Text $mcpConfigPath
     try {
         $existingObj = $existingRaw | ConvertFrom-Json
     } catch {

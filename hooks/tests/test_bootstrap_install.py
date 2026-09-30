@@ -269,5 +269,122 @@ class Preflight(BootstrapSandbox):
         self.assertFalse((self.claude / "settings.json").exists())
 
 
+TEMPLATE = json.loads((REPO / "settings.template.json").read_text(encoding="utf-8"))
+SECRET = "sandbox-secret-value-not-real"
+HOOK_ARG = "sandbox-hook-arg-not-for-output"
+
+
+class SettingsPreservation(BootstrapSandbox):
+    """Bootstrap updates only the Profile-owned parts of an existing settings.json."""
+
+    def existing(self) -> dict:
+        plugin = next(iter(TEMPLATE["enabledPlugins"]))
+        return {
+            "autoMode": {"allow": ["$defaults", "example exception \u2014 non-ASCII kept"]},
+            "env": {"EXAMPLE_TOKEN": SECRET},
+            "cleanupPeriodDays": 45,
+            "statusLine": {"type": "command", "command": "echo status"},
+            "model": "user-chosen-model",
+            "permissions": {"allow": ["Bash(gh pr ready:*)"], "deny": ["Read(**/.env)"], "ask": [],
+                            "defaultMode": "default", "additionalDirectories": ["F:/Extra-Dir"]},
+            "enabledPlugins": {plugin: not TEMPLATE["enabledPlugins"][plugin], "user-only@local": True},
+            "hooks": {"Notification": [{"hooks": [{"type": "command", "command": "python",
+                                                   "args": ["elsewhere/notify.py", HOOK_ARG]}]}]},
+        }
+
+    def write_existing(self, data: dict | str) -> bytes:
+        self.claude.mkdir(parents=True, exist_ok=True)
+        raw = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False, indent=2)
+        (self.claude / "settings.json").write_bytes(raw.encode("utf-8"))
+        return (self.claude / "settings.json").read_bytes()
+
+    def backups(self) -> list[Path]:
+        return sorted(self.claude.glob("settings.json.pre-profile-backup-*"))
+
+    def test_preserves_user_owned_settings_and_second_run_is_identical(self) -> None:
+        existing = self.existing()
+        original = self.write_existing(existing)
+        self.run_bootstrap()
+        s = self.settings()
+        for key in ("autoMode", "env", "cleanupPeriodDays", "statusLine", "model"):
+            self.assertEqual(s[key], existing[key], f"{key} was not preserved")
+        for key in ("allow", "deny", "ask", "defaultMode"):
+            self.assertEqual(s["permissions"][key], existing["permissions"][key], f"permissions.{key}")
+        self.assertEqual(s["permissions"]["additionalDirectories"][0], "F:/Extra-Dir")
+        for plugin, value in existing["enabledPlugins"].items():
+            self.assertEqual(s["enabledPlugins"][plugin], value, "an existing plugin choice was overridden")
+        self.assertTrue(set(TEMPLATE["enabledPlugins"]) <= set(s["enabledPlugins"]), "template plugin not seeded")
+        self.assertIn(("Notification", None, existing["hooks"]["Notification"][0]["hooks"][0]), list(handlers(s)))
+        self.assertTrue(any(h.get("args", [""])[-1].lower().startswith(self.hooks_prefix())
+                            for _, _, h in handlers(s)), "template hooks missing")
+        self.assertEqual(len(self.backups()), 1)
+        self.assertEqual(self.backups()[0].read_bytes(), original, "backup is not the exact prior file")
+
+        before = (self.claude / "settings.json").read_bytes()
+        proc = self.run_bootstrap()
+        self.assertEqual((self.claude / "settings.json").read_bytes(), before, "second run changed settings.json")
+        self.assertEqual(len(self.backups()), 1, "second run made a backup")
+        self.assertIn("settings.json already correct", proc.stdout)
+
+    def test_fresh_install_takes_template_values_and_second_run_is_identical(self) -> None:
+        self.run_bootstrap()
+        s = self.settings()
+        self.assertEqual(s["model"], TEMPLATE["model"])
+        self.assertEqual(s["enabledPlugins"], TEMPLATE["enabledPlugins"])
+        self.assertNotIn("autoMode", s)
+        before = (self.claude / "settings.json").read_bytes()
+        self.run_bootstrap()
+        self.assertEqual((self.claude / "settings.json").read_bytes(), before)
+        self.assertEqual(self.backups(), [])
+
+    def test_null_and_absent_keys_take_template_values(self) -> None:
+        self.write_existing({"permissions": None, "enabledPlugins": None, "model": None})
+        self.run_bootstrap()
+        s = self.settings()
+        self.assertEqual(s["enabledPlugins"], TEMPLATE["enabledPlugins"])
+        self.assertIsInstance(s["permissions"]["additionalDirectories"], list)
+        self.assertIsNone(s["model"], "an explicit null is the user's value and is kept")
+
+    def test_malformed_settings_is_refused_untouched(self) -> None:
+        for raw in ("{not json", '{"permissions": "not-an-object"}', '["an", "array"]'):
+            with self.subTest(raw=raw):
+                original = self.write_existing(raw)
+                proc = self.run_bootstrap(expect_ok=False)
+                self.assertIn("settings.json", proc.stdout + proc.stderr)
+                self.assertEqual((self.claude / "settings.json").read_bytes(), original)
+                self.assertEqual(self.backups(), [], "a refused run made a backup")
+
+    def test_empty_settings_is_refused_untouched(self) -> None:
+        # An empty file is not a fresh install: something truncated it, and replacing it
+        # with the template would hide that. Refuse, like any other unreadable file.
+        for raw in ("", "  \n\t\n"):
+            with self.subTest(raw=raw):
+                original = self.write_existing(raw)
+                proc = self.run_bootstrap(expect_ok=False)
+                self.assertIn("settings.json is empty", proc.stdout + proc.stderr)
+                self.assertEqual((self.claude / "settings.json").read_bytes(), original)
+                self.assertEqual(self.backups(), [], "a refused run made a backup")
+
+    def test_directory_entries_deduplicate_across_case_and_slashes(self) -> None:
+        detected = Path("F:/BIMpossible")
+        if not detected.exists():
+            self.skipTest("needs a detectable F:/BIMpossible")
+        self.write_existing({"permissions": {"additionalDirectories": ["f:\\bimpossible\\", "F:/Extra-Dir"]}})
+        self.run_bootstrap()
+        dirs = self.settings()["permissions"]["additionalDirectories"]
+        self.assertEqual(dirs[:2], ["f:\\bimpossible\\", "F:/Extra-Dir"], "existing spelling and order kept")
+        norm = [d.replace("\\", "/").rstrip("/").lower() for d in dirs]
+        self.assertEqual(len(norm), len(set(norm)), f"duplicate directories: {dirs}")
+
+    def test_plan_lists_changed_paths_only_never_values(self) -> None:
+        self.write_existing(self.existing())
+        proc = self.run_bootstrap()
+        out = proc.stdout + proc.stderr
+        self.assertIn("settings.json plan:", out)
+        self.assertRegex(out, r"(?m)^  (added|changed|removed) /")
+        for leaked in (SECRET, HOOK_ARG, "user-chosen-model", "echo status", "EXAMPLE_TOKEN"):
+            self.assertNotIn(leaked, out, f"plan output leaked {leaked!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

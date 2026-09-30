@@ -16,7 +16,7 @@ Install procedure:
    PR flow.
 2. Installing = running `bootstrap.ps1`, which copies every reviewed hook here to
    `C:\Users\Zeria\.claude\hooks\` (backing up any differing installed copy) and
-   regenerates settings.json from `settings.template.json`, whose registrations
+   merges settings.json with `settings.template.json`, whose registrations
    point only at those copies (`__CLAUDE_HOOKS_DIR__`). A new hook must be
    registered in the template in the same change —
    `hooks/tests/test_bootstrap_install.py` fails when a hook ships unregistered.
