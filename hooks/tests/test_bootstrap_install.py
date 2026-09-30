@@ -170,7 +170,11 @@ class Reinstall(BootstrapSandbox):
         (self.hooks_dir / "decay_reminder.py").write_text("# stale installed copy\n", encoding="utf-8")
         legacy = (REPO / "hooks" / "session-start-pull.ps1").as_posix()
         unowned = {"type": "command", "command": "python", "args": ["elsewhere/capture_start.py"], "timeout": 5}
+        # Lives in this repo but outside hooks/: machine-specific, not the template's.
+        in_repo_unowned = {"type": "command", "command": "python",
+                           "args": [(REPO / "skills" / "graphify" / "scripts" / "local_hint.py").as_posix()]}
         existing = {"hooks": {
+            "SubagentStop": [{"hooks": [in_repo_unowned]}],
             "SessionStart": [{"matcher": "startup|resume|clear", "hooks": [
                 {"type": "command", "command": "powershell", "args": ["-File", legacy], "timeout": 15}]}],
             "UserPromptSubmit": [{"hooks": [
@@ -191,6 +195,8 @@ class Reinstall(BootstrapSandbox):
         self.assertEqual(sum(1 for e, _, h in all_handlers if h == unowned), 2)
         self.assertIn(("UserPromptSubmit", None, unowned), all_handlers)
         self.assertIn(("Notification", None, unowned), all_handlers)
+        self.assertIn(("SubagentStop", None, in_repo_unowned), all_handlers,
+                      "machine-specific hook under the repo but outside hooks/ was dropped")
         self.assertNotIn(legacy.lower(), json.dumps(settings).lower(), "repo-path registration survived")
         self.assertNotIn("d:/users/old/", json.dumps(settings).lower(), "foreign-profile registration survived")
         decay = [h for e, _, h in all_handlers if h.get("args", [""])[-1].endswith("/decay_reminder.py")]

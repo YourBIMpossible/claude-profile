@@ -19,7 +19,8 @@ Contract:
   copy sends the checkout to the evacuator again. A turn that wrote no packet
   costs one listing plus one hash per packet and writes nothing.
 - One shared time budget (TOTAL_BUDGET_S, under the 30 s hook timeout) covers
-  every checkout; a checkout the budget cannot reach is a deferred failure.
+  every checkout, including the pre-check hashing; a checkout the budget
+  cannot reach or finish checking is a deferred failure.
 - A failure in one checkout is logged and the rest are still processed.
 - Exit 0 always (a Stop hook exiting 2 would block the stop). stdout is empty
   on success; on any failure it carries {"systemMessage": ...} so the user
@@ -46,6 +47,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 DEFAULT_ARCHIVE = "F:/Evidence-Archive/EC-LIVE"
 DEFAULT_EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
@@ -81,7 +83,16 @@ def _same_copy(copy: Path, size: int, digest: str) -> bool:
         return False
 
 
-def missing_ids(checkout: Path, archive: Path) -> list[str]:
+class BudgetSpent(Exception):
+    """The shared budget ran out before every store file was checked."""
+
+    def __init__(self, found: int) -> None:
+        super().__init__(found)
+        self.found = found
+
+
+def missing_ids(checkout: Path, archive: Path,
+                remaining: Callable[[], float] | None = None) -> list[str]:
     """Store files with no byte-identical copy in the archive.
 
     A file named with a packet id is archived when packets/<id>.json holds the
@@ -89,6 +100,10 @@ def missing_ids(checkout: Path, archive: Path) -> list[str]:
     the evacuator's quarantine holds <sha12>__<filename> with the same bytes.
     A partial, empty or differing copy is not archived, so the evacuator runs
     again and reports it.
+
+    With `remaining`, the budget is checked before each file is hashed and
+    BudgetSpent is raised once it drops below MIN_CALL_S, so hashing a large
+    store can never run the hook past its timeout.
     """
     store = checkout / PACKETS_REL
     if not store.is_dir():
@@ -99,6 +114,8 @@ def missing_ids(checkout: Path, archive: Path) -> list[str]:
     for entry in os.scandir(store):
         if not entry.name.endswith(".json") or not entry.is_file():
             continue
+        if remaining is not None and remaining() < MIN_CALL_S:
+            raise BudgetSpent(len(missing))
         size = entry.stat().st_size
         digest = _sha256(Path(entry.path))
         m = PACKET_ID_IN_NAME.search(entry.name)
@@ -128,7 +145,12 @@ class Run:
 
 
 def evacuate(checkout: Path, archive: Path, evacuator: Path, why: str, run: Run) -> None:
-    missing = missing_ids(checkout, archive)
+    try:
+        missing = missing_ids(checkout, archive, run.remaining)
+    except BudgetSpent as exc:
+        run.fail(f"deferred: time budget spent while checking {checkout} "
+                 f"({exc.found} packet(s) unarchived so far, rest unchecked)")
+        return
     if not missing:
         return
     if not evacuator.is_file():
