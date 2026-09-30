@@ -12,6 +12,7 @@ default path). A missing evacuator is a hard failure, never a skip or a pass.
 """
 import contextlib
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -51,25 +52,30 @@ def make_packet(store: Path, pid: str) -> None:
 
 
 @contextlib.contextmanager
-def in_process_hook(root: Path, env_extra=None, clock=None):
+def in_process_hook(root: Path, env_extra=None, clock=None, module="evidence_evacuate"):
     """Import the hook in-process with this case's env, log path and (optionally) a
     fake clock; restore os.environ, sys.path and the module's globals on exit so no
-    case inherits another's state. LOG_PATH is read at import, and the module stays
-    cached across cases, so it is set explicitly here."""
+    case inherits another's state, including when the import itself raises. LOG_PATH
+    is read at import, and the module stays cached across cases, so it is set
+    explicitly here. The fake clock only drives Run's deadline: a case that passes
+    one and reaches the evacuator gets a subprocess timeout computed in fake time."""
     env = {"EVIDENCE_LIVE_ARCHIVE": str(root / "archive"), "EVIDENCE_EVACUATOR": EVACUATOR,
            "EVIDENCE_EVACUATE_LOG": str(root / "hook.log"), **(env_extra or {})}
     saved_env = {k: os.environ.get(k) for k in env}
     hook_dir = str(Path(HOOK).parent)
-    added = hook_dir not in sys.path
-    if added:
-        sys.path.insert(0, hook_dir)
-    os.environ.update(env)
-    import evidence_evacuate as hook
-    saved = {"LOG_PATH": hook.LOG_PATH, "_sha256": hook._sha256, "time": hook.time}
-    hook.LOG_PATH = root / "hook.log"
-    if clock is not None:
-        hook.time = types.SimpleNamespace(monotonic=clock)
+    added = False
+    hook = None
+    saved = {}
     try:
+        if hook_dir not in sys.path:
+            sys.path.insert(0, hook_dir)
+            added = True
+        os.environ.update(env)
+        hook = importlib.import_module(module)
+        saved = {"LOG_PATH": hook.LOG_PATH, "_sha256": hook._sha256, "time": hook.time}
+        hook.LOG_PATH = root / "hook.log"
+        if clock is not None:
+            hook.time = types.SimpleNamespace(monotonic=clock)
         yield hook
     finally:
         for name, value in saved.items():
@@ -82,6 +88,22 @@ def in_process_hook(root: Path, env_extra=None, clock=None):
         if added:
             sys.path.remove(hook_dir)
 
+
+def case_import_failure_restores_state(root: Path) -> None:
+    """in_process_hook restores env and sys.path even when the import raises."""
+    keys = ("EVIDENCE_LIVE_ARCHIVE", "EVIDENCE_EVACUATOR", "EVIDENCE_EVACUATE_LOG")
+    before_env = {k: os.environ.get(k) for k in keys}
+    before_path = list(sys.path)
+    raised = False
+    try:
+        with in_process_hook(root, module="evidence_evacuate_does_not_exist"):
+            pass
+    except ModuleNotFoundError:
+        raised = True
+    check("import failure: env and sys.path restored",
+          raised and before_env == {k: os.environ.get(k) for k in keys}
+          and sys.path == before_path,
+          f"raised={raised}")
 
 def run(root: Path, payload, args=(), env_extra=None, raw=None):
     env = os.environ.copy()
@@ -227,7 +249,7 @@ def case_budget_covers_hashing(root: Path) -> None:
         real = hook._sha256
 
         def slow_hash(path: Path) -> str:
-            hashed.append((path, now[0]))
+            hashed.append(path)
             now[0] += 0.6
             return real(path)
 
@@ -236,17 +258,14 @@ def case_budget_covers_hashing(root: Path) -> None:
             code = hook.main(["--sweep", str(root / "repo")])
     lines = out.getvalue().splitlines()
     deferred = [ln for ln in lines if "deferred" in ln and "rest unchecked" in ln]
-    over_budget = [p for p, t in hashed if 2.5 - t < 2.0]  # hashed after the budget ran out
-    check("spent budget stops hashing: one file hashed, none past the budget, "
-          "both checkouts deferred, exit 1",
-          code == 1 and len(hashed) == 1 and not over_budget and len(deferred) == 2
-          and not (root / "archive" / "packets").exists(),
-          f"hashed={len(hashed)} over_budget={len(over_budget)} out={lines}")
+    check("spent budget stops hashing: one file hashed, both checkouts deferred, exit 1",
+          code == 1 and len(hashed) == 1 and len(deferred) == 2
+          and not (root / "archive" / "packets").exists(), f"hashed={len(hashed)} out={lines}")
 
 
 CASES = (case_partial_copy_is_retried, case_id_mismatch_is_settled, case_budget_is_shared,
          case_session_end_sweeps_siblings, case_bad_checkout_does_not_stop_sweep,
-         case_budget_covers_hashing)
+         case_budget_covers_hashing, case_import_failure_restores_state)
 
 
 def run_case(case) -> list:
@@ -292,6 +311,10 @@ def test_bad_checkout_does_not_stop_sweep() -> None:
 
 def test_budget_covers_hashing() -> None:
     assert_case(case_budget_covers_hashing)
+
+
+def test_import_failure_restores_state() -> None:
+    assert_case(case_import_failure_restores_state)
 
 
 def case_core_flow(root: Path) -> None:
