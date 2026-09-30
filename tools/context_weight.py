@@ -35,16 +35,24 @@ Design (see also notes/2026-09-21-context-audit-review.md §4):
     session everywhere) and bimpossible_session (global_session + what
     additionally loads inside F:\\BIMpossible). BIMpossible-only content
     is never charged to global_session.
-  - Three budget lines, not one: a 32 KB design target (informational,
-    never a pass/fail gate or a deletion quota), a 45 KB maintenance
-    warning, and a 56 KB hard ceiling that fails the run.
+  - Scenario totals are TELEMETRY, not a gate: the 32 KB design target and
+    the 45 KB / 56 KB reference lines are this tool's own policy numbers,
+    not a Claude Code limit, so crossing one is reported (INFO) but never
+    warns or fails the run. Real limits still fail per source — above all
+    Claude Code's MEMORY.md startup truncation (25 KB / 200 lines).
   - Runs append one record to tools/context_weight.history.jsonl (gitignored,
     machine-local) so growth is visible as a trend, not just a snapshot.
 
-Exit codes (preserved from v1 for the existing scheduled-task caller):
-  0 = clean, 1 = warnings, 2 = failures OR a required input that could not
-  be measured (an unmeasured or missing required input is never reported
-  as clean, and never silently reads as zero).
+Exit codes (2026-09-30 contract):
+  0 = measurement complete, no hard failure. Advisory warnings (per-source
+      WARN/NEAR-LIMIT, per-skill description WARN, unlisted plugin, trend
+      growth) are still printed and the VERDICT line says ADVISORY, but
+      they do not fail the run.
+  2 = a hard failure (a per-source fail_at such as MEMORY.md 25 KB / 200
+      lines, a per-skill description over DESC_FAIL) OR a required input
+      that could not be measured (never reported as clean, never silently
+      read as zero).
+  1 is no longer emitted.
 """
 from __future__ import annotations
 
@@ -91,8 +99,8 @@ SCENARIOS = (GLOBAL, BIMPOSSIBLE)
 # audit-review.md. 4 chars ~ 1 token.
 DESIGN_TARGET_BYTES = 32_000   # aspirational; informational only, NEVER gates,
                                 # NEVER a deletion quota (see module docstring)
-SCENARIO_WARN_BYTES = 45_000   # per-scenario maintenance warning
-SCENARIO_FAIL_BYTES = 56_000   # per-scenario hard ceiling -> FAIL
+SCENARIO_WARN_BYTES = 45_000   # per-scenario reference line; INFO only, never gates
+SCENARIO_FAIL_BYTES = 56_000   # per-scenario reference line; INFO only, never gates
 NEAR_LIMIT_RATIO = 0.90        # warn at 90% of whichever ceiling applies
 TREND_GROWTH_WARN_RATIO = 0.10  # warn when a comparable prior run grew >10%
 
@@ -533,8 +541,10 @@ def run_scan(*,
         if total is None:
             scenario_results[scen] = {"total": None, "status": "incomplete", "incomplete": incomplete}
         else:
+            # Aggregate size is telemetry: the reference lines are local
+            # policy, not a runtime limit, so they label but never gate.
             verdict = _evaluate_ceiling(total, SCENARIO_WARN_BYTES, SCENARIO_FAIL_BYTES)
-            status = {"FAIL": "fail", "WARN": "warn", "NEAR-LIMIT": "warn", None: "clean"}[verdict]
+            status = "info" if verdict else "clean"
             scenario_results[scen] = {
                 "total": total, "status": status, "verdict": verdict, "incomplete": [],
             }
@@ -573,22 +583,16 @@ def run_scan(*,
 
     any_fail = (
         required_missing_n > 0
-        or any(r["status"] == "fail" for r in scenario_results.values())
         or per_skill_fail
         or any_source_fail
     )
     any_warn = (
         bool(plugin_allowlist_warns)
-        or any(r["status"] == "warn" for r in scenario_results.values())
         or per_skill_warn
         or any_source_warn
     )
-    if any_fail:
-        exit_code = 2
-    elif any_warn:
-        exit_code = 1
-    else:
-        exit_code = 0
+    # Advisory warnings are displayed but never fail a complete measurement.
+    exit_code = 2 if any_fail else 0
     # A REQUIRED source that is MISSING/UNMEASURED means "no verdict
     # possible" even if nothing else looks wrong — preserve the v1 contract
     # that this is never indistinguishable from clean. Optional/hosted gaps
@@ -618,6 +622,7 @@ def run_scan(*,
         missing_n=missing_n, na_n=na_n,
         top3=top3,
         exit_code=exit_code,
+        advisory=any_warn or any(t.startswith("WARN") for t in trend_lines),
         trend_lines=trend_lines,
         trend_reset=trend_reset,
         history_recorded=record is not None,
@@ -672,7 +677,7 @@ PRINCIPAL_SOURCE_KEYS = (
 
 def _build_history_record(now: datetime, repo_dir: Path, scenario_results: dict,
                            sources: list, exit_code: int) -> dict:
-    status = {0: "clean", 1: "warn", 2: "fail"}[exit_code]
+    status = {0: "clean", 2: "fail"}[exit_code]
     rec = {
         "timestamp": now.isoformat(),
         "tool_version_or_git_sha": _git_sha(repo_dir),
@@ -743,7 +748,8 @@ def render_report(result: dict) -> str:
 
     lines.append(
         f"context-weight v{SCHEMA_VERSION} | design target {DESIGN_TARGET_BYTES}B "
-        f"(informational only) | warn {SCENARIO_WARN_BYTES}B | fail {SCENARIO_FAIL_BYTES}B"
+        f"| reference lines {SCENARIO_WARN_BYTES}B / {SCENARIO_FAIL_BYTES}B "
+        f"(all informational — scenario totals never gate)"
     )
     for name, key in ((GLOBAL, "global_session"), (BIMPOSSIBLE, "bimpossible_session")):
         r = scen[name]
@@ -751,9 +757,10 @@ def render_report(result: dict) -> str:
             lines.append(f"  {name}: INCOMPLETE — {len(r['incomplete'])} required source(s) not measured")
         else:
             pct = r["total"] / SCENARIO_FAIL_BYTES * 100
+            label = f" (past {r['verdict']} reference line)" if r["verdict"] else ""
             lines.append(
-                f"  {name}: {_fmt_bytes_tokens(r['total'])} | status={r['status'].upper()} "
-                f"| {pct:.0f}% of {SCENARIO_FAIL_BYTES}B ceiling"
+                f"  {name}: {_fmt_bytes_tokens(r['total'])} | status={r['status'].upper()}{label} "
+                f"| {pct:.0f}% of {SCENARIO_FAIL_BYTES}B reference line"
             )
 
     lines.append("")
@@ -836,10 +843,10 @@ def render_report(result: dict) -> str:
     lines.append(f"history: {'recorded' if result['history_recorded'] else 'skipped (measurement incomplete)'}")
 
     lines.append("")
-    if result["exit_code"] == 0:
+    if result["exit_code"] == 0 and result["advisory"]:
+        lines.append("VERDICT: ADVISORY (exit 0) — measurement complete, no hard failure; see WARN/NEAR-LIMIT lines above.")
+    elif result["exit_code"] == 0:
         lines.append("VERDICT: CLEAN on measured sources — see Unmeasured/discovered above for coverage gaps.")
-    elif result["exit_code"] == 1:
-        lines.append("VERDICT: WARN — see WARN/NEAR-LIMIT lines above.")
     else:
         lines.append("VERDICT: FAIL or NOT MEASURED — a required source is missing/unmeasured, or a hard ceiling was hit.")
 

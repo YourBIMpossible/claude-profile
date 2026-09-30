@@ -263,7 +263,7 @@ def test_6_source_at_90pct_of_ceiling_warns():
     assert "NEAR-LIMIT" in rep or "WARN" in rep
 
 
-def test_7_scenario_at_45kb_warns():
+def test_7_scenario_past_45kb_is_info_not_a_failure():
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         paths = build_estate(tmp)
@@ -271,18 +271,22 @@ def test_7_scenario_at_45kb_warns():
         # small required global sources are summed in; pad past it.
         paths["global_claude_md"].write_text("x" * 46_000, encoding="utf-8")
         r = cw.run_scan(**paths)
-    assert r["scenario_results"][cw.GLOBAL]["status"] == "warn"
-    assert r["exit_code"] == 1
+    # Aggregate scenario size is telemetry: labelled, never gating.
+    assert r["scenario_results"][cw.GLOBAL]["status"] == "info"
+    assert r["scenario_results"][cw.GLOBAL]["verdict"] == "WARN"
+    assert r["exit_code"] == 0
 
 
-def test_8_scenario_at_56kb_fails():
+def test_8_scenario_past_56kb_is_info_not_a_failure():
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         paths = build_estate(tmp)
         paths["global_claude_md"].write_text("x" * 56_000, encoding="utf-8")
         r = cw.run_scan(**paths)
-    assert r["scenario_results"][cw.GLOBAL]["status"] == "fail"
-    assert r["exit_code"] == 2
+    assert r["scenario_results"][cw.GLOBAL]["status"] == "info"
+    assert r["scenario_results"][cw.GLOBAL]["verdict"] == "FAIL"
+    assert r["exit_code"] == 0
+    assert "status=INFO" in cw.render_report(r)
 
 
 def test_9_comparable_history_over_10pct_scenario_growth_warns():
@@ -368,9 +372,11 @@ def test_14_jsonl_history_append_does_not_overwrite_earlier_entries():
 
 # ------------------------------------------------- real signals still work
 
-def test_oversized_description_still_warns():
+def test_oversized_description_warns_as_advisory_exit_0():
     result, report = run(desc_chars=cw.DESC_WARN + 5)
-    assert result["exit_code"] == 1, report
+    assert result["exit_code"] == 0, report
+    assert result["advisory"] is True
+    assert "VERDICT: ADVISORY" in report
     assert any(k == "WARN" for _, _, k in result["per_skill_issues"])
 
 
@@ -383,7 +389,8 @@ def test_oversized_description_still_fails():
 def test_plugin_allowlist_flags_unlisted_enabled_plugin():
     result, report = run(enabled_plugins=["some-new-plugin@some-marketplace"])
     assert "some-new-plugin@some-marketplace" in result["plugin_allowlist_warns"]
-    assert result["exit_code"] >= 1
+    assert result["exit_code"] == 0
+    assert result["advisory"] is True
 
 
 def test_plugin_with_no_skill_is_not_applicable_not_unmeasured():
@@ -433,3 +440,35 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ------------------------------------ Claude Code MEMORY.md truncation still fails
+
+def test_memory_index_at_25kb_truncation_fails():
+    with tempfile.TemporaryDirectory() as td:
+        paths = build_estate(Path(td))
+        paths["bimpossible_memory_md"].write_text("x" * cw.MEMORY_FAIL_BYTES, encoding="utf-8")
+        r = cw.run_scan(**paths)
+    assert r["exit_code"] == 2, cw.render_report(r)
+
+
+def test_memory_index_at_200_lines_truncation_fails():
+    with tempfile.TemporaryDirectory() as td:
+        paths = build_estate(Path(td))
+        paths["global_memory_md"].write_text("- x\n" * cw.MEMORY_FAIL_LINES, encoding="utf-8")
+        r = cw.run_scan(**paths)
+    assert r["exit_code"] == 2, cw.render_report(r)
+
+
+def test_advisory_trend_growth_does_not_change_exit_code():
+    with tempfile.TemporaryDirectory() as td:
+        paths = build_estate(Path(td))
+        base = cw.run_scan(**paths)["scenario_results"][cw.GLOBAL]["total"]
+        paths["history_path"].write_text(json.dumps(dict(
+            timestamp="2026-09-01T00:00:00+00:00", schema_version=cw.SCHEMA_VERSION,
+            global_session_bytes=base // 2, bimpossible_session_bytes=base // 2,
+        )) + "\n", encoding="utf-8")
+        r = cw.run_scan(**paths)
+    assert any(t.startswith("WARN") for t in r["trend_lines"])
+    assert r["exit_code"] == 0
+    assert r["advisory"] is True
