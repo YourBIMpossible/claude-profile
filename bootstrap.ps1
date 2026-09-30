@@ -296,8 +296,9 @@ $settingsPath = Join-Path $claudeDir 'settings.json'
 # The template owns every hook it registers. Hook entries in the existing
 # settings.json that the template does not own (machine-specific hooks from
 # other repos) are carried over rather than silently dropped; entries that point
-# into the hooks directory or this repo are the template's, so the template's
-# version replaces them.
+# into the installed hooks directory or this repo's hooks/ are the template's,
+# so the template's version replaces them. Anything else under the repo (a skill
+# script, say) is machine-specific and is kept.
 $preserved = @()
 if (Test-Path -LiteralPath $settingsPath) {
     $existing = $null
@@ -307,7 +308,7 @@ if (Test-Path -LiteralPath $settingsPath) {
         Write-Warning "Existing settings.json is not valid JSON; it is backed up, but none of its hooks can be carried over."
     }
     if ($existing -and $existing.hooks) {
-        $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, $repoRootForward) -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }))
+        $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }))
     }
 }
 if ($preserved.Count -gt 0) {
