@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "evidence_evacuate.py")
@@ -47,6 +48,39 @@ def make_packet(store: Path, pid: str) -> None:
     store.mkdir(parents=True, exist_ok=True)
     (store / f"2026-09-25T00-00-00.000000Z_{pid}.json").write_text(
         json.dumps({"packet_id": pid, "schema_version": "1"}), encoding="utf-8")
+
+
+@contextlib.contextmanager
+def in_process_hook(root: Path, env_extra=None, clock=None):
+    """Import the hook in-process with this case's env, log path and (optionally) a
+    fake clock; restore os.environ, sys.path and the module's globals on exit so no
+    case inherits another's state. LOG_PATH is read at import, and the module stays
+    cached across cases, so it is set explicitly here."""
+    env = {"EVIDENCE_LIVE_ARCHIVE": str(root / "archive"), "EVIDENCE_EVACUATOR": EVACUATOR,
+           "EVIDENCE_EVACUATE_LOG": str(root / "hook.log"), **(env_extra or {})}
+    saved_env = {k: os.environ.get(k) for k in env}
+    hook_dir = str(Path(HOOK).parent)
+    added = hook_dir not in sys.path
+    if added:
+        sys.path.insert(0, hook_dir)
+    os.environ.update(env)
+    import evidence_evacuate as hook
+    saved = {"LOG_PATH": hook.LOG_PATH, "_sha256": hook._sha256, "time": hook.time}
+    hook.LOG_PATH = root / "hook.log"
+    if clock is not None:
+        hook.time = types.SimpleNamespace(monotonic=clock)
+    try:
+        yield hook
+    finally:
+        for name, value in saved.items():
+            setattr(hook, name, value)
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        if added:
+            sys.path.remove(hook_dir)
 
 
 def run(root: Path, payload, args=(), env_extra=None, raw=None):
@@ -162,23 +196,10 @@ def case_bad_checkout_does_not_stop_sweep(root: Path) -> None:
             raise PermissionError(13, "denied", str(path))
         return real(path)
 
-    env = {"EVIDENCE_LIVE_ARCHIVE": str(root / "archive"), "EVIDENCE_EVACUATOR": EVACUATOR,
-           "EVIDENCE_EVACUATE_LOG": str(root / "hook.log")}
-    saved = {k: os.environ.get(k) for k in env}
-    os.environ.update(env)
-    sys.path.insert(0, str(Path(HOOK).parent))
-    import evidence_evacuate as hook  # LOG_PATH is read at import
-    real = hook._sha256
-    hook._sha256 = unreadable
-    try:
+    with in_process_hook(root) as hook:
+        real = hook._sha256
+        hook._sha256 = unreadable
         code = hook.main(["--sweep", str(root / "repo")])
-    finally:
-        hook._sha256 = real
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
     check("sweep: bad checkout recorded, later checkout still archived, exit 1",
           code == 1 and (root / "archive" / "packets" / "ep_9999999999999999.json").is_file()
           and "PermissionError" in (root / "hook.log").read_text(encoding="utf-8"))
@@ -195,37 +216,32 @@ def case_budget_covers_hashing(root: Path) -> None:
         _, store, _ = lane(root, name)
         make_packet(store, f"ep_{name * 16}")
         make_packet(store, f"ep_{name * 8}{'0' * 8}")
-    env = {"EVIDENCE_LIVE_ARCHIVE": str(root / "archive"), "EVIDENCE_EVACUATOR": EVACUATOR,
-           "EVIDENCE_EVACUATE_LOG": str(root / "hook.log"), "EVIDENCE_EVACUATE_BUDGET_S": "2.5"}
-    saved = {k: os.environ.get(k) for k in env}
-    os.environ.update(env)
-    sys.path.insert(0, str(Path(HOOK).parent))
-    import evidence_evacuate as hook
-    real = hook._sha256
+    # Controlled clock: time advances only inside the stubbed hash, so the outcome
+    # is exact regardless of machine speed. Budget 2.5 s, 0.6 s per hash: the first
+    # file is hashed (2.5 >= MIN_CALL_S), then 1.9 s remain and nothing else may be.
+    now = [0.0]
     hashed = []
-
-    def slow_hash(path: Path) -> str:
-        hashed.append(path)
-        time.sleep(0.6)  # 2.5 s budget - 0.6 s < MIN_CALL_S after the first file
-        return real(path)
-
-    hook._sha256 = slow_hash
     out = io.StringIO()
-    try:
+    with in_process_hook(root, {"EVIDENCE_EVACUATE_BUDGET_S": "2.5"},
+                         clock=lambda: now[0]) as hook:
+        real = hook._sha256
+
+        def slow_hash(path: Path) -> str:
+            hashed.append((path, now[0]))
+            now[0] += 0.6
+            return real(path)
+
+        hook._sha256 = slow_hash
         with contextlib.redirect_stdout(out):
             code = hook.main(["--sweep", str(root / "repo")])
-    finally:
-        hook._sha256 = real
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
     lines = out.getvalue().splitlines()
     deferred = [ln for ln in lines if "deferred" in ln and "rest unchecked" in ln]
-    check("spent budget stops hashing: one file hashed, both checkouts deferred, exit 1",
-          code == 1 and len(hashed) == 1 and len(deferred) == 2
-          and not (root / "archive" / "packets").exists(), f"hashed={len(hashed)} out={lines}")
+    over_budget = [p for p, t in hashed if 2.5 - t < 2.0]  # hashed after the budget ran out
+    check("spent budget stops hashing: one file hashed, none past the budget, "
+          "both checkouts deferred, exit 1",
+          code == 1 and len(hashed) == 1 and not over_budget and len(deferred) == 2
+          and not (root / "archive" / "packets").exists(),
+          f"hashed={len(hashed)} over_budget={len(over_budget)} out={lines}")
 
 
 CASES = (case_partial_copy_is_retried, case_id_mismatch_is_settled, case_budget_is_shared,
