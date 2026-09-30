@@ -2,7 +2,17 @@
 Code would (JSON on stdin, check exit code and stdout) against synthetic
 checkouts and a throwaway archive under the OS temp dir, using the real
 Claude-Tools evacuator. Nothing touches real packet stores or EC-LIVE.
+
+Run either way:
+  python hooks/tests/test_evidence_evacuate.py
+  python -m pytest hooks/tests/test_evidence_evacuate.py
+
+The evacuator is an external dependency (EVIDENCE_TEST_EVACUATOR overrides the
+default path). A missing evacuator is a hard failure, never a skip or a pass.
 """
+import contextlib
+import hashlib
+import io
 import json
 import os
 import shutil
@@ -13,9 +23,19 @@ import time
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "evidence_evacuate.py")
-EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
+EVACUATOR = os.environ.get("EVIDENCE_TEST_EVACUATOR",
+                           "F:/Claude-Tools/evidence-archive/evacuate_worktree.py")
 
 results = []
+
+
+def require_evacuator() -> str:
+    """Fail loudly when the evacuator is absent; return its sha256 for the record."""
+    path = Path(EVACUATOR)
+    if not path.is_file():
+        raise RuntimeError(f"evacuator not found at {EVACUATOR}; these tests exercise the real "
+                           "evacuator (set EVIDENCE_TEST_EVACUATOR to point at it)")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def check(name, cond, detail=""):
@@ -61,7 +81,7 @@ def lane(root: Path, name: str = "lane") -> tuple[Path, Path, dict]:
     return wt, wt / ".evidence-compiler" / "packets", {"hook_event_name": "Stop", "cwd": str(wt)}
 
 
-def test_partial_copy_is_retried(root: Path) -> None:
+def case_partial_copy_is_retried(root: Path) -> None:
     """M1: an empty or truncated archive copy is not 'archived'."""
     wt, store, stop = lane(root)
     make_packet(store, "ep_1111111111111111")
@@ -80,7 +100,7 @@ def test_partial_copy_is_retried(root: Path) -> None:
           == next(store.glob("*ep_1111111111111111.json")).read_bytes())
 
 
-def test_id_mismatch_is_settled(root: Path) -> None:
+def case_id_mismatch_is_settled(root: Path) -> None:
     """L3: a quarantined ep_-named file does not re-run the evacuator every turn."""
     wt, store, stop = lane(root)
     store.mkdir(parents=True)
@@ -94,7 +114,7 @@ def test_id_mismatch_is_settled(root: Path) -> None:
           n == 1 and len(receipts(root)) == 1)
 
 
-def test_budget_is_shared(root: Path) -> None:
+def case_budget_is_shared(root: Path) -> None:
     """L4: one budget across checkouts; the unreached checkout is a surfaced deferral."""
     wt, store, stop = lane(root)
     make_packet(store, "ep_4444444444444444")
@@ -114,7 +134,7 @@ def test_budget_is_shared(root: Path) -> None:
           p.returncode == 0 and secs < 6 and "timed out" in msg and "deferred" in msg, msg)
 
 
-def test_session_end_sweeps_siblings(root: Path) -> None:
+def case_session_end_sweeps_siblings(root: Path) -> None:
     """L2: SessionEnd sweeps the repo root and every sibling worktree."""
     wt, store, stop = lane(root)
     wt.mkdir(parents=True)
@@ -131,7 +151,7 @@ def test_session_end_sweeps_siblings(root: Path) -> None:
           and (archived / "ep_7777777777777777.json").is_file())
 
 
-def test_bad_checkout_does_not_stop_sweep(root: Path) -> None:
+def case_bad_checkout_does_not_stop_sweep(root: Path) -> None:
     """L5: an exception in one checkout is recorded; later checkouts still run."""
     a, a_store, _ = lane(root, "a-bad")
     b, b_store, _ = lane(root, "b-good")
@@ -168,88 +188,176 @@ def test_bad_checkout_does_not_stop_sweep(root: Path) -> None:
           p.returncode == 1 and b"FAIL" in p.stdout)
 
 
-def main() -> int:
+def case_budget_covers_hashing(root: Path) -> None:
+    """The pre-check hashing draws on the shared budget: once it is spent, remaining
+    checkouts are deferred (and surfaced) without hashing another file."""
+    for name in ("a", "b"):
+        _, store, _ = lane(root, name)
+        make_packet(store, f"ep_{name * 16}")
+        make_packet(store, f"ep_{name * 8}{'0' * 8}")
+    env = {"EVIDENCE_LIVE_ARCHIVE": str(root / "archive"), "EVIDENCE_EVACUATOR": EVACUATOR,
+           "EVIDENCE_EVACUATE_LOG": str(root / "hook.log"), "EVIDENCE_EVACUATE_BUDGET_S": "2.5"}
+    saved = {k: os.environ.get(k) for k in env}
+    os.environ.update(env)
+    sys.path.insert(0, str(Path(HOOK).parent))
+    import evidence_evacuate as hook
+    real = hook._sha256
+    hashed = []
+
+    def slow_hash(path: Path) -> str:
+        hashed.append(path)
+        time.sleep(0.6)  # 2.5 s budget - 0.6 s < MIN_CALL_S after the first file
+        return real(path)
+
+    hook._sha256 = slow_hash
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            code = hook.main(["--sweep", str(root / "repo")])
+    finally:
+        hook._sha256 = real
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    lines = out.getvalue().splitlines()
+    deferred = [ln for ln in lines if "deferred" in ln and "rest unchecked" in ln]
+    check("spent budget stops hashing: one file hashed, both checkouts deferred, exit 1",
+          code == 1 and len(hashed) == 1 and len(deferred) == 2
+          and not (root / "archive" / "packets").exists(), f"hashed={len(hashed)} out={lines}")
+
+
+CASES = (case_partial_copy_is_retried, case_id_mismatch_is_settled, case_budget_is_shared,
+         case_session_end_sweeps_siblings, case_bad_checkout_does_not_stop_sweep,
+         case_budget_covers_hashing)
+
+
+def run_case(case) -> list:
+    """Run one case in its own temp root; return its failed checks."""
+    start = len(results)
     root = Path(tempfile.mkdtemp(prefix="ec-evacuate-selftest-"))
     try:
-        wt = root / "repo" / ".claude" / "worktrees" / "lane"
-        store = wt / ".evidence-compiler" / "packets"
-        stop = {"hook_event_name": "Stop", "cwd": str(wt)}
-
-        p, secs = run(root, stop)
-        check("no store: exit 0, silent", p.returncode == 0 and not p.stdout)
-        check("no store: archive not created", not (root / "archive").exists())
-
-        make_packet(store, "ep_0123456789abcdef")
-        make_packet(store, "ep_fedcba9876543210")
-        p, secs = run(root, stop)
-        archived = root / "archive" / "packets"
-        check("new packets: exit 0, silent", p.returncode == 0 and not p.stdout)
-        check("new packets: both archived",
-              (archived / "ep_0123456789abcdef.json").is_file()
-              and (archived / "ep_fedcba9876543210.json").is_file())
-        check("new packets: one receipt", len(receipts(root)) == 1)
-        rc = subprocess.run([sys.executable, EVACUATOR, "verify", str(receipts(root)[0])],
-                            capture_output=True, text=True)
-        check("receipt verifies", rc.returncode == 0, rc.stdout[-300:] + rc.stderr[-300:])
-
-        p, secs = run(root, stop)
-        check("nothing new: no second receipt", len(receipts(root)) == 1)
-        check(f"nothing new: fast ({secs:.2f}s incl. interpreter start)", secs < 1.0)
-
-        make_packet(store, "ep_aaaaaaaaaaaaaaaa")
-        p, _ = run(root, {"hook_event_name": "SessionEnd"},
-                   env_extra={"CLAUDE_PROJECT_DIR": str(wt)})
-        check("CLAUDE_PROJECT_DIR used when payload has no cwd",
-              (archived / "ep_aaaaaaaaaaaaaaaa.json").is_file())
-
-        shutil.rmtree(wt)
-        check("worktree deleted: archived packets survive",
-              len(list(archived.glob("ep_*.json"))) == 3)
-
-        make_packet(store, "ep_bbbbbbbbbbbbbbbb")
-        p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATE": "0"})
-        check("opt-out: nothing copied", not (archived / "ep_bbbbbbbbbbbbbbbb.json").exists())
-
-        p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATOR": str(root / "missing.py")})
-        log = (root / "hook.log").read_text(encoding="utf-8")
-        check("missing evacuator: exit 0 and logged",
-              p.returncode == 0 and "evacuator not found" in log)
-        check("missing evacuator: surfaced to the user as a systemMessage",
-              "evacuator not found" in system_message(p))
-
-        p, _ = run(root, None, raw=b"\xef\xbb\xbf" + json.dumps(stop).encode("utf-8"))
-        check("BOM-prefixed stdin still parsed",
-              p.returncode == 0 and (archived / "ep_bbbbbbbbbbbbbbbb.json").is_file())
-
-        p, _ = run(root, None, raw=b"not json")
-        check("garbage stdin: exit 0, silent", p.returncode == 0 and not p.stdout)
-
-        (store / "stray.json").write_text("{not json", encoding="utf-8")
-        p, _ = run(root, stop)
-        quarantine = root / "archive" / "quarantine"
-        check("unrecognised file reaches evacuator and is quarantined, exit 0",
-              p.returncode == 0 and quarantine.is_dir() and any(quarantine.rglob("*stray.json")))
-
-        n = len(receipts(root))
-        run(root, stop)
-        check("quarantined stray does not re-trigger every turn", len(receipts(root)) == n)
-
-        make_packet(store, "ep_cccccccccccccccc")
-        p, _ = run(root, None, args=["--sweep", str(root / "repo")], raw=b"")
-        check("sweep finds .claude/worktrees/* checkouts",
-              p.returncode == 0 and (archived / "ep_cccccccccccccccc.json").is_file())
+        case(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
+    return [r for r in results[start:] if not r[1]]
 
-    for case in (test_partial_copy_is_retried, test_id_mismatch_is_settled,
-                 test_budget_is_shared, test_session_end_sweeps_siblings,
-                 test_bad_checkout_does_not_stop_sweep):
-        root = Path(tempfile.mkdtemp(prefix="ec-evacuate-selftest-"))
-        try:
-            case(root)
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
 
+def assert_case(case) -> None:
+    require_evacuator()
+    failed = run_case(case)
+    assert not failed, "; ".join(f"{name} -- {detail}" for name, _, detail in failed)
+
+
+def test_core_flow() -> None:
+    assert_case(case_core_flow)
+
+
+def test_partial_copy_is_retried() -> None:
+    assert_case(case_partial_copy_is_retried)
+
+
+def test_id_mismatch_is_settled() -> None:
+    assert_case(case_id_mismatch_is_settled)
+
+
+def test_budget_is_shared() -> None:
+    assert_case(case_budget_is_shared)
+
+
+def test_session_end_sweeps_siblings() -> None:
+    assert_case(case_session_end_sweeps_siblings)
+
+
+def test_bad_checkout_does_not_stop_sweep() -> None:
+    assert_case(case_bad_checkout_does_not_stop_sweep)
+
+
+def test_budget_covers_hashing() -> None:
+    assert_case(case_budget_covers_hashing)
+
+
+def case_core_flow(root: Path) -> None:
+    """The ordinary Stop/SessionEnd/sweep path, end to end in one checkout."""
+    wt = root / "repo" / ".claude" / "worktrees" / "lane"
+    store = wt / ".evidence-compiler" / "packets"
+    stop = {"hook_event_name": "Stop", "cwd": str(wt)}
+
+    p, secs = run(root, stop)
+    check("no store: exit 0, silent", p.returncode == 0 and not p.stdout)
+    check("no store: archive not created", not (root / "archive").exists())
+
+    make_packet(store, "ep_0123456789abcdef")
+    make_packet(store, "ep_fedcba9876543210")
+    p, secs = run(root, stop)
+    archived = root / "archive" / "packets"
+    check("new packets: exit 0, silent", p.returncode == 0 and not p.stdout)
+    check("new packets: both archived",
+          (archived / "ep_0123456789abcdef.json").is_file()
+          and (archived / "ep_fedcba9876543210.json").is_file())
+    check("new packets: one receipt", len(receipts(root)) == 1)
+    rc = subprocess.run([sys.executable, EVACUATOR, "verify", str(receipts(root)[0])],
+                        capture_output=True, text=True)
+    check("receipt verifies", rc.returncode == 0, rc.stdout[-300:] + rc.stderr[-300:])
+
+    p, secs = run(root, stop)
+    check("nothing new: no second receipt", len(receipts(root)) == 1)
+    check(f"nothing new: fast ({secs:.2f}s incl. interpreter start)", secs < 1.0)
+
+    make_packet(store, "ep_aaaaaaaaaaaaaaaa")
+    p, _ = run(root, {"hook_event_name": "SessionEnd"},
+               env_extra={"CLAUDE_PROJECT_DIR": str(wt)})
+    check("CLAUDE_PROJECT_DIR used when payload has no cwd",
+          (archived / "ep_aaaaaaaaaaaaaaaa.json").is_file())
+
+    shutil.rmtree(wt)
+    check("worktree deleted: archived packets survive",
+          len(list(archived.glob("ep_*.json"))) == 3)
+
+    make_packet(store, "ep_bbbbbbbbbbbbbbbb")
+    p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATE": "0"})
+    check("opt-out: nothing copied", not (archived / "ep_bbbbbbbbbbbbbbbb.json").exists())
+
+    p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATOR": str(root / "missing.py")})
+    log = (root / "hook.log").read_text(encoding="utf-8")
+    check("missing evacuator: exit 0 and logged",
+          p.returncode == 0 and "evacuator not found" in log)
+    check("missing evacuator: surfaced to the user as a systemMessage",
+          "evacuator not found" in system_message(p))
+
+    p, _ = run(root, None, raw=b"\xef\xbb\xbf" + json.dumps(stop).encode("utf-8"))
+    check("BOM-prefixed stdin still parsed",
+          p.returncode == 0 and (archived / "ep_bbbbbbbbbbbbbbbb.json").is_file())
+
+    p, _ = run(root, None, raw=b"not json")
+    check("garbage stdin: exit 0, silent", p.returncode == 0 and not p.stdout)
+
+    (store / "stray.json").write_text("{not json", encoding="utf-8")
+    p, _ = run(root, stop)
+    quarantine = root / "archive" / "quarantine"
+    check("unrecognised file reaches evacuator and is quarantined, exit 0",
+          p.returncode == 0 and quarantine.is_dir() and any(quarantine.rglob("*stray.json")))
+
+    n = len(receipts(root))
+    run(root, stop)
+    check("quarantined stray does not re-trigger every turn", len(receipts(root)) == n)
+
+    make_packet(store, "ep_cccccccccccccccc")
+    p, _ = run(root, None, args=["--sweep", str(root / "repo")], raw=b"")
+    check("sweep finds .claude/worktrees/* checkouts",
+          p.returncode == 0 and (archived / "ep_cccccccccccccccc.json").is_file())
+
+
+def main() -> int:
+    try:
+        digest = require_evacuator()
+    except RuntimeError as exc:
+        print(f"FAIL: {exc}")
+        return 1
+    print(f"evacuator: {EVACUATOR} sha256={digest[:12]}")
+    for case in (case_core_flow, *CASES):
+        run_case(case)
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")
     return 1 if failed else 0
