@@ -499,7 +499,31 @@ def case_budget_covers_hashing(root: Path) -> None:
           f"hashed={len(hashed)} out={lines}")
 
 
-CASES = (case_two_session_end_failures_both_shown, case_interrupted_stop_keeps_pending,
+def case_non_ascii_output_is_success(root: Path) -> None:
+    """L3: a successful evacuation whose output names a non-ASCII path is logged as OK,
+    never as a failure. U+2010's UTF-8 bytes include 0x90, which cp1252 cannot decode,
+    so a locale-decoded read of the child's output used to lose stdout entirely."""
+    wt, store, stop = lane(root, "lane‐é")
+    make_packet(store, "ep_1010101010101010")
+    fake = root / "fake_evacuator.py"
+    fake.write_text(
+        "import sys\n"
+        "sys.stdout.reconfigure(encoding='utf-8')\n"
+        "print('archive: ' + sys.argv[sys.argv.index('--archive') + 1])\n"
+        "print('files: copied=1 checkout=' + sys.argv[2])\n",
+        encoding="utf-8")
+    p, _ = run(root, stop, env_extra={"EVIDENCE_EVACUATOR": str(fake), "PYTHONUTF8": "0"})
+    log = (root / "hook.log").read_text(encoding="utf-8")
+    ok = [ln for ln in log.splitlines() if " OK " in ln]
+    check("non-ASCII evacuator output: exit 0, no systemMessage, logged OK with the path",
+          p.returncode == 0 and system_message(p) == "" and "ERROR" not in log
+          and len(ok) == 1 and "lane‐é" in ok[0],
+          f"stdout={p.stdout!r} log={log!r}")
+    check("OK record labels the pre-check count, not a copy count",
+          len(ok) == 1 and "precheck_unarchived=1" in ok[0] and " new=" not in ok[0], log)
+
+
+CASES = (case_non_ascii_output_is_success, case_two_session_end_failures_both_shown, case_interrupted_stop_keeps_pending,
          case_append_during_stop_survives, case_interrupted_record_is_shown,
          case_unreadable_pending_is_visible, case_entry_cleared_by_parallel_stop,
          case_closed_stdout_fails_open, case_precheck_hashes_only_candidates,
@@ -527,6 +551,10 @@ def assert_case(case) -> None:
 
 def test_core_flow() -> None:
     assert_case(case_core_flow)
+
+
+def test_non_ascii_output_is_success() -> None:
+    assert_case(case_non_ascii_output_is_success)
 
 
 def test_two_session_end_failures_both_shown() -> None:

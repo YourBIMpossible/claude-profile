@@ -184,14 +184,21 @@ def evacuate(checkout: Path, archive: Path, evacuator: Path, why: str, run: Run)
     cmd = [sys.executable, str(evacuator), "evacuate", str(checkout),
            "--archive", str(archive), "--apply"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=budget,
+        # The child writes UTF-8 (PYTHONIOENCODING); decode it as UTF-8 here too. The
+        # locale code page (cp1252) cannot decode some UTF-8 bytes, which would drop
+        # stdout and turn a successful copy into a reported failure.
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=budget,
                               env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     except subprocess.TimeoutExpired:
         run.fail(f"evacuator timed out after {budget:.1f}s on {checkout}")
         return
     tail = (proc.stdout.strip().splitlines() or [""])[-1][:300]
     if proc.returncode == 0:
-        log(f"OK {why} {checkout} new={len(missing)} :: {tail}")
+        # precheck_unarchived counts the packets the pre-check found missing from the
+        # archive before the call - not what the evacuator copied (it may quarantine
+        # or skip some); the evacuator's own summary line is the tail.
+        log(f"OK {why} {checkout} precheck_unarchived={len(missing)} :: {tail}")
         return
     run.fail(f"evacuator exit {proc.returncode} ({why}) on {checkout} :: {tail}")
     if proc.stderr.strip():

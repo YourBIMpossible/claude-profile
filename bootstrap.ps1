@@ -252,16 +252,24 @@ only the CLAUDE.md @import that does not.)
 "@
 }
 
-# Hook preflight, before anything is written. Bootstrap installs these files as
-# pinned copies that run on every prompt or tool call (C1 in hooks/README.md), so
-# every hook the template registers must exist here, and the code being pinned must
-# be committed - a pinned copy of an uncommitted edit is exactly the
-# unreviewed-code hazard C1 exists to prevent.
+# Everything from here to "Writes" below only reads and computes. Every refusal
+# (hook preflight, template rendering, an unreadable existing settings.json or
+# claude_desktop_config.json) happens in this phase, so a refused run leaves the
+# machine untouched rather than half-configured: no CLAUDE.md stub, skills
+# junction, pinned hook, settings.json or desktop config is written until every
+# check has passed.
+
+# Hook preflight. Bootstrap installs these files as pinned copies that run on
+# every prompt or tool call (C1 in hooks/README.md), so every hook the template
+# registers must exist here, and the code being pinned must be committed - a
+# pinned copy of an uncommitted edit is exactly the unreviewed-code hazard C1
+# exists to prevent.
 $hookDataFiles = @('closure_audit_repos.json')
 $hookSources = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'hooks') -File |
     Where-Object { $_.Extension -in @('.py', '.ps1') -or $hookDataFiles -contains $_.Name })
 $settingsTemplatePath = Join-Path $repoRoot 'settings.template.json'
-$templateHookFiles = @([regex]::Matches((Get-Content -Raw -LiteralPath $settingsTemplatePath), '__CLAUDE_HOOKS_DIR__/([^"/]+)') |
+$settingsTemplateRaw = Read-Utf8Text $settingsTemplatePath
+$templateHookFiles = @([regex]::Matches($settingsTemplateRaw, '__CLAUDE_HOOKS_DIR__/([^"/]+)') |
     ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
 $missingHookSources = @($templateHookFiles | Where-Object { @($hookSources.Name) -notcontains $_ })
 if ($missingHookSources.Count -gt 0) {
@@ -287,38 +295,64 @@ reviewed code. Commit (or discard) these changes and run bootstrap again, or pas
 }
 
 $claudeDir = Join-Path $env:USERPROFILE '.claude'
-if (-not (Test-Path -LiteralPath $claudeDir)) {
-    New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
-}
+$claudeMdPath = Join-Path $claudeDir 'CLAUDE.md'
+$settingsPath = Join-Path $claudeDir 'settings.json'
+$skillsPath = Join-Path $claudeDir 'skills'
+$skillsTarget = Join-Path $repoRoot 'skills'
+$hooksDir = Join-Path $claudeDir 'hooks'
+$repoRootForward = ConvertTo-ForwardSlash $repoRoot
+$hooksDirForward = ConvertTo-ForwardSlash $hooksDir
+if ($hooksDirForward -match '"') { throw "Hooks directory path contains a double quote: $hooksDirForward" }
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Claude dir: $claudeDir"
 
-# 1. CLAUDE.md stub
-$claudeMdPath = Join-Path $claudeDir 'CLAUDE.md'
-$repoRootForward = ConvertTo-ForwardSlash $repoRoot
-$stubContent = "@$repoRootForward/CLAUDE.md"
-Backup-IfRealFile -Path $claudeMdPath -ExpectedContent $stubContent
-[System.IO.File]::WriteAllText($claudeMdPath, $stubContent, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "Wrote CLAUDE.md stub: $stubContent"
-
-# 2. skills junction
-$skillsPath = Join-Path $claudeDir 'skills'
-$skillsTarget = Join-Path $repoRoot 'skills'
-Backup-IfRealDirectory -Path $skillsPath -ExpectedTarget $skillsTarget
-if (-not (Test-Path -LiteralPath $skillsPath)) {
-    New-Item -ItemType Junction -Path $skillsPath -Target $skillsTarget | Out-Null
-    Write-Host "Created skills junction -> $skillsTarget"
-} else {
-    Write-Host "skills junction already present"
+# Existing settings.json. It is shared with the user: Claude Code, /config,
+# /permissions and hand edits all write it. Only the Profile-owned parts are
+# updated (Merge-ProfileSettings); every other key is kept, and a file that cannot
+# be read as a settings object is refused rather than replaced.
+$profileOwnedKeys = @('hooks', 'permissions', 'enabledPlugins', 'extraKnownMarketplaces')
+$existing = $null
+if (Test-Path -LiteralPath $settingsPath) {
+    # An empty file is not a fresh install - something truncated it - and ConvertFrom-Json
+    # would read it as "no settings", so the template would silently replace it.
+    $existingText = Read-Utf8Text $settingsPath
+    if ([string]::IsNullOrWhiteSpace($existingText)) {
+        throw "Existing settings.json is empty; refusing to replace it. Restore it from a backup or delete it, then run bootstrap again."
+    }
+    try {
+        $existing = $existingText | ConvertFrom-Json
+    } catch {
+        throw "Existing settings.json is not valid JSON (or repeats a key in different case); refusing to replace it. Fix or move it, then run bootstrap again: $($_.Exception.Message)"
+    }
+    if ($null -eq $existing) {
+        throw "Existing settings.json is JSON null, not a settings object; refusing to replace it."
+    }
+    if (-not (Test-JsonObject $existing)) {
+        throw "Existing settings.json is not a JSON object; refusing to replace it."
+    }
+    # Claude Code reads these keys case-sensitively, but PowerShell property access is
+    # case-insensitive: a 'Hooks' key would be merged into and written back as 'Hooks',
+    # which Claude Code ignores, so every hook would silently stop running.
+    foreach ($name in @($existing.PSObject.Properties | ForEach-Object { $_.Name })) {
+        if (($profileOwnedKeys -icontains $name) -and ($profileOwnedKeys -cnotcontains $name)) {
+            $expected = @($profileOwnedKeys | Where-Object { $_ -ieq $name })[0]
+            throw "Existing settings.json has a '$name' key; Claude Code only reads '$expected' (case-sensitive); refusing to replace it. Rename the key, then run bootstrap again."
+        }
+    }
+    foreach ($key in $profileOwnedKeys) {
+        if ($null -ne $existing.$key -and -not (Test-JsonObject $existing.$key)) {
+            throw "Existing settings.json has a '$key' value that is not a JSON object; refusing to replace it."
+        }
+    }
 }
 
-# 3. Detect Revit
+# Detect Revit
 $revitExePath = 'C:\Program Files\Autodesk\Revit 2027 MCP Server Read-Tools Technical Preview\Autodesk.RevitMcpServer.Stdio.exe'
 $hasRevit = Test-Path -LiteralPath $revitExePath
 Write-Host "Revit MCP server detected: $hasRevit"
 
-# 4. Detect known project directories (siblings on the drive root since the 2026-08-23
+# Detect known project directories (siblings on the drive root since the 2026-08-23
 # AI-Dev extraction - BIMpossible/BIMpossible-Workspace are no longer nested under AI-Dev)
 $candidateDriveRoots = @('F:\', 'C:\', $env:USERPROFILE)
 $additionalDirs = @()
@@ -335,11 +369,155 @@ if (-not $additionalDirs) {
     Write-Host "No known project directories found - additionalDirectories will be empty"
 }
 
-# 5a. Install pinned hook copies (C1 in hooks/README.md). settings.json only ever
+# Render settings.json from the template.
+$dirsJson = ($additionalDirs | ForEach-Object { $_ | ConvertTo-Json }) -join ",`n      "
+$settingsRaw = $settingsTemplateRaw.Replace('"__ADDITIONAL_DIRECTORIES__"', $dirsJson)
+
+# Hooks register against the pinned copies installed below, never this working
+# tree (C1 in hooks/README.md).
+$settingsRaw = $settingsRaw.Replace('__CLAUDE_HOOKS_DIR__', $hooksDirForward)
+
+$leftoverTokens = @([regex]::Matches($settingsRaw, '__[A-Z_]+__') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+if ($leftoverTokens.Count -gt 0) {
+    throw "Generated settings.json still contains unresolved tokens: $($leftoverTokens -join ', ')"
+}
+
+try {
+    $generated = $settingsRaw | ConvertFrom-Json
+} catch {
+    throw "Generated settings.json is not valid JSON: $($_.Exception.Message)"
+}
+
+# The template owns every hook it registers. Hook entries in the existing
+# settings.json that the template does not own (machine-specific hooks from
+# other repos) are carried over rather than silently dropped; entries that point
+# into the installed hooks directory or this repo's hooks/ are the template's,
+# so the template's version replaces them. Anything else under the repo (a skill
+# script, say) is machine-specific and is kept.
+$preserved = @()
+if ($existing -and $existing.hooks) {
+    $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }))
+}
+foreach ($item in $preserved) {
+    $hookEvent = $item.Event
+    if ($generated.hooks.PSObject.Properties.Name -contains $hookEvent) {
+        $generated.hooks.$hookEvent = @($generated.hooks.$hookEvent) + $item.Group
+    } else {
+        $generated.hooks | Add-Member -NotePropertyName $hookEvent -NotePropertyValue @($item.Group)
+    }
+}
+$mergedSettings = Merge-ProfileSettings -Existing $existing -Generated $generated
+if ($null -ne $existing) {
+    $mergedKeys = @($mergedSettings.PSObject.Properties | ForEach-Object { $_.Name })
+    $lost = @($existing.PSObject.Properties | ForEach-Object { $_.Name } | Where-Object { $mergedKeys -cnotcontains $_ })
+    if ($lost.Count -gt 0) { throw "Settings merge would drop top-level keys: $($lost -join ', ') - refusing to write." }
+}
+$mergedSettingsRaw = ConvertTo-Json -InputObject $mergedSettings -Depth 32
+# Decide on parsed values, not text: a file Claude Code re-saved in its own formatting
+# is still correct, and rewriting it would only churn backups.
+$settingsChanges = @(Get-SettingsChanges -Before $existing -After $mergedSettings)
+
+# Render claude_desktop_config.json from the template.
+$mcpTemplatePath = Join-Path $repoRoot 'mcp\claude_desktop_config.template.json'
+$mcpRaw = Read-Utf8Text $mcpTemplatePath
+
+$revitEntry = ''
+if ($hasRevit) {
+    $revitExeJson = $revitExePath | ConvertTo-Json
+    $revitEntry = (',' + "`n" + '    "autodesk-revit-2027": {' + "`n" + '      "command": ' + $revitExeJson + ',' + "`n" + '      "args": []' + "`n" + '    }')
+}
+$mcpRaw = $mcpRaw.Replace('__REVIT_MCP_ENTRY__', $revitEntry)
+
+try {
+    $null = $mcpRaw | ConvertFrom-Json
+} catch {
+    throw "Generated claude_desktop_config.json is not valid JSON: $($_.Exception.Message)"
+}
+
+$mcpConfigDir = Join-Path $env:APPDATA 'Claude'
+$mcpConfigPath = Join-Path $mcpConfigDir 'claude_desktop_config.json'
+
+# This file is NOT ours to own. On a machine that has run Claude Desktop it also
+# holds coworkUserFilesPath and a large 'preferences' object - Chrome-extension
+# pairing, trusted folders, folder-consent grants, feature flags. On this
+# machine mcpServers was 263 bytes of a 33KB file. Overwriting it with the
+# rendered template would silently drop all of that (backed up, but the running
+# app would lose pairing and grants), so replace ONLY the mcpServers value and
+# leave every other byte untouched.
+$mcpExists = Test-Path -LiteralPath $mcpConfigPath
+$mcpExistingRaw = $null
+$mcpMerged = $mcpRaw
+$mcpExistingKeyCount = 0
+if ($mcpExists) {
+    $mcpExistingRaw = Read-Utf8Text $mcpConfigPath
+    try {
+        $existingObj = $mcpExistingRaw | ConvertFrom-Json
+    } catch {
+        throw "Existing claude_desktop_config.json is not valid JSON; refusing to edit it: $($_.Exception.Message)"
+    }
+    $existingKeys = @($existingObj.PSObject.Properties | ForEach-Object { $_.Name })
+    $mcpExistingKeyCount = $existingKeys.Count
+
+    # The replacement text is the template's own mcpServers object, lifted verbatim.
+    $srcSpan = Find-JsonObjectSpan -Text $mcpRaw -Key 'mcpServers'
+    if (-not $srcSpan) { throw "Template is missing an mcpServers object" }
+    $newBlock = $mcpRaw.Substring($srcSpan.Start, $srcSpan.End - $srcSpan.Start + 1)
+
+    $dstSpan = Find-JsonObjectSpan -Text $mcpExistingRaw -Key 'mcpServers'
+    if ($dstSpan) {
+        $mcpMerged = $mcpExistingRaw.Substring(0, $dstSpan.Start) + $newBlock + $mcpExistingRaw.Substring($dstSpan.End + 1)
+    } else {
+        # Key absent entirely: insert it right after the opening brace.
+        $firstBrace = $mcpExistingRaw.IndexOf('{')
+        if ($firstBrace -lt 0) { throw "Existing claude_desktop_config.json has no opening brace" }
+        $mcpMerged = $mcpExistingRaw.Substring(0, $firstBrace + 1) + "`n  `"mcpServers`": " + $newBlock + "," + $mcpExistingRaw.Substring($firstBrace + 1)
+    }
+
+    # Prove the edit preserved everything else before writing it.
+    try {
+        $mergedObj = $mcpMerged | ConvertFrom-Json
+    } catch {
+        throw "Merged claude_desktop_config.json is not valid JSON - refusing to write: $($_.Exception.Message)"
+    }
+    $mergedKeys = @($mergedObj.PSObject.Properties | ForEach-Object { $_.Name })
+    $lostKeys = @($existingKeys | Where-Object { $mergedKeys -notcontains $_ })
+    if ($lostKeys.Count -gt 0) {
+        throw "Merge would drop top-level keys: $($lostKeys -join ', ') - refusing to write."
+    }
+    if ($existingObj.preferences) {
+        $prefBefore = @($existingObj.preferences.PSObject.Properties.Name).Count
+        $prefAfter = @($mergedObj.preferences.PSObject.Properties.Name).Count
+        if ($prefAfter -ne $prefBefore) {
+            throw "Merge would change preferences sub-key count ($prefBefore -> $prefAfter) - refusing to write."
+        }
+    }
+}
+
+# ---- Writes. Every check has passed; nothing below refuses on user input. ----
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+if (-not (Test-Path -LiteralPath $claudeDir)) {
+    New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+}
+
+# 1. CLAUDE.md stub
+$stubContent = "@$repoRootForward/CLAUDE.md"
+Backup-IfRealFile -Path $claudeMdPath -ExpectedContent $stubContent
+[System.IO.File]::WriteAllText($claudeMdPath, $stubContent, $utf8NoBom)
+Write-Host "Wrote CLAUDE.md stub: $stubContent"
+
+# 2. skills junction
+Backup-IfRealDirectory -Path $skillsPath -ExpectedTarget $skillsTarget
+if (-not (Test-Path -LiteralPath $skillsPath)) {
+    New-Item -ItemType Junction -Path $skillsPath -Target $skillsTarget | Out-Null
+    Write-Host "Created skills junction -> $skillsTarget"
+} else {
+    Write-Host "skills junction already present"
+}
+
+# 3. Install pinned hook copies (C1 in hooks/README.md). settings.json only ever
 # references these copies, so a branch switch or pull in this repo never changes
 # code that runs on every prompt or tool call; re-running bootstrap is the
 # deliberate update step.
-$hooksDir = Join-Path $claudeDir 'hooks'
 if (-not (Test-Path -LiteralPath $hooksDir)) {
     New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 }
@@ -367,29 +545,6 @@ foreach ($source in $hookSources) {
     Write-Host "Installed hook: $target"
 }
 
-# 5. Generate settings.json from template
-$settingsRaw = Get-Content -Raw -LiteralPath $settingsTemplatePath
-
-$dirsJson = ($additionalDirs | ForEach-Object { $_ | ConvertTo-Json }) -join ",`n      "
-$settingsRaw = $settingsRaw.Replace('"__ADDITIONAL_DIRECTORIES__"', $dirsJson)
-
-# Hooks register against the pinned copies installed in step 5a, never this
-# working tree (C1 in hooks/README.md).
-$hooksDirForward = ConvertTo-ForwardSlash $hooksDir
-if ($hooksDirForward -match '"') { throw "Hooks directory path contains a double quote: $hooksDirForward" }
-$settingsRaw = $settingsRaw.Replace('__CLAUDE_HOOKS_DIR__', $hooksDirForward)
-
-$leftoverTokens = @([regex]::Matches($settingsRaw, '__[A-Z_]+__') | ForEach-Object { $_.Value } | Sort-Object -Unique)
-if ($leftoverTokens.Count -gt 0) {
-    throw "Generated settings.json still contains unresolved tokens: $($leftoverTokens -join ', ')"
-}
-
-try {
-    $generated = $settingsRaw | ConvertFrom-Json
-} catch {
-    throw "Generated settings.json is not valid JSON: $($_.Exception.Message)"
-}
-
 # Every hook file the template registers must now exist as an installed copy -
 # a registration pointing at a missing file is a silently dead hook.
 foreach ($match in [regex]::Matches($settingsRaw, [regex]::Escape($hooksDirForward) + '/([^"/]+)')) {
@@ -397,161 +552,33 @@ foreach ($match in [regex]::Matches($settingsRaw, [regex]::Escape($hooksDirForwa
     if (-not (Test-Path -LiteralPath $registered)) { throw "Template registers a hook that was not installed: $registered" }
 }
 
-$settingsPath = Join-Path $claudeDir 'settings.json'
-
-# The template owns every hook it registers. Hook entries in the existing
-# settings.json that the template does not own (machine-specific hooks from
-# other repos) are carried over rather than silently dropped; entries that point
-# into the installed hooks directory or this repo's hooks/ are the template's,
-# so the template's version replaces them. Anything else under the repo (a skill
-# script, say) is machine-specific and is kept.
-# settings.json is shared with the user: Claude Code, /config, /permissions and
-# hand edits all write it. Only the Profile-owned parts are updated
-# (Merge-ProfileSettings); every other key is kept, and a file that cannot be read
-# as a settings object is refused rather than replaced.
-$preserved = @()
-$existing = $null
-if (Test-Path -LiteralPath $settingsPath) {
-    # An empty file is not a fresh install - something truncated it - and ConvertFrom-Json
-    # would read it as "no settings", so the template would silently replace it.
-    $existingText = Read-Utf8Text $settingsPath
-    if ([string]::IsNullOrWhiteSpace($existingText)) {
-        throw "Existing settings.json is empty; refusing to replace it. Restore it from a backup or delete it, then run bootstrap again."
-    }
-    try {
-        $existing = $existingText | ConvertFrom-Json
-    } catch {
-        throw "Existing settings.json is not valid JSON; refusing to replace it. Fix or move it, then run bootstrap again: $($_.Exception.Message)"
-    }
-    if ($null -eq $existing) {
-        throw "Existing settings.json is JSON null, not a settings object; refusing to replace it."
-    }
-    if ($null -ne $existing -and -not (Test-JsonObject $existing)) {
-        throw "Existing settings.json is not a JSON object; refusing to replace it."
-    }
-    foreach ($key in @('hooks', 'permissions', 'enabledPlugins', 'extraKnownMarketplaces')) {
-        if ($null -ne $existing -and $null -ne $existing.$key -and -not (Test-JsonObject $existing.$key)) {
-            throw "Existing settings.json has a '$key' value that is not a JSON object; refusing to replace it."
-        }
-    }
-    if ($existing -and $existing.hooks) {
-        $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }))
-    }
+# 4. settings.json
+foreach ($item in $preserved) {
+    Write-Host "Kept $(@($item.Group.hooks).Count) machine-specific $($item.Event) hook(s) not owned by the template"
 }
-if ($preserved.Count -gt 0) {
-    foreach ($item in $preserved) {
-        $hookEvent = $item.Event
-        if ($generated.hooks.PSObject.Properties.Name -contains $hookEvent) {
-            $generated.hooks.$hookEvent = @($generated.hooks.$hookEvent) + $item.Group
-        } else {
-            $generated.hooks | Add-Member -NotePropertyName $hookEvent -NotePropertyValue @($item.Group)
-        }
-        Write-Host "Kept $(@($item.Group.hooks).Count) machine-specific $hookEvent hook(s) not owned by the template"
-    }
-}
-$merged = Merge-ProfileSettings -Existing $existing -Generated $generated
-if ($null -ne $existing) {
-    $mergedKeys = @($merged.PSObject.Properties.Name)
-    $lost = @($existing.PSObject.Properties.Name | Where-Object { $mergedKeys -notcontains $_ })
-    if ($lost.Count -gt 0) { throw "Settings merge would drop top-level keys: $($lost -join ', ') - refusing to write." }
-}
-$settingsRaw = ConvertTo-Json -InputObject $merged -Depth 32
-# Decide on parsed values, not text: a file Claude Code re-saved in its own formatting
-# is still correct, and rewriting it would only churn backups.
-$changes = @(Get-SettingsChanges -Before $existing -After $merged)
-if ($null -ne $existing -and $changes.Count -eq 0) {
+if ($null -ne $existing -and $settingsChanges.Count -eq 0) {
     Write-Host "settings.json already correct - left untouched"
 } else {
-    Write-SettingsPlan -Changes $changes
-    Backup-IfRealFile -Path $settingsPath -ExpectedContent $settingsRaw
-    [System.IO.File]::WriteAllText($settingsPath, $settingsRaw, (New-Object System.Text.UTF8Encoding($false)))
+    Write-SettingsPlan -Changes $settingsChanges
+    Backup-IfRealFile -Path $settingsPath -ExpectedContent $mergedSettingsRaw
+    [System.IO.File]::WriteAllText($settingsPath, $mergedSettingsRaw, $utf8NoBom)
     Write-Host "Wrote settings.json"
 }
 
-# 6. Generate claude_desktop_config.json from template
-$mcpTemplatePath = Join-Path $repoRoot 'mcp\claude_desktop_config.template.json'
-$mcpRaw = Get-Content -Raw -LiteralPath $mcpTemplatePath
-
-$revitEntry = ''
-if ($hasRevit) {
-    $revitExeJson = $revitExePath | ConvertTo-Json
-    $revitEntry = (',' + "`n" + '    "autodesk-revit-2027": {' + "`n" + '      "command": ' + $revitExeJson + ',' + "`n" + '      "args": []' + "`n" + '    }')
-}
-$mcpRaw = $mcpRaw.Replace('__REVIT_MCP_ENTRY__', $revitEntry)
-
-try {
-    $null = $mcpRaw | ConvertFrom-Json
-} catch {
-    throw "Generated claude_desktop_config.json is not valid JSON: $($_.Exception.Message)"
-}
-
-$mcpConfigDir = Join-Path $env:APPDATA 'Claude'
-if (-not (Test-Path -LiteralPath $mcpConfigDir)) {
-    New-Item -ItemType Directory -Path $mcpConfigDir -Force | Out-Null
-}
-$mcpConfigPath = Join-Path $mcpConfigDir 'claude_desktop_config.json'
-
-# This file is NOT ours to own. On a machine that has run Claude Desktop it also
-# holds coworkUserFilesPath and a large 'preferences' object - Chrome-extension
-# pairing, trusted folders, folder-consent grants, feature flags. On this
-# machine mcpServers was 263 bytes of a 33KB file. Overwriting it with the
-# rendered template would silently drop all of that (backed up, but the running
-# app would lose pairing and grants), so replace ONLY the mcpServers value and
-# leave every other byte untouched.
-if (-not (Test-Path -LiteralPath $mcpConfigPath)) {
+# 5. claude_desktop_config.json
+if (-not $mcpExists) {
     # Fresh machine: no existing state to preserve, write the template as-is.
-    [System.IO.File]::WriteAllText($mcpConfigPath, $mcpRaw, (New-Object System.Text.UTF8Encoding($false)))
+    if (-not (Test-Path -LiteralPath $mcpConfigDir)) {
+        New-Item -ItemType Directory -Path $mcpConfigDir -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllText($mcpConfigPath, $mcpRaw, $utf8NoBom)
     Write-Host "Wrote claude_desktop_config.json (new file)"
+} elseif ($mcpMerged -cne $mcpExistingRaw) {
+    Backup-IfRealFile -Path $mcpConfigPath -ExpectedContent $mcpMerged
+    [System.IO.File]::WriteAllText($mcpConfigPath, $mcpMerged, $utf8NoBom)
+    Write-Host "Updated mcpServers in claude_desktop_config.json (preserved $mcpExistingKeyCount top-level keys)"
 } else {
-    $existingRaw = Read-Utf8Text $mcpConfigPath
-    try {
-        $existingObj = $existingRaw | ConvertFrom-Json
-    } catch {
-        throw "Existing claude_desktop_config.json is not valid JSON; refusing to edit it: $($_.Exception.Message)"
-    }
-    $existingKeys = @($existingObj.PSObject.Properties.Name)
-
-    # The replacement text is the template's own mcpServers object, lifted verbatim.
-    $srcSpan = Find-JsonObjectSpan -Text $mcpRaw -Key 'mcpServers'
-    if (-not $srcSpan) { throw "Template is missing an mcpServers object" }
-    $newBlock = $mcpRaw.Substring($srcSpan.Start, $srcSpan.End - $srcSpan.Start + 1)
-
-    $dstSpan = Find-JsonObjectSpan -Text $existingRaw -Key 'mcpServers'
-    if ($dstSpan) {
-        $merged = $existingRaw.Substring(0, $dstSpan.Start) + $newBlock + $existingRaw.Substring($dstSpan.End + 1)
-    } else {
-        # Key absent entirely: insert it right after the opening brace.
-        $firstBrace = $existingRaw.IndexOf('{')
-        if ($firstBrace -lt 0) { throw "Existing claude_desktop_config.json has no opening brace" }
-        $merged = $existingRaw.Substring(0, $firstBrace + 1) + "`n  `"mcpServers`": " + $newBlock + "," + $existingRaw.Substring($firstBrace + 1)
-    }
-
-    # Prove the edit preserved everything else before writing it.
-    try {
-        $mergedObj = $merged | ConvertFrom-Json
-    } catch {
-        throw "Merged claude_desktop_config.json is not valid JSON - refusing to write: $($_.Exception.Message)"
-    }
-    $mergedKeys = @($mergedObj.PSObject.Properties.Name)
-    $lostKeys = @($existingKeys | Where-Object { $mergedKeys -notcontains $_ })
-    if ($lostKeys.Count -gt 0) {
-        throw "Merge would drop top-level keys: $($lostKeys -join ', ') - refusing to write."
-    }
-    if ($existingObj.preferences) {
-        $prefBefore = @($existingObj.preferences.PSObject.Properties.Name).Count
-        $prefAfter = @($mergedObj.preferences.PSObject.Properties.Name).Count
-        if ($prefAfter -ne $prefBefore) {
-            throw "Merge would change preferences sub-key count ($prefBefore -> $prefAfter) - refusing to write."
-        }
-    }
-
-    if ($merged -ne $existingRaw) {
-        Backup-IfRealFile -Path $mcpConfigPath -ExpectedContent $merged
-        [System.IO.File]::WriteAllText($mcpConfigPath, $merged, (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host "Updated mcpServers in claude_desktop_config.json (preserved $($existingKeys.Count) top-level keys)"
-    } else {
-        Write-Host "claude_desktop_config.json already correct - left untouched"
-    }
+    Write-Host "claude_desktop_config.json already correct - left untouched"
 }
 
 Write-Host ""
