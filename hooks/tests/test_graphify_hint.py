@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -89,9 +90,14 @@ class ResolverParity(unittest.TestCase):
         self.assertTrue((SKILL_SCRIPTS / "query_reranked.py").is_file())
 
 
-def run_hook(payload, env_extra=None) -> tuple[int, str]:
+_LOGS = tempfile.TemporaryDirectory(prefix="graphify-hint-logs-")
+
+
+def run_hook(payload, env_extra=None, log_dir=None) -> tuple[int, str]:
     env = dict(os.environ)
     env.pop("GRAPHIFY_HINT", None)
+    # Never write the diagnostic log into the real profile from tests.
+    env[hint.LOG_DIR_ENV] = str(log_dir or _LOGS.name)
     env.update(env_extra or {})
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
     proc = subprocess.run([sys.executable, str(HOOK)], input=stdin.encode("utf-8"),
@@ -171,13 +177,253 @@ class HookIO(unittest.TestCase):
         self.assertEqual((rc, out), (0, ""))
 
     def test_other_events_ignored(self):
-        rc, out = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.web)})
-        self.assertEqual((rc, out), (0, ""))
+        for event in ("PreToolUse", "Stop", "SessionEnd"):
+            rc, out = run_hook({"hook_event_name": event, "cwd": str(self.web)})
+            self.assertEqual((rc, out), (0, ""), event)
 
     def test_malformed_stdin_never_fails(self):
         for bad in ("not json", "", "[1,2]"):
             rc, out = run_hook(bad)
             self.assertEqual(rc, 0)
+
+
+# ---- transcript fixtures: the record shapes Claude Code writes ----
+def boundary() -> dict:
+    return {"parentUuid": None, "logicalParentUuid": "444dc8f7", "isSidechain": False,
+            "type": "system", "subtype": "compact_boundary", "content": "Conversation compacted"}
+
+
+def hook_ctx(text: str, hook: str = "SessionStart:resume", sidechain: bool = False) -> dict:
+    return {"isSidechain": sidechain, "type": "attachment",
+            "attachment": {"type": "hook_additional_context", "content": [text], "hookName": hook}}
+
+
+def user(text: str) -> dict:
+    return {"isSidechain": False, "type": "user", "message": {"role": "user", "content": text}}
+
+
+def tool_result(text: str) -> dict:
+    return {"isSidechain": False, "type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": text}]}}
+
+
+# What 07542a44 inherited: a parent compact_boundary, then the parent's turns up
+# to a Stop, with other hooks' context but no graphify hint, and no SessionStart.
+FORK_PREFIX = [boundary(), user("summary of earlier work"),
+               hook_ctx("<context_brief packet_id=\"ep_1\">\nScope confidence: low\n</context_brief>",
+                        "UserPromptSubmit"),
+               {"isSidechain": False, "type": "assistant", "message": {"content": "done"}},
+               {"isSidechain": False, "type": "system", "subtype": "stop_hook_summary"}]
+
+
+class Transcript:
+    def __init__(self, path: Path, records: list[dict]):
+        self.path = path
+        path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+    def append(self, *records: dict) -> None:
+        with self.path.open("a", encoding="utf-8") as f:
+            f.writelines(json.dumps(r) + "\n" for r in records)
+
+
+class PromptFallback(unittest.TestCase):
+    """UserPromptSubmit injects the hint only when the live context lacks it."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name).resolve()
+        self.web = make_repo(self.tmp / "web")
+        self.graph = make_graph(self.web / "backend")
+        self.wt = make_worktree(self.web, self.web / ".claude" / "worktrees" / "lane", "lane")
+        self.addins = make_repo(self.tmp / "addins")
+        self.addins_graph = make_graph(self.addins)
+        self.bare = make_repo(self.tmp / "dash")
+        self.logs = self.tmp / "logs"
+
+    def transcript(self, records: list[dict], name: str = "t.jsonl") -> Transcript:
+        return Transcript(self.tmp / name, records)
+
+    def prompt(self, t: Transcript | str | None, cwd: Path, **extra) -> str:
+        payload = {"hook_event_name": "UserPromptSubmit", "session_id": "s-1", "cwd": str(cwd),
+                   "prompt": "hello", **extra}
+        if t is not None:
+            payload["transcript_path"] = str(t.path if isinstance(t, Transcript) else t)
+        rc, out = run_hook(payload, log_dir=self.logs)
+        self.assertEqual(rc, 0)
+        return out
+
+    def deliver(self, t: Transcript, out: str, hook: str) -> str:
+        """Record the hook's output the way the harness does; return the injected text."""
+        data = json.loads(out)["hookSpecificOutput"]
+        t.append(hook_ctx(data["additionalContext"], hook))
+        return data["additionalContext"]
+
+    def log(self) -> list[dict]:
+        path = self.logs / hint.LOG_NAME
+        return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+    def test_fork_without_session_start_injects_exactly_once(self):
+        # Regression for 07542a44: forked prefix, no SessionStart of any kind.
+        t = self.transcript(FORK_PREFIX)
+        injected = []
+        for _ in range(4):
+            out = self.prompt(t, self.web)
+            if out:
+                self.assertEqual(json.loads(out)["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
+                injected.append(self.deliver(t, out, "UserPromptSubmit"))
+            t.append(user("next prompt"), {"isSidechain": False, "type": "assistant", "message": {}})
+        self.assertEqual(len(injected), 1)
+        self.assertIn(str(self.graph), injected[0])
+        self.assertIn(hint.query_command(str(self.graph)), injected[0])
+        self.assertIn("subagent", injected[0], "fallback must carry the parent-session (delegation) hint")
+        self.assertEqual([r["emitted"] for r in self.log()], [True, False, False, False])
+        self.assertEqual([r["suppressed_prior_hint"] for r in self.log()], [False, True, True, True])
+
+    def test_session_start_then_prompts_never_duplicate(self):
+        t = self.transcript([user("hi")])
+        rc, out = run_hook({"hook_event_name": "SessionStart", "source": "startup", "cwd": str(self.web),
+                            "transcript_path": str(t.path)}, log_dir=self.logs)
+        self.deliver(t, out, "SessionStart:startup")
+        for _ in range(3):
+            self.assertEqual(self.prompt(t, self.web), "")
+            t.append(user("again"))
+
+    def test_hint_only_before_last_compaction_is_reinjected(self):
+        # Gap B: a compaction whose SessionStart:compact never fired.
+        t = self.transcript([hook_ctx(hint.build_hint(hint.resolve(self.web), subagent=False)),
+                             user("work"), boundary(), user("after compaction")])
+        self.assertIn(hint.HINT_TAG, self.prompt(t, self.web))
+
+    def test_hint_after_compaction_counts(self):
+        t = self.transcript([boundary(), hook_ctx(hint.build_hint(hint.resolve(self.web), subagent=False),
+                                                  "SessionStart:compact"), user("go")])
+        self.assertEqual(self.prompt(t, self.web), "")
+
+    def test_undelivered_mentions_do_not_count(self):
+        tag = hint.HINT_TAG
+        for rec in (user(f"pasted {tag} block"), tool_result(f"source of graphify_hint.py: {tag}"),
+                    hook_ctx(hint.build_hint(hint.resolve(self.web), subagent=True), "SubagentStart",
+                             sidechain=True),
+                    {"isSidechain": False, "attachment": {"type": "file", "content": [tag]}}):
+            t = self.transcript([boundary(), rec])
+            self.assertIn(tag, self.prompt(t, self.web), rec)
+
+    def test_missing_or_unreadable_transcript_injects(self):
+        for path in (None, self.tmp / "absent.jsonl", self.tmp):
+            self.assertIn(hint.HINT_TAG, self.prompt(path, self.web), path)
+        errors = [r["error"] for r in self.log()]
+        self.assertIsNone(errors[0])
+        self.assertTrue(all(e and e.startswith(("FileNotFoundError", "PermissionError", "IsADirectoryError"))
+                            for e in errors[1:]), errors)
+
+    def test_repo_root_worktree_and_addins_root(self):
+        for cwd, graph, local in ((self.web, self.graph, self.web / "backend"),
+                                  (self.wt, self.graph, self.wt / "backend"),
+                                  (self.addins, self.addins_graph, self.addins)):
+            t = self.transcript(FORK_PREFIX, name=f"{cwd.name}.jsonl")
+            out = self.prompt(t, cwd)
+            text = self.deliver(t, out, "UserPromptSubmit")
+            self.assertIn(f"graph: {graph}", text, cwd)
+            self.assertIn(str(local), text, cwd)
+            self.assertEqual(self.prompt(t, cwd), "", f"duplicate at {cwd}")
+
+    def test_no_graph_and_shell_less_subagent_never_read_the_transcript(self):
+        reads = []
+        real = hint.hint_in_live_context
+        hint.hint_in_live_context = lambda p: reads.append(p) or False
+        self.addCleanup(setattr, hint, "hint_in_live_context", real)
+        t = self.transcript(FORK_PREFIX)
+        for payload in ({"hook_event_name": "UserPromptSubmit", "cwd": str(self.bare)},
+                        {"hook_event_name": "SubagentStart", "agent_type": "claude-code-guide",
+                         "cwd": str(self.web)},
+                        {"hook_event_name": "SubagentStart", "agent_type": "Explore", "cwd": str(self.web)},
+                        {"hook_event_name": "SessionStart", "source": "resume", "cwd": str(self.web)}):
+            rec = {}
+            hint.handle({**payload, "transcript_path": str(t.path)}, rec)
+            self.assertFalse(rec.get("transcript_read"), payload)
+        self.assertEqual(reads, [])
+        # And end to end: the no-graph prompt and shell-less subagent are silent.
+        self.assertEqual(self.prompt(t, self.bare), "")
+        rc, out = run_hook({"hook_event_name": "SubagentStart", "agent_type": "claude-code-guide",
+                            "cwd": str(self.web), "transcript_path": str(t.path)}, log_dir=self.logs)
+        self.assertEqual((rc, out), (0, ""))
+        self.assertEqual([(r["skipped"], r["transcript_read"]) for r in self.log()],
+                         [("no_graph", False), ("shell_less_agent", False)])
+
+    def test_scan_cost_is_bounded_by_the_live_context(self):
+        filler = json.dumps(tool_result("x" * 4000)) + "\n"
+        path = self.tmp / "big.jsonl"
+        with path.open("w", encoding="utf-8") as f:
+            f.write(json.dumps(hook_ctx(hint.HINT_TAG)) + "\n")
+            f.write(filler * (24 * 1024 * 1024 // len(filler)))
+            f.write(json.dumps(boundary()) + "\n")
+            f.write(filler * 50)
+        self.assertGreater(path.stat().st_size, 20 * 1024 * 1024)
+        start = time.perf_counter()
+        self.assertFalse(hint.hint_in_live_context(str(path)))
+        self.assertLess(time.perf_counter() - start, 1.0)
+
+
+class DiagnosticLog(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name).resolve()
+        self.web = make_repo(self.tmp / "web")
+        make_graph(self.web / "backend")
+        self.logs = self.tmp / "logs"
+
+    def records(self) -> list[dict]:
+        return [json.loads(l) for l in (self.logs / hint.LOG_NAME).read_text(encoding="utf-8").splitlines()]
+
+    def test_one_record_per_invocation_with_outcome_fields(self):
+        run_hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "abc-123",
+                  "cwd": str(self.web)}, log_dir=self.logs)
+        run_hook({"hook_event_name": "SessionStart", "cwd": str(self.web)}, {"GRAPHIFY_HINT": "0"},
+                 log_dir=self.logs)
+        run_hook("not json", log_dir=self.logs)
+        run_hook({"hook_event_name": "Stop", "session_id": "../../etc", "cwd": str(self.web)}, log_dir=self.logs)
+        first, opt_out, bad, stop = self.records()
+        self.assertEqual(set(first), {"ts", "event", "source", "agent_type", "session_id", "cwd", "resolved",
+                                      "graph", "transcript_read", "suppressed_prior_hint", "emitted",
+                                      "skipped", "error"})
+        self.assertEqual((first["event"], first["source"], first["session_id"], first["cwd"]),
+                         ("SessionStart", "startup", "abc-123", str(self.web)))
+        self.assertTrue(first["resolved"] and first["emitted"])
+        self.assertIsNone(first["error"])
+        self.assertEqual((opt_out["skipped"], opt_out["emitted"]), ("opt_out", False))
+        self.assertEqual(bad["error"], "JSONDecodeError at char 0")
+        self.assertEqual(stop["skipped"], "event_ignored")
+        self.assertIsNone(stop["session_id"], "unsafe session id must not be logged")
+
+    def test_never_records_prompt_or_transcript_content(self):
+        marker = "PROMPT-MARKER-7f3a"
+        t = Transcript(self.tmp / "t.jsonl", [boundary(), user(f"transcript text {marker}-T")])
+        run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.web), "prompt": marker,
+                  "transcript_path": str(t.path)}, log_dir=self.logs)
+        text = (self.logs / hint.LOG_NAME).read_text(encoding="utf-8")
+        self.assertNotIn(marker, text)
+        self.assertNotIn(str(t.path), text)
+        self.assertTrue(self.records()[0]["emitted"])
+
+    def test_logging_failure_never_blocks_the_hint(self):
+        blocker = self.tmp / "not-a-dir"
+        blocker.write_text("x", encoding="utf-8")
+        for log_dir in (blocker, blocker / "sub"):
+            rc, out = run_hook({"hook_event_name": "UserPromptSubmit", "cwd": str(self.web)}, log_dir=log_dir)
+            self.assertEqual(rc, 0)
+            self.assertIn(hint.HINT_TAG, json.loads(out)["hookSpecificOutput"]["additionalContext"])
+
+    def test_size_is_bounded_by_one_rotation(self):
+        self.logs.mkdir()
+        log = self.logs / hint.LOG_NAME
+        for generation in range(3):
+            log.write_bytes(b"{}\n" * (hint.LOG_MAX_BYTES // 3 + 1))
+            run_hook({"hook_event_name": "Stop", "cwd": str(self.web)}, log_dir=self.logs)
+        self.assertEqual(sorted(p.name for p in self.logs.iterdir()), [hint.LOG_NAME, hint.LOG_NAME + ".1"])
+        self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 1)
+        self.assertLessEqual((self.logs / (hint.LOG_NAME + ".1")).stat().st_size, hint.LOG_MAX_BYTES + 4)
 
 
 if __name__ == "__main__":

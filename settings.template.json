@@ -164,6 +164,14 @@
               "__CLAUDE_HOOKS_DIR__/northstar_inject.py"
             ],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "__CLAUDE_HOOKS_DIR__/graphify_hint.py"
+            ],
+            "timeout": 10
           }
         ]
       }
