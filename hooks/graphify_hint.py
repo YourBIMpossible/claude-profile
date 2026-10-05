@@ -1,4 +1,4 @@
-"""SessionStart + SubagentStart hook: point the model at the graphify graph for this cwd.
+"""SessionStart + SubagentStart + UserPromptSubmit hook: point the model at the graphify graph for this cwd.
 
 WHY THIS EXISTS
   A 2026-09-29 transcript scan found 1 of 304 sessions since the reranker
@@ -18,6 +18,24 @@ WHAT IT DOES
   self-contained version so the subagent route works even when the parent
   forgets. No graph -> no output: projects without a graph are never nudged.
 
+  UserPromptSubmit is a fallback. The harness does not always fire
+  SessionStart: a desktop fork (2026-10-05 funnel, session 07542a44) fired
+  none, and 15 compactions on 2026-09-29/30 left no SessionStart:compact
+  record. On each prompt, after a graph resolves (never before, so no-graph
+  repos never touch the transcript), it scans transcript_path back to the
+  last compact_boundary for a delivered hint (a hook_additional_context
+  attachment carrying <graphify-graph>) and injects the session hint only
+  if none is there. Its own injection is that marker for the next prompt.
+
+DIAGNOSTIC LOG
+  One JSONL record per invocation in ~/.claude/hooks/logs/graphify_hint.jsonl
+  (override: GRAPHIFY_HINT_LOG_DIR), rotated to a single .1 at 1 MiB. Fields:
+  ts, event, source, agent_type, session_id, cwd, resolved, graph,
+  transcript_read, suppressed_prior_hint, emitted, skipped, error. Never the
+  prompt, transcript content, or exception messages (type + errno/char
+  offset only). Separate from the graphify query log. Best-effort: written
+  after the hint is emitted, and any logging failure is swallowed.
+
 SCOPE HONESTY
   ADVISORY. It informs tool choice; it cannot make the model use graphify,
   and it does not check graph freshness beyond printing the build date.
@@ -29,21 +47,33 @@ PINNED-COPY RULES (hooks/README.md, C1)
   both over the same fixtures and fails if they ever disagree. WRAPPER is a
   hardcoded path the MODEL runs (not code this hook executes).
 
-  Never fails a session: any error -> exit 0, no output. Opt-out:
-  GRAPHIFY_HINT=0.
+  Never fails a session: any error -> exit 0, no output (the error type goes
+  to the diagnostic log). Opt-out: GRAPHIFY_HINT=0.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 WRAPPER = r"F:\Claude-Profile\skills\graphify\scripts\query_reranked.py"
 
 # Subagent types that cannot run shell commands gain nothing from the hint.
 NO_SHELL_AGENTS = {"claude-code-guide", "statusline-setup"}
+HANDLED_EVENTS = ("SessionStart", "SubagentStart", "UserPromptSubmit")
+
+HINT_TAG = "<graphify-graph>"
+SCAN_CHUNK = 1 << 20
+SCAN_MAX_BYTES = 64 << 20  # live context is far smaller; past this, inject rather than keep reading
+
+LOG_DIR_ENV = "GRAPHIFY_HINT_LOG_DIR"
+LOG_NAME = "graphify_hint.jsonl"
+LOG_MAX_BYTES = 1 << 20  # one rotation: at most ~2 MiB on disk
+MAX_FIELD = 260
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 # ---- resolver (keep behaviour identical to skills/graphify/scripts/resolve_graph.py) ----
 GRAPH_REL = Path("graphify-out") / "graph.json"
@@ -192,20 +222,155 @@ def emit(event: str, text: str) -> None:
     sys.stdout.buffer.flush()
 
 
-def main() -> None:
-    if os.environ.get("GRAPHIFY_HINT", "").strip() == "0":
-        return
-    payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
+def _attachment_has_hint(attachment: object) -> bool:
+    if not isinstance(attachment, dict) or attachment.get("type") != "hook_additional_context":
+        return False
+    content = attachment.get("content")
+    parts = content if isinstance(content, list) else [content]
+    return any(isinstance(p, str) and HINT_TAG in p for p in parts)
+
+
+def hint_in_live_context(transcript_path: str | None) -> bool:
+    """True if a main-thread graphify hook hint follows the last compact_boundary.
+
+    Reads the transcript backward and stops at the first compaction, so the
+    cost tracks the live context, not the session's history; SCAN_MAX_BYTES
+    caps it outright. Only hook_additional_context attachments count: a hint
+    pasted by the user or echoed in a tool result was never delivered by the
+    harness. No transcript_path -> False (inject); an unreadable one raises
+    OSError, which the caller logs and treats as False.
+    """
+    if not transcript_path:
+        return False
+    with open(transcript_path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        scanned = 0
+        tail = b""
+        while pos > 0 and scanned < SCAN_MAX_BYTES:
+            size = min(SCAN_CHUNK, pos)
+            pos -= size
+            f.seek(pos)
+            block = f.read(size) + tail
+            scanned += size
+            lines = block.split(b"\n")
+            # lines[0] may be cut mid-record unless the file start was reached.
+            tail = lines.pop(0) if pos > 0 else b""
+            for line in reversed(lines):
+                verdict = _classify(line)
+                if verdict is not None:
+                    return verdict
+        return False
+
+
+def _classify(line: bytes) -> bool | None:
+    """True = delivered hint, False = compaction boundary (stop), None = keep going."""
+    boundary = b"compact_boundary" in line
+    if not boundary and not (b"graphify-graph" in line and b"hook_additional_context" in line):
+        return None
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(rec, dict) or rec.get("isSidechain"):
+        return None
+    if boundary and rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+        return False
+    return True if _attachment_has_hint(rec.get("attachment")) else None
+
+
+def handle(payload: dict, rec: dict) -> tuple[str, str] | None:
+    """Decide what to inject for one hook payload; record the outcome in rec."""
     event = payload.get("hook_event_name") or "SessionStart"
-    if event not in ("SessionStart", "SubagentStart"):
-        return
+    rec["event"] = str(event)[:40]
+    if event not in HANDLED_EVENTS:
+        rec["skipped"] = "event_ignored"
+        return None
     if event == "SubagentStart" and payload.get("agent_type") in NO_SHELL_AGENTS:
-        return
+        rec["skipped"] = "shell_less_agent"
+        return None
     cwd = payload.get("cwd") or os.getcwd()
+    rec["cwd"] = str(cwd)[:MAX_FIELD]
     r = resolve(cwd)
+    rec["resolved"] = r is not None
     if r is None:
-        return
-    emit(event, build_hint(r, subagent=(event == "SubagentStart")))
+        rec["skipped"] = "no_graph"
+        return None
+    rec["graph"] = r["graph"]
+    if event == "UserPromptSubmit":
+        # Fallback for paths where the harness fires no SessionStart (desktop
+        # forks, some compactions): inject only if the live context lacks it.
+        rec["transcript_read"] = True
+        try:
+            if hint_in_live_context(payload.get("transcript_path")):
+                rec["suppressed_prior_hint"] = True
+                return None
+        except OSError as e:
+            rec["error"] = sanitize_error(e)
+    return event, build_hint(r, subagent=(event == "SubagentStart"))
+
+
+# ---- diagnostic log (best-effort; never affects what is emitted) ----
+def log_dir() -> Path:
+    override = os.environ.get(LOG_DIR_ENV, "").strip()
+    return Path(override) if override else Path.home() / ".claude" / "hooks" / "logs"
+
+
+def sanitize_error(e: BaseException) -> str:
+    """Exception type plus a numeric locator only: messages can carry paths or content."""
+    name = type(e).__name__
+    if isinstance(e, json.JSONDecodeError):
+        return f"{name} at char {e.pos}"
+    if isinstance(e, OSError) and e.errno is not None:
+        return f"{name} errno={e.errno}"
+    return name
+
+
+def write_log(rec: dict) -> None:
+    """Append one JSONL record; rotate to a single .1 backup past LOG_MAX_BYTES."""
+    try:
+        d = log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / LOG_NAME
+        try:
+            if path.stat().st_size >= LOG_MAX_BYTES:
+                os.replace(path, d / (LOG_NAME + ".1"))
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def main() -> None:
+    rec: dict = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "event": None, "source": None, "agent_type": None, "session_id": None, "cwd": None,
+        "resolved": None, "graph": None, "transcript_read": False,
+        "suppressed_prior_hint": False, "emitted": False, "skipped": None, "error": None,
+    }
+    try:
+        if os.environ.get("GRAPHIFY_HINT", "").strip() == "0":
+            rec["skipped"] = "opt_out"
+            return
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("payload is not an object")
+        for key in ("source", "agent_type"):
+            if isinstance(payload.get(key), str):
+                rec[key] = payload[key][:40]
+        sid = payload.get("session_id")
+        if isinstance(sid, str) and SESSION_ID_RE.fullmatch(sid):
+            rec["session_id"] = sid
+        out = handle(payload, rec)
+        if out is not None:
+            emit(*out)
+            rec["emitted"] = True
+    except Exception as e:
+        rec["error"] = sanitize_error(e)
+    finally:
+        write_log(rec)
 
 
 if __name__ == "__main__":

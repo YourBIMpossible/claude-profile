@@ -123,6 +123,8 @@ class CleanInstall(BootstrapSandbox):
         self.assertIn(("PreToolUse", "Write|Edit", "protect_paths_gate.py"), seen)
         self.assertIn(("SessionStart", "startup|resume|clear|compact", "graphify_hint.py"), seen)
         self.assertIn(("SubagentStart", None, "graphify_hint.py"), seen)
+        # Fallback for harness paths that fire no SessionStart (desktop forks).
+        self.assertIn(("UserPromptSubmit", None, "graphify_hint.py"), seen)
         prompts = [h for _, m, h in handlers(self.settings()) if h["type"] == "prompt"]
         self.assertEqual(len(prompts), 1, "skill-detection prompt hook missing or duplicated")
 
@@ -156,6 +158,10 @@ class CleanInstall(BootstrapSandbox):
             self.assertEqual(proc.returncode, 0, f"{event} {name} exit {proc.returncode}: {proc.stderr}")
             ran.add(name)
         self.assertEqual(ran, EXECUTABLE_HOOKS - NOT_EXECUTED)
+        # graphify_hint's diagnostic log defaults under the (sandboxed) profile.
+        records = (self.hooks_dir / "logs" / "graphify_hint.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual({json.loads(r)["event"] for r in records},
+                         {"SessionStart", "SubagentStart", "UserPromptSubmit"})
 
     def test_installed_gate_still_fails_closed(self) -> None:
         gate = self.hooks_dir / "protect_paths_gate.py"
@@ -223,6 +229,23 @@ class Reinstall(BootstrapSandbox):
         self.run_bootstrap()
         self.assertEqual((self.claude / "settings.json").read_text(encoding="utf-8"), before)
         self.assertEqual(sorted(p.name for p in self.claude.rglob("*.pre-profile-backup-*")), backups)
+
+
+    def test_restores_dropped_graphify_prompt_hook_and_missing_installed_copy(self) -> None:
+        self.run_bootstrap()
+        settings = self.settings()
+        settings["hooks"]["UserPromptSubmit"] = [
+            {**g, "hooks": [h for h in g["hooks"] if not h.get("args", [""])[-1].endswith("/graphify_hint.py")]}
+            for g in settings["hooks"]["UserPromptSubmit"]]
+        (self.claude / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        (self.hooks_dir / "graphify_hint.py").unlink()
+
+        self.run_bootstrap()
+        prompt_hooks = [h["args"][-1] for e, _, h in handlers(self.settings())
+                        if e == "UserPromptSubmit" and h["type"] == "command"]
+        graphify = [a for a in prompt_hooks if a.endswith("/graphify_hint.py")]
+        self.assertEqual(len(graphify), 1, f"UserPromptSubmit graphify_hint not restored: {prompt_hooks}")
+        self.assertEqual(Path(graphify[0]).read_bytes(), (REPO / "hooks" / "graphify_hint.py").read_bytes())
 
 
 class Preflight(BootstrapSandbox):
