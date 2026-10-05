@@ -25,9 +25,12 @@ does not exist, resolve_graph.resolve() finds the canonical graph (repo
 subfolder, parent, or the main checkout behind a worktree) and passes it as
 --graph. Without that, graphify errors from any folder but the graph's own.
 
-Telemetry: every query run through this wrapper writes exactly ONE query-log
-record, stamped rerank=true or rerank=false, with via="wrapper" and wall-clock
-duration_ms. Child `graphify query` calls always run with logging disabled.
+Telemetry: every SUCCESSFUL query run through this wrapper writes exactly ONE
+query-log record, stamped rerank=true or rerank=false, with via="wrapper" and
+wall-clock duration_ms. A failed query (passthrough exit code != 0, or a rerank
+RuntimeError) writes none, matching stock graphify, so the log counts successes
+only and cannot be used as a failure count. Child `graphify query` calls always
+run with logging disabled.
 A bare `graphify query` (not through this wrapper) is logged by the package
 itself with no rerank field; readers treat a missing field as stock/false.
 

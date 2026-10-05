@@ -2,14 +2,17 @@
 
 Runs the real bootstrap under Windows PowerShell 5.1 (its declared floor) with
 USERPROFILE and APPDATA pointed at a throwaway sandbox, so nothing on the live
-machine is read or written. Guards the regression where settings.template.json
-registered only session-start-pull, so any reinstall silently dropped every
+machine is read or written. Set BOOTSTRAP_TEST_POWERSHELL=pwsh to run the suite
+under PowerShell 7 instead; the UTF-8 template test always runs under both.
+Guards the regression where settings.template.json registered only
+session-start-pull, so any reinstall silently dropped every
 other hook -- including the fail-closed protect_paths_gate control.
 
 Run: python hooks/tests/test_bootstrap_install.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -26,6 +29,7 @@ HOOK_SOURCES = sorted(
 EXECUTABLE_HOOKS = {p.name for p in HOOK_SOURCES if p.suffix in {".py", ".ps1"}}
 # session-start-pull runs `git pull` in the repo; it is parse-checked, never executed here.
 NOT_EXECUTED = {"session-start-pull.ps1"}
+POWERSHELL = os.environ.get("BOOTSTRAP_TEST_POWERSHELL", "powershell.exe")
 
 
 def remove_sandbox(root: Path) -> None:
@@ -55,11 +59,18 @@ class BootstrapSandbox(unittest.TestCase):
         self.hooks_dir = self.claude / "hooks"
         self.addCleanup(remove_sandbox, self.root)
 
-    def run_bootstrap(self, repo: Path = REPO, *args: str, expect_ok: bool = True) -> subprocess.CompletedProcess:
+    def run_bootstrap(self, repo: Path = REPO, *args: str, expect_ok: bool = True,
+                      powershell: str = POWERSHELL) -> subprocess.CompletedProcess:
+        # bootstrap writes only under USERPROFILE and APPDATA; both must be this sandbox.
+        temp = Path(tempfile.gettempdir()).resolve()
+        for sandboxed in (self.home, self.appdata):
+            self.assertTrue(sandboxed.resolve().is_relative_to(temp), f"{sandboxed} is not a sandbox path")
+            for real in (os.environ.get("USERPROFILE"), os.environ.get("APPDATA")):
+                self.assertNotEqual(str(sandboxed).lower(), (real or "").lower())
         env = {**os.environ, "USERPROFILE": str(self.home), "APPDATA": str(self.appdata)}
         proc = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(repo / "bootstrap.ps1"), *args],
-            env=env, capture_output=True, text=True, timeout=180,
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(repo / "bootstrap.ps1"), *args],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
         if expect_ok:
             self.assertEqual(proc.returncode, 0, f"bootstrap failed:\n{proc.stdout}\n{proc.stderr}")
@@ -159,7 +170,7 @@ class CleanInstall(BootstrapSandbox):
         script = self.hooks_dir / "session-start-pull.ps1"
         check = (f"$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile("
                  f"'{script}', [ref]$null, [ref]$e); if ($e) {{ $e | Out-String; exit 1 }}")
-        proc = subprocess.run(["powershell.exe", "-NoProfile", "-Command", check],
+        proc = subprocess.run([POWERSHELL, "-NoProfile", "-Command", check],
                               capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
@@ -266,7 +277,30 @@ class Preflight(BootstrapSandbox):
         self.edit_template('"theme": "dark"', '"theme": "__UNKNOWN_TOKEN__"')
         proc = self.run_bootstrap(self.repo, expect_ok=False)
         self.assertIn("__UNKNOWN_TOKEN__", proc.stdout + proc.stderr)
-        self.assertFalse((self.claude / "settings.json").exists())
+        self.assertFalse(self.claude.exists(), "bootstrap wrote to the profile before refusing")
+
+    def test_non_ascii_template_text_round_trips(self) -> None:
+        # Windows PowerShell 5.1 decodes a BOM-less file with the ANSI code page unless
+        # told otherwise, which turned an em dash into mojibake in settings.json.
+        marker = "café — ‐"
+        self.edit_template("You decide whether", f"You decide ({marker}) whether")
+        mcp = self.repo / "mcp" / "claude_desktop_config.template.json"
+        text = mcp.read_text(encoding="utf-8")
+        mcp.write_text(text.replace('"command": "cmd",', f'"command": "cmd", "x-note": "{marker}",'),
+                       encoding="utf-8")
+        self.commit()
+        shells = ["powershell.exe"] + (["pwsh"] if shutil.which("pwsh") else [])
+        for shell in shells:
+            with self.subTest(powershell=shell):
+                # Fresh-install outputs each time, so each shell renders both templates.
+                shutil.rmtree(self.appdata / "Claude", ignore_errors=True)
+                (self.claude / "settings.json").unlink(missing_ok=True)
+                self.run_bootstrap(self.repo, powershell=shell)
+                prompts = [h["prompt"] for _, _, h in handlers(self.settings()) if h["type"] == "prompt"]
+                self.assertEqual(len(prompts), 1)
+                self.assertIn(f"You decide ({marker}) whether", prompts[0])
+                desktop = json.loads((self.appdata / "Claude" / "claude_desktop_config.json").read_text(encoding="utf-8"))
+                self.assertEqual(desktop["mcpServers"]["mcp-server-for-revit"]["x-note"], marker)
 
 
 TEMPLATE = json.loads((REPO / "settings.template.json").read_text(encoding="utf-8"))
@@ -345,26 +379,6 @@ class SettingsPreservation(BootstrapSandbox):
         self.assertIsInstance(s["permissions"]["additionalDirectories"], list)
         self.assertIsNone(s["model"], "an explicit null is the user's value and is kept")
 
-    def test_malformed_settings_is_refused_untouched(self) -> None:
-        for raw in ("{not json", '{"permissions": "not-an-object"}', '["an", "array"]', "null"):
-            with self.subTest(raw=raw):
-                original = self.write_existing(raw)
-                proc = self.run_bootstrap(expect_ok=False)
-                self.assertIn("settings.json", proc.stdout + proc.stderr)
-                self.assertEqual((self.claude / "settings.json").read_bytes(), original)
-                self.assertEqual(self.backups(), [], "a refused run made a backup")
-
-    def test_empty_settings_is_refused_untouched(self) -> None:
-        # An empty file is not a fresh install: something truncated it, and replacing it
-        # with the template would hide that. Refuse, like any other unreadable file.
-        for raw in ("", "  \n\t\n"):
-            with self.subTest(raw=raw):
-                original = self.write_existing(raw)
-                proc = self.run_bootstrap(expect_ok=False)
-                self.assertIn("settings.json is empty", proc.stdout + proc.stderr)
-                self.assertEqual((self.claude / "settings.json").read_bytes(), original)
-                self.assertEqual(self.backups(), [], "a refused run made a backup")
-
     def test_case_only_change_is_written_and_backed_up(self) -> None:
         self.run_bootstrap()
         path = self.claude / "settings.json"
@@ -410,7 +424,7 @@ class SettingsPreservation(BootstrapSandbox):
         )
         env = {**os.environ, "BOOTSTRAP_PATH": str(REPO / "bootstrap.ps1"),
                "PLAN_BEFORE": json.dumps(before), "PLAN_AFTER": json.dumps(after)}
-        proc = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        proc = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
                               env=env, capture_output=True, text=True, timeout=60)
         out = proc.stdout + proc.stderr
         self.assertEqual(proc.returncode, 0, out)
@@ -439,6 +453,90 @@ class SettingsPreservation(BootstrapSandbox):
         self.assertRegex(out, r"(?m)^  (added|changed|removed) /")
         for leaked in (SECRET, HOOK_ARG, "user-chosen-model", "echo status", "EXAMPLE_TOKEN"):
             self.assertNotIn(leaked, out, f"plan output leaked {leaked!r}")
+
+
+def tree_snapshot(root: Path) -> dict[str, str]:
+    """relative path -> sha256 (file), 'dir', or 'link -> target'. Never follows a
+    junction or symlink, so the repo's skills tree is never walked."""
+    snap: dict[str, str] = {}
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        for entry in sorted(current.iterdir()):
+            rel = entry.relative_to(root).as_posix()
+            if os.path.isjunction(entry) or entry.is_symlink():
+                snap[rel] = f"link -> {os.readlink(entry)}"
+            elif entry.is_dir():
+                snap[rel] = "dir"
+                stack.append(entry)
+            else:
+                snap[rel] = hashlib.sha256(entry.read_bytes()).hexdigest()
+    return snap
+
+
+class RefusalLeavesProfileUntouched(BootstrapSandbox):
+    """An existing settings.json bootstrap cannot safely merge is refused before ANY
+    write: the CLAUDE.md stub, the skills directory, every installed hook and the
+    desktop config stay byte-identical, and no backup is made (L1, 2026-10-05)."""
+
+    BAD_SETTINGS = {
+        "malformed": "{not json",
+        "empty": "",
+        "whitespace-only": "  \n\t\n",
+        "null": "null",
+        "array": '["an", "array"]',
+        "wrong-case Hooks": '{"Hooks": {}}',
+        "wrong-case Permissions": '{"Permissions": {"allow": []}}',
+        "case-variant hooks collision": '{"hooks": {}, "Hooks": {}}',
+        "hooks not an object": '{"hooks": []}',
+        "permissions not an object": '{"permissions": "not-an-object"}',
+    }
+
+    def plant_profile(self, settings: str, desktop: str = '{"other": 1}') -> None:
+        # Every artefact a successful run would rewrite: a foreign CLAUDE.md, a real
+        # skills directory (would be moved to a backup), a stale pinned hook (would be
+        # replaced), and a desktop config whose mcpServers would be inserted.
+        self.hooks_dir.mkdir(parents=True)
+        (self.claude / "CLAUDE.md").write_bytes(b"# hand-written, not the stub\n")
+        (self.claude / "skills").mkdir()
+        (self.claude / "skills" / "mine.md").write_bytes(b"user skill\n")
+        (self.hooks_dir / "decay_reminder.py").write_bytes(b"# stale installed copy\n")
+        (self.claude / "settings.json").write_bytes(settings.encode("utf-8"))
+        (self.appdata / "Claude").mkdir()
+        (self.appdata / "Claude" / "claude_desktop_config.json").write_bytes(desktop.encode("utf-8"))
+
+    def snapshot(self) -> dict:
+        # bootstrap's two write roots. The PowerShell host itself may create
+        # AppData folders under the sandboxed USERPROFILE; that is not bootstrap.
+        return {"claude": tree_snapshot(self.claude), "desktop": tree_snapshot(self.appdata / "Claude")}
+
+    def assert_refused_untouched(self, expect_in_output: str) -> None:
+        before = self.snapshot()
+        proc = self.run_bootstrap(expect_ok=False)
+        out = proc.stdout + proc.stderr
+        self.assertIn(expect_in_output, out)
+        self.assertIn("refusing", out)
+        after = self.snapshot()
+        self.assertEqual(after, before, f"a refused run changed the profile:\n{proc.stdout}")
+        self.assertNotIn("pre-profile-backup", json.dumps(after))
+
+    def test_unusable_settings_is_refused_before_any_write(self) -> None:
+        for label, raw in self.BAD_SETTINGS.items():
+            with self.subTest(settings=label):
+                remove_sandbox(self.root)
+                self.home.mkdir(parents=True)
+                self.appdata.mkdir()
+                self.plant_profile(raw)
+                self.assert_refused_untouched("settings.json")
+
+    def test_wrong_case_key_names_the_expected_key(self) -> None:
+        self.plant_profile('{"Hooks": {}}')
+        proc = self.run_bootstrap(expect_ok=False)
+        self.assertIn("'Hooks' key; Claude Code only reads 'hooks'", proc.stdout + proc.stderr)
+
+    def test_unusable_desktop_config_is_refused_before_any_write(self) -> None:
+        self.plant_profile("{}", desktop="{not json")
+        self.assert_refused_untouched("claude_desktop_config.json")
 
 
 if __name__ == "__main__":
