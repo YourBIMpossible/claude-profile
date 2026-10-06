@@ -27,7 +27,7 @@ grrp: v1
 ## grrp-finding
 Required: `id source classification assessment resolution execution_state owner
 lane requirement authority blocks evidence`. Optional: `severity location
-obligations scope_approval action_approval duplicate_of reason` (any other key is
+obligations scope_approval action_approval owner_action duplicate_of reason` (any other key is
 kept and ignored).
 
 | key | values / rule |
@@ -40,7 +40,7 @@ kept and ignored).
 | owner | never empty: parent, child id, `queue:<ID>`, named session |
 | lane | parent · external · a child id |
 | requirement | a criterion id, or `n/a: <reason>` |
-| authority | authorized · approval_required (needs `action_approval` before execution) · protected (no execution) |
+| authority | authorized · approval_required (needs `action_approval` before execution) · protected (no execution unless `owner_action:` records that the owner performed or ratified it — the item stays protected and any agent action stays in `evidence`) |
 | blocks | criterion ids this finding blocks while open, or none |
 | obligations | `review=done:<evidence>; integration=n/a:<reason>; deployment=pending; …` |
 

@@ -238,7 +238,7 @@ def validate(led: Ledger) -> list[str]:
 
         state = f.get("execution_state", "identified")
         started = state in EXEC_STATES and EXEC_STATES.index(state) > 0
-        if started and f.get("authority") == "protected":
+        if started and f.get("authority") == "protected" and _blank(f.get("owner_action")):
             errs.append(f"{_q(fid)}: protected surface shows execution '{_q(state)}' — unauthorized action")
         if started and f.get("classification") == "enhancement" and _blank(f.get("scope_approval")):
             errs.append(f"{_q(fid)}: enhancement executed without scope_approval")

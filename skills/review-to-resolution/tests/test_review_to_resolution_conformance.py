@@ -171,6 +171,18 @@ class ProtocolScenarios(Base):
         self.assertEqual(r["verdict"], "invalid")
 
 
+    def test_protected_progress_needs_owner_action_and_stays_protected(self) -> None:
+        f = dict(classification="independent", lane="external", authority="protected", execution_state="integrated",
+                 evidence="copied by agent without approval", obligations="review=n/a:storage; integration=done:x")
+        r = self.verdict(self.ledger(finding("F-032", **f)))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertIn("unauthorized action", " ".join(r["validation_errors"]))
+        r = self.verdict(self.ledger(finding("F-033", owner_action="owner ratified in chat 2026-10-06", **f)))
+        self.assertEqual(r["validation_errors"], [])
+        r = self.verdict(self.ledger(finding("F-034", owner_action="  ", **f)))
+        self.assertEqual(r["verdict"], "invalid")
+
+
 class AbsorptionScenarios(Base):
     def test_off_limits_surface_blocks_included_requirement_without_authorizing_change(self) -> None:
         open_protected = finding("F-030", source="discovered", classification="blocker", resolution="open",
