@@ -23,6 +23,7 @@ One ANCHOR DOC per job:
   phase boundaries.
 - Audits → the report file in `audits/`, findings appended AS FOUND, not at the end.
 - Harness/profile work → a dated notes file in claude-profile.
+- A per-run record is written where it belongs when it is created. A closeout, run log or audit result goes to the repo's excluded records path: in BIMpossible, `docs/ops/_archive/<run>/`. In-progress plans and handoffs for open work go to `F:\Claude-Tools\reports`. The run anchor stays live while the run is open, because it is operative. It moves to the archive whole in the PR that closes the run, with inbound references repaired in the same commit. A file that a test or checker names stays where it is.
 
 The anchor carries: phase statuses, decisions + why, gotchas hit, and the exact next
 entry point (file/command). The transcript is a working buffer that can be lost at
