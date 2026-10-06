@@ -371,7 +371,10 @@ def audit_worktree(
             findings.append({
                 "severity": "ATTENTION REQUIRED",
                 "text": f"{path} — untracked design/decision doc: {p}",
-                "action": "Commit and push intentionally, or rename to *.draft.md if not ready.",
+                "action": (
+                    "Commit and push if it governs future work; if it is transient output, "
+                    r"move it to F:\Claude-Tools\reports; or rename to *.draft.md if not ready."
+                ),
             })
             file_level_attention = True
         # non-design untracked files (build output, scratch, etc.) are not
