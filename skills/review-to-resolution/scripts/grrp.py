@@ -51,7 +51,8 @@ NONE_VALUES = {"", "none", "-", "null"}
 UNKNOWN_VALUES = {"unknown", "?", "tbd"}
 BRIEF_KEYS = ["Objective", "Scope", "Boundaries", "Done means", "Extra findings", "Authority"]
 
-BLOCK_OPEN_RE = re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
+ORDINARY_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
+BLOCK_OPEN_RE =re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
 BRIEF_RE = re.compile(r"^- (Objective|Scope|Boundaries|Done means|Extra findings|Authority):[ \t]*(.*)$", re.M)
 
 
@@ -91,15 +92,23 @@ def parse(path: Path) -> Ledger:
     rec: dict[str, str] = {}
     start = 0
     other: str | None = None
+    other_start = 0
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.rstrip()
         if other:
-            if line.strip() == other:
+            # CommonMark close: only the fence char, run at least as long as the opener
+            s = line.strip()
+            if s and set(s) == {other[0]} and len(s) >= len(other):
                 other = None
+            elif "```grrp" in line:
+                # Fail closed: a record inside another fence would be invisible to the gate.
+                led.errors.append(f"line {n}: grrp block inside the fence opened at line {other_start}; "
+                                  "ledgers hold no example blocks")
             continue
         if kind is None:
-            if line.startswith(("```", "~~~")) and "```grrp" not in line:
-                other = line[:3]  # ordinary fence: examples inside it are prose, not records
+            fm = ORDINARY_FENCE_RE.match(line)
+            if fm and "```grrp" not in line:
+                other, other_start = fm.group(1), n  # ordinary fence: examples inside are prose
                 continue
             m = BLOCK_OPEN_RE.match(line)
             if m:
@@ -125,6 +134,8 @@ def parse(path: Path) -> Ledger:
         rec[k] = v
     if kind is not None:
         led.errors.append(f"grrp-{kind} block opened at line {start} is never closed")
+    if other is not None:
+        led.errors.append(f"fence opened at line {other_start} is never closed (would hide every later block)")
     return led
 
 

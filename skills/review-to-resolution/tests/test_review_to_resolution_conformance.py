@@ -317,6 +317,17 @@ class ReviewToResolutionCorrections(Base):
             r = self.verdict(self.ledger(example, crit=crit, name=f"2026-10-06-{len(fence)}.ledger.md"))
             self.assertEqual(r["verdict"], "invalid", fence)
 
+    def test_ordinary_fence_cannot_hide_a_real_open_finding(self) -> None:
+        hidden = finding("F-070", resolution="open")
+        cases = {
+            "unclosed": "\n```text\n" + hidden,
+            "4tick-closed-by-4": "\n````md\nx\n````\n" + hidden,  # closes; finding must be live
+            "4tick-with-3-inside": "\n````md\n```grrp-criterion\nid: AC-8\ntext: e\nstatus: met\nevidence: e\n```\n````\n" + hidden,
+        }
+        for name, body in cases.items():
+            r = self.verdict(self.ledger(body, name=f"2026-10-06-{name}.ledger.md"))
+            self.assertNotEqual(r["verdict"], "complete", name)
+
     def test_gate_json_exposes_one_closeable_decision(self) -> None:
         p = self.ledger(finding("F-060", classification="independent", resolution="open", requirement="n/a: x"),
                         block("transfer", "id: T-1\nfindings: F-060\nreceiver: someone\nnext_action: a\n"
