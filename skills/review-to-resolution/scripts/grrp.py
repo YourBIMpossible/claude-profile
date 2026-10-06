@@ -61,6 +61,8 @@ BRIEF_KEYS = ["Objective", "Scope", "Boundaries", "Done means", "Extra findings"
 
 ORDINARY_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 BLOCK_OPEN_RE =re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
+OWNER_WORD_RE = re.compile(r"\bowner\b", re.I)
+ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 BRIEF_RE = re.compile(r"^- (Objective|Scope|Boundaries|Done means|Extra findings|Authority):[ \t]*(.*)$", re.M)
 
 
@@ -77,9 +79,10 @@ class Ledger:
 
 
 def _no_owner_action(v: object) -> bool:
-    """owner_action must cite a real owner act; blank values and placeholders do not count."""
-    t = "" if v is None else str(v).strip().lower()
-    return _blank(v) or t in {"n/a", "na", "tbd", "todo", "pending", "yes", "ok"} or t.startswith(("n/a:", "pending:", "tbd:"))
+    """owner_action must cite a dated owner act (contains `owner` and a YYYY-MM-DD date);
+    anything else, placeholders included, does not count."""
+    t = "" if v is None else str(v)
+    return _blank(t) or not (OWNER_WORD_RE.search(t) and ISO_DATE_RE.search(t))
 
 
 def _blank(v: str | None) -> bool:

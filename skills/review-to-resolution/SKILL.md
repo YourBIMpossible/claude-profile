@@ -56,7 +56,7 @@ included criterion it still carries `blocks:` and the run is **blocked**, not
 complete. Scope approval ≠ consequential-action approval (`action_approval:`
 binds to the exact target; changed consequences need a fresh one). Progress on a
 protected surface is valid only with `owner_action:` naming the owner's act or
-ratification and where it lives; write it only after that statement exists.
+ratification, its date (YYYY-MM-DD) and where it lives; write it only after that statement exists.
 
 ## 3. Single writer
 

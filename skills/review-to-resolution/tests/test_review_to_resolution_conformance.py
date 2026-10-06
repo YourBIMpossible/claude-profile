@@ -179,7 +179,9 @@ class ProtocolScenarios(Base):
         self.assertIn("unauthorized action", " ".join(r["validation_errors"]))
         r = self.verdict(self.ledger(finding("F-033", owner_action="owner ratified in chat 2026-10-06", **f)))
         self.assertEqual(r["validation_errors"], [])
-        for i, placeholder in enumerate(["  ", "none", "n/a", "TBD", "pending: owner", "n/a: later"]):
+        r = self.verdict(self.ledger(finding("F-035", owner_action="owner chat 2026-10-06: ratified transfer", **f)))
+        self.assertEqual(r["validation_errors"], [])
+        for i, placeholder in enumerate(["  ", "none", "n/a", "TBD", "pending: owner", "n/a: later", "todo: ask owner", "na: later", "pending owner", "ratified 2026-10-06"]):
             r = self.verdict(self.ledger(finding(f"F-04{i}", owner_action=placeholder, **f)))
             self.assertEqual(r["verdict"], "invalid", placeholder)
 

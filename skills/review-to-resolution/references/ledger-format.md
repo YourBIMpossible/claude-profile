@@ -40,7 +40,7 @@ kept and ignored).
 | owner | never empty: parent, child id, `queue:<ID>`, named session |
 | lane | parent · external · a child id |
 | requirement | a criterion id, or `n/a: <reason>` |
-| authority | authorized · approval_required (needs `action_approval` before execution) · protected (no execution unless `owner_action:` records that the owner performed or ratified it — the item stays protected and any agent action stays in `evidence`) |
+| authority | authorized · approval_required (needs `action_approval` before execution) · protected (no execution unless `owner_action:` cites the owner's dated act or ratification (must contain `owner` and a YYYY-MM-DD date) — the item stays protected and any agent action stays in `evidence`) |
 | blocks | criterion ids this finding blocks while open, or none |
 | obligations | `review=done:<evidence>; integration=n/a:<reason>; deployment=pending; …` |
 
