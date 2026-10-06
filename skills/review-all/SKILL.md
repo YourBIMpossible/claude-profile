@@ -123,7 +123,7 @@ GRRP record: write every converged finding — retained and NOT RETAINED — as 
 reason as evidence; BLOCKER → `blocks:` the criterion it threatens). Review-only
 runs mark integration/deployment/verification `n/a:review-only`. End the output
 with `python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`'s
-`verdict` and `transfers_ok` (both, verbatim) and the ledger path. Do not emit raw per-lens dumps as the
+`verdict` and `transfers_ok` (both, verbatim), `closeable`, and the ledger path. Do not emit raw per-lens dumps as the
 primary output — they are the discovery layer; attach them only as a deep-mode
 appendix.
 

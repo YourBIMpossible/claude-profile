@@ -90,9 +90,17 @@ def parse(path: Path) -> Ledger:
     kind: str | None = None
     rec: dict[str, str] = {}
     start = 0
+    other: str | None = None
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.rstrip()
+        if other:
+            if line.strip() == other:
+                other = None
+            continue
         if kind is None:
+            if line.startswith(("```", "~~~")) and "```grrp" not in line:
+                other = line[:3]  # ordinary fence: examples inside it are prose, not records
+                continue
             m = BLOCK_OPEN_RE.match(line)
             if m:
                 kind, rec, start = m.group(1), {}, n
