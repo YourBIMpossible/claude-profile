@@ -237,6 +237,62 @@ class AbsorptionScenarios(Base):
         self.assertIn("F-040", p.read_text(encoding="utf-8"))
 
 
+class PilotRegressions(Base):
+    """False-completes and spoofs found by the 2026-10-05 /review-all pilot (ledger G-1..G-10)."""
+
+    def test_open_blocker_without_blocks_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-050", classification="blocker", resolution="open", blocks="none")))
+        self.assertEqual(r["verdict"], "invalid")
+
+    def test_misspelled_or_indented_fence_is_invalid_not_dropped(self) -> None:
+        typo = finding("F-051", resolution="open").replace("```grrp-finding", "```grrp-findings")
+        self.assertEqual(self.verdict(self.ledger(typo))["verdict"], "invalid")
+        indented = "\n".join("  " + ln for ln in finding("F-052", resolution="open").splitlines())
+        self.assertEqual(self.verdict(self.ledger(indented, name="2026-10-05-i.ledger.md"))["verdict"], "invalid")
+
+    def test_unclosed_fence_is_invalid_and_linear(self) -> None:
+        import time
+        p = self.ledger("\n```grrp-finding\nid: F-0\n" * 20000)
+        t = time.perf_counter()
+        r = self.verdict(p)
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertLess(time.perf_counter() - t, 2.0)
+
+    def test_nested_status_does_not_accept_parked_item(self) -> None:
+        p = self.ledger(finding("F-053", classification="independent", resolution="open", requirement="n/a: x"),
+                        block("transfer", "id: T-9\nfindings: F-053\nreceiver: queue:Q1\nnext_action: a\n"
+                                          "acceptance: b\nfollow_up: c"))
+        self.queue.write_text(f"items:\n- id: Q1\n  meta:\n    status: ready\n  status: parked\n  source: {p.name}\n",
+                              encoding="utf-8")
+        self.assertFalse(self.verdict(p)["transfers_ok"])
+
+    def test_longer_filename_does_not_carry_transfer_context(self) -> None:
+        p = self.ledger(finding("F-054", classification="independent", resolution="open", requirement="n/a: x"),
+                        block("transfer", "id: T-10\nfindings: F-054\nreceiver: queue:Q2\nnext_action: a\n"
+                                          "acceptance: b\nfollow_up: c"))
+        self.queue.write_text(f"items:\n- id: Q2\n  status: ready\n  source: old-{p.name}.bak\n", encoding="utf-8")
+        self.assertFalse(self.verdict(p)["transfers_ok"])
+
+    def test_repeated_key_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-055", resolution="open") .replace("lane: parent", "lane: parent\nresolution: resolved")))
+        self.assertEqual(r["verdict"], "invalid")
+
+    def test_no_met_criterion_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(crit="id: AC-1\ntext: x\nstatus: not_applicable\nreason: dropped by owner"))
+        self.assertEqual(r["verdict"], "invalid")
+
+    def test_comma_in_obligation_evidence_is_kept(self) -> None:
+        r = self.verdict(self.ledger(finding("F-056", execution_state="reviewed",
+                                             obligations="review=done:PR 3, line 4")))
+        self.assertEqual(r["verdict"], "complete")
+
+    def test_brief_and_header_read_only_from_their_sections(self) -> None:
+        p = self.ledger("\n## Notes\n- Objective: overridden\n")
+        self.assertEqual(grrp.parse(p).brief["Objective"], "review branch X for correctness")
+        p.write_text(p.read_text(encoding="utf-8").replace("grrp: v1\n", "note: grrp: v1 elsewhere\n"), encoding="utf-8")
+        self.assertEqual(self.verdict(p)["verdict"], "invalid")
+
+
 class Enrollment(unittest.TestCase):
     """Enrolled workflows must load GRRP state before discovery (tested entry mechanism)."""
 

@@ -76,3 +76,11 @@ blocks: none
 evidence: fix 4b2c1d; test_x red->green
 obligations: review=done:review-all 2026-10-05; integration=done:merged 4b2c1d; deployment=n/a:library, not deployed; verification=n/a:no runtime surface; cleanup=n/a:nothing created
 ```
+
+## Parser rules (v1)
+- A block opens with exactly ```` ```grrp-<kind> ```` at column 0 and closes with a bare ```` ``` ````. Any other line containing ```` ```grrp ```` (typo, indent, unclosed) makes the ledger `invalid` — never silently dropped.
+- A key repeated inside one block is invalid.
+- `obligations` separates entries with `;` only; evidence may contain commas.
+- `grrp: v1` must be its own line; brief keys are read only under `## Run brief`.
+- `classification: blocker` requires `blocks:`; at least one criterion must be `met`/`unmet`.
+- `queue:<ID>` transfers read only the item-level `  status:` (exactly one) and need the ledger filename as a whole token.

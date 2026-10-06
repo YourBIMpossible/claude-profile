@@ -51,7 +51,7 @@ NONE_VALUES = {"", "none", "-", "null"}
 UNKNOWN_VALUES = {"unknown", "?", "tbd"}
 BRIEF_KEYS = ["Objective", "Scope", "Boundaries", "Done means", "Extra findings", "Authority"]
 
-BLOCK_RE = re.compile(r"^```grrp-(criterion|finding|child|transfer)\s*\n(.*?)^```\s*$", re.M | re.S)
+BLOCK_OPEN_RE = re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
 BRIEF_RE = re.compile(r"^- (Objective|Scope|Boundaries|Done means|Extra findings|Authority):[ \t]*(.*)$", re.M)
 
 
@@ -77,28 +77,53 @@ def _list(v: str | None) -> list[str]:
     return [x.strip() for x in v.split(",") if x.strip()]
 
 
+def _brief_section(text: str) -> str:
+    m = re.search(r"^## Run brief[ \t]*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
 def parse(path: Path) -> Ledger:
+    """Line state machine: any line mentioning a ```grrp fence must be an exact, closed block."""
     text = path.read_text(encoding="utf-8")
     led = Ledger(path=path, text=text)
-    led.brief = {k: v.strip() for k, v in BRIEF_RE.findall(text)}
-    for kind, body in BLOCK_RE.findall(text):
-        rec: dict[str, str] = {}
-        for n, line in enumerate(body.splitlines(), 1):
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            if ":" not in line:
-                led.errors.append(f"grrp-{kind} block: line {n} is not 'key: value': {line.strip()!r}")
-                continue
-            k, v = line.split(":", 1)
-            rec[k.strip()] = v.strip()
-        led.blocks.setdefault(kind, []).append(rec)
+    led.brief = {k: v.strip() for k, v in BRIEF_RE.findall(_brief_section(text))}
+    kind: str | None = None
+    rec: dict[str, str] = {}
+    start = 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.rstrip()
+        if kind is None:
+            m = BLOCK_OPEN_RE.match(line)
+            if m:
+                kind, rec, start = m.group(1), {}, n
+            elif "```grrp" in line:
+                led.errors.append(f"line {n}: malformed grrp fence {line.strip()!r} (exact '```grrp-<kind>' at column 0)")
+            continue
+        if line == "```":
+            led.blocks.setdefault(kind, []).append(rec)
+            kind = None
+            continue
+        if "```" in line:
+            led.errors.append(f"line {n}: fence inside grrp-{kind} block opened at line {start}")
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if ":" not in line:
+            led.errors.append(f"grrp-{kind} block: line {n} is not 'key: value': {line.strip()!r}")
+            continue
+        k, v = (s.strip() for s in line.split(":", 1))
+        if k in rec:
+            led.errors.append(f"grrp-{kind} block line {n}: key '{k}' repeated")
+        rec[k] = v
+    if kind is not None:
+        led.errors.append(f"grrp-{kind} block opened at line {start} is never closed")
     return led
 
 
 def _obligations(rec: dict[str, str]) -> dict[str, tuple[str, str]]:
-    """`review=done:receipt-3; deployment=n/a:review-only` -> {name: (state, detail)}."""
+    """`review=done:receipt-3; deployment=n/a:review-only` -> {name: (state, detail)}; ';' only."""
     out: dict[str, tuple[str, str]] = {}
-    for part in _list(rec.get("obligations", "").replace(";", ",")):
+    for part in [p.strip() for p in rec.get("obligations", "").split(";") if p.strip() and not _blank(p)]:
         name, _, rest = part.partition("=")
         state, _, detail = rest.partition(":")
         out[name.strip()] = (state.strip(), detail.strip())
@@ -107,7 +132,7 @@ def _obligations(rec: dict[str, str]) -> dict[str, tuple[str, str]]:
 
 def validate(led: Ledger) -> list[str]:
     errs = list(led.errors)
-    if "grrp: v1" not in led.text:
+    if not re.search(r"^grrp: v1[ \t]*$", led.text, re.M):
         errs.append("missing 'grrp: v1' header line")
     for key in BRIEF_KEYS:
         if _blank(led.brief.get(key)):
@@ -130,6 +155,8 @@ def validate(led: Ledger) -> list[str]:
 
     if not led.of("criterion"):
         errs.append("no acceptance criteria (grrp-criterion blocks)")
+    elif not any(c.get("status") in ("met", "unmet") for c in led.of("criterion")):
+        errs.append("every criterion is n/a or exception — a run must own at least one real criterion")
     for c in led.of("criterion"):
         cid, st = c.get("id", "?"), c.get("status", "")
         if st not in CRITERION_STATUSES:
@@ -154,6 +181,8 @@ def validate(led: Ledger) -> list[str]:
         req = f.get("requirement", "")
         if not _blank(req) and req not in crit_ids and not req.startswith("n/a"):
             errs.append(f"{fid}: requirement '{req}' is not a criterion id (or 'n/a: <reason>')")
+        if f.get("classification") == "blocker" and not _list(f.get("blocks")):
+            errs.append(f"{fid}: classification blocker must name the criteria it blocks")
         for b in _list(f.get("blocks")):
             if b not in crit_ids:
                 errs.append(f"{fid}: blocks unknown criterion '{b}'")
@@ -226,11 +255,13 @@ def transfer_acceptance(t: dict[str, str], ledger_path: Path, queue: Path | None
         m = re.search(rf"^- id: {re.escape(qid)}\s*$(.*?)(?=^- id: |\Z)", text, re.M | re.S)
         if not m:
             return f"{qid} not in queue store — entry never consumed"
-        st = re.search(r"^\s+status:\s*(\S+)", m.group(1), re.M)
-        status = st.group(1) if st else "missing"
+        sts = re.findall(r"^  status:[ \t]*(\S+)", m.group(1), re.M)
+        if len(sts) != 1:
+            return f"{qid} has {len(sts)} item-level status keys; cannot confirm acceptance"
+        status = sts[0]
         if status not in QUEUE_ACCEPTING:
             return f"{qid} status '{status}' does not accept responsibility"
-        if ledger_path.name not in m.group(1):
+        if not re.search(rf"(?<![\w.-]){re.escape(ledger_path.name)}(?![\w.-])", m.group(1)):
             return f"{qid} does not reference {ledger_path.name}; transfer context not carried"
         return None
     if _blank(t.get("ack")):

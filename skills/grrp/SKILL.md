@@ -77,6 +77,8 @@ obligations are done or n/a with a reason. Merged ≠ deployed ≠ verified: a
 progress label that claims an unproven obligation is invalid. Review-only runs
 mark implementation obligations `n/a:review-only`.
 
+The exit code is the technical verdict only: an OUTSTANDING transfer does not
+change it, so a script that reads exit 0 must still read the transfers line.
 Report three things separately: technical verdict · transfer obligations
 (`transfers: all accepted | OUTSTANDING`) · open portfolio work. Never soften the
 verdict; documenting a blocker does not satisfy the gate.
