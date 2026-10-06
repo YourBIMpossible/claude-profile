@@ -40,3 +40,26 @@ def test_untracked_design_doc_action_guidance_verbatim() -> None:
     # draft marker handling unchanged
     draft = [f for f in findings if "untracked draft" in f["text"]]
     assert len(draft) == 1 and draft[0]["severity"] == "WARNING"
+
+
+TRACKED_EXPECTED = (
+    "Commit and push the change if it governs future work; "
+    "otherwise revert it or finish it."
+)
+
+
+def test_tracked_modified_design_doc_action_guidance_verbatim() -> None:
+    repo = "F:/BIMpossible"
+    wt = {"path": repo, "branch": "main", "detached": False}
+    st = {
+        "branch": "main", "upstream": "origin/main", "detached": False,
+        "ahead": 0, "behind": 0, "tracked_changed": ["decisions/existing-decision.md"],
+        "untracked": [], "status_failed": False,
+    }
+    findings = sca.audit_worktree("X", wt, {}, st=st, truncated=False, repo_root=repo)
+    doc = [f for f in findings if "modified design/decision doc" in f["text"]]
+    assert len(doc) == 1
+    assert doc[0]["severity"] == "ATTENTION REQUIRED"
+    assert doc[0]["action"] == TRACKED_EXPECTED
+    assert "Claude-Tools" not in doc[0]["action"]
+    assert "*.draft.md" not in doc[0]["action"]
