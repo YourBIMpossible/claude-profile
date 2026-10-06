@@ -34,6 +34,13 @@ QUEUE_ACCEPTING = {"ready", "blocked_dep", "blocked_external", "blocked_owner", 
 
 CLASSIFICATIONS = {"original", "blocker", "independent", "enhancement", "externally_owned"}
 SAFE_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def _q(v: object) -> str:
+    """Ledger-derived text in a gate/validation message: well-formed tokens pass, anything else
+    becomes `<invalid>`, so record text never reaches a consuming agent as prose (text or JSON)."""
+    s = "" if v is None else str(v)
+    return s if s == "" or SAFE_ID_RE.fullmatch(s) else "<invalid>"
 ASSESSMENTS = {"unassessed", "confirmed_defect", "intentional_behavior", "disproved"}
 RESOLUTIONS = {"open", "resolved", "accepted_exception"}
 EXEC_STATES = [
@@ -115,26 +122,26 @@ def parse(path: Path) -> Ledger:
             if m:
                 kind, rec, start = m.group(1), {}, n
             elif "```grrp" in line:
-                led.errors.append(f"line {n}: malformed grrp fence {line.strip()!r} (exact '```grrp-<kind>' at column 0)")
+                led.errors.append(f"line {n}: malformed grrp fence {_q(line.strip())} (exact '```grrp-<kind>' at column 0)")
             continue
         if line == "```":
             led.blocks.setdefault(kind, []).append(rec)
             kind = None
             continue
         if "```" in line:
-            led.errors.append(f"line {n}: fence inside grrp-{kind} block opened at line {start}")
+            led.errors.append(f"line {n}: fence inside grrp-{_q(kind)} block opened at line {start}")
             continue
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if ":" not in line:
-            led.errors.append(f"grrp-{kind} block: line {n} is not 'key: value': {line.strip()!r}")
+            led.errors.append(f"grrp-{_q(kind)} block: line {n} is not 'key: value': {_q(line.strip())}")
             continue
         k, v = (s.strip() for s in line.split(":", 1))
         if k in rec:
-            led.errors.append(f"grrp-{kind} block line {n}: key '{k}' repeated")
+            led.errors.append(f"grrp-{_q(kind)} block line {n}: key '{_q(k)}' repeated")
         rec[k] = v
     if kind is not None:
-        led.errors.append(f"grrp-{kind} block opened at line {start} is never closed")
+        led.errors.append(f"grrp-{_q(kind)} block opened at line {start} is never closed")
     if other is not None:
         led.errors.append(f"fence opened at line {other_start} is never closed (would hide every later block)")
     return led
@@ -176,13 +183,13 @@ def validate(led: Ledger) -> list[str]:
         for rec in led.of(kind):
             rid = rec.get("id", "")
             if _blank(rid):
-                errs.append(f"grrp-{kind} block without id")
+                errs.append(f"grrp-{_q(kind)} block without id")
             elif rid in ids:
-                errs.append(f"{rid}: duplicate id")
+                errs.append(f"{_q(rid)}: duplicate id")
             ids.add(rid)
             for k, v in rec.items():
                 if v.strip().lower() in UNKNOWN_VALUES:
-                    errs.append(f"{rid}: '{k}' is '{v}' — record a value or 'n/a: <reason>'")
+                    errs.append(f"{_q(rid)}: '{_q(k)}' is '{_q(v)}' — record a value or 'n/a: <reason>'")
 
     if not led.of("criterion"):
         errs.append("no acceptance criteria (grrp-criterion blocks)")
@@ -191,13 +198,13 @@ def validate(led: Ledger) -> list[str]:
     for c in led.of("criterion"):
         cid, st = c.get("id", "?"), c.get("status", "")
         if st not in CRITERION_STATUSES:
-            errs.append(f"{cid}: status '{st}' not in {sorted(CRITERION_STATUSES)}")
+            errs.append(f"{_q(cid)}: status '{_q(st)}' not in {sorted(CRITERION_STATUSES)}")
         if _blank(c.get("text")):
-            errs.append(f"{cid}: empty text")
+            errs.append(f"{_q(cid)}: empty text")
         if st == "met" and _blank(c.get("evidence")):
-            errs.append(f"{cid}: met without evidence")
+            errs.append(f"{_q(cid)}: met without evidence")
         if st in {"not_applicable", "accepted_exception"} and _blank(c.get("reason")):
-            errs.append(f"{cid}: {st} requires reason (exception: the authorizing decision)")
+            errs.append(f"{_q(cid)}: {_q(st)} requires reason (exception: the authorizing decision)")
 
     for f in led.of("finding"):
         fid = f.get("id", "?")
@@ -205,71 +212,71 @@ def validate(led: Ledger) -> list[str]:
                              ("resolution", RESOLUTIONS), ("authority", AUTHORITIES),
                              ("execution_state", set(EXEC_STATES))):
             if f.get(key, "") not in allowed:
-                errs.append(f"{fid}: {key} '{f.get(key, '')}' not in {sorted(allowed)}")
+                errs.append(f"{_q(fid)}: {key} '{_q(f.get(key, ''))}' not in {sorted(allowed)}")
         for key in ("source", "owner", "requirement"):
             if _blank(f.get(key)):
-                errs.append(f"{fid}: '{key}' must never be empty")
+                errs.append(f"{_q(fid)}: '{key}' must never be empty")
         req = f.get("requirement", "")
         if not _blank(req) and req not in crit_ids and not req.startswith("n/a"):
-            errs.append(f"{fid}: requirement '{req}' is not a criterion id (or 'n/a: <reason>')")
+            errs.append(f"{_q(fid)}: requirement '{_q(req)}' is not a criterion id (or 'n/a: <reason>')")
         if f.get("classification") == "blocker" and not _list(f.get("blocks")):
-            errs.append(f"{fid}: classification blocker must name the criteria it blocks")
+            errs.append(f"{_q(fid)}: classification blocker must name the criteria it blocks")
         for b in _list(f.get("blocks")):
             if b not in crit_ids:
-                errs.append(f"{fid}: blocks unknown criterion '{b}'")
+                errs.append(f"{_q(fid)}: blocks unknown criterion '{_q(b)}'")
         lane = f.get("lane", "parent")
         if lane not in {"parent", "external"} and lane not in child_ids:
-            errs.append(f"{fid}: lane '{lane}' is not parent/external/a child id")
+            errs.append(f"{_q(fid)}: lane '{_q(lane)}' is not parent/external/a child id")
 
         assess, res = f.get("assessment"), f.get("resolution")
         if assess in {"disproved", "intentional_behavior"} and _blank(f.get("evidence")):
-            errs.append(f"{fid}: {assess} requires evidence")
+            errs.append(f"{_q(fid)}: {_q(assess)} requires evidence")
         if res == "accepted_exception" and _blank(f.get("reason")):
-            errs.append(f"{fid}: accepted_exception requires reason (the authorizing decision)")
+            errs.append(f"{_q(fid)}: accepted_exception requires reason (the authorizing decision)")
         if res == "resolved" and _blank(f.get("evidence")):
-            errs.append(f"{fid}: resolved without closure evidence")
+            errs.append(f"{_q(fid)}: resolved without closure evidence")
 
         state = f.get("execution_state", "identified")
         started = state in EXEC_STATES and EXEC_STATES.index(state) > 0
         if started and f.get("authority") == "protected":
-            errs.append(f"{fid}: protected surface shows execution '{state}' — unauthorized action")
+            errs.append(f"{_q(fid)}: protected surface shows execution '{_q(state)}' — unauthorized action")
         if started and f.get("classification") == "enhancement" and _blank(f.get("scope_approval")):
-            errs.append(f"{fid}: enhancement executed without scope_approval")
+            errs.append(f"{_q(fid)}: enhancement executed without scope_approval")
         if started and f.get("authority") == "approval_required" and _blank(f.get("action_approval")):
-            errs.append(f"{fid}: approval_required action executed without action_approval")
+            errs.append(f"{_q(fid)}: approval_required action executed without action_approval")
 
         names = [n for n, _, _ in _obligation_parts(f)]
         for name in sorted({n for n in names if names.count(n) > 1}):
-            errs.append(f"{fid}: obligation '{name}' repeated")
+            errs.append(f"{_q(fid)}: obligation '{_q(name)}' repeated")
         obl = _obligations(f)
         for name, (ost, detail) in obl.items():
             if name not in OBLIGATIONS:
-                errs.append(f"{fid}: unknown obligation '{name}'")
+                errs.append(f"{_q(fid)}: unknown obligation '{_q(name)}'")
             elif ost not in {"done", "pending", "n/a"}:
-                errs.append(f"{fid}: obligation {name} state '{ost}' not done/pending/n/a")
+                errs.append(f"{_q(fid)}: obligation {_q(name)} state '{_q(ost)}' not done/pending/n/a")
             elif ost in {"done", "n/a"} and not detail:
-                errs.append(f"{fid}: obligation {name}={ost} needs evidence or reason after ':'")
+                errs.append(f"{_q(fid)}: obligation {_q(name)}={_q(ost)} needs evidence or reason after ':'")
         # Evidence-state truth: a progress label never claims an unproven obligation.
         if state in EXEC_STATES:
             for name, needed in OBLIGATION_STATE.items():
                 if EXEC_STATES.index(state) >= EXEC_STATES.index(needed):
                     ost = obl.get(name, ("", ""))[0]
                     if ost not in {"done", "n/a"}:
-                        errs.append(f"{fid}: execution_state '{state}' claims {name} but obligation is '{ost or 'missing'}'")
+                        errs.append(f"{_q(fid)}: execution_state '{_q(state)}' claims {_q(name)} but obligation is '{_q(ost or 'missing')}'")
 
     for c in led.of("child"):
         cid = c.get("id", "?")
         for key in ("objective", "exclusions", "acceptance", "reserved", "return_evidence", "owner", "location"):
             if _blank(c.get(key)):
-                errs.append(f"{cid}: child contract '{key}' is empty (use 'n/a: <reason>')")
+                errs.append(f"{_q(cid)}: child contract '{key}' is empty (use 'n/a: <reason>')")
         if c.get("may_delegate", "false") != "true" and not _blank(c.get("spawned")):
-            errs.append(f"{cid}: spawned sub-lanes without may_delegate: true")
+            errs.append(f"{_q(cid)}: spawned sub-lanes without may_delegate: true")
 
     for t in led.of("transfer"):
         tid = t.get("id", "?")
         for key in ("findings", "receiver", "next_action", "acceptance", "follow_up"):
             if _blank(t.get(key)):
-                errs.append(f"{tid}: transfer '{key}' is empty")
+                errs.append(f"{_q(tid)}: transfer '{key}' is empty")
     return errs
 
 
@@ -284,22 +291,22 @@ def transfer_acceptance(t: dict[str, str], ledger_path: Path, queue: Path | None
     if recv.startswith("queue:"):
         qid = recv[len("queue:"):].strip()
         if queue is None or not queue.is_file():
-            return f"queue store not readable ({queue}); cannot confirm {qid}"
+            return f"queue store not readable ({queue}); cannot confirm {_q(qid)}"
         text = queue.read_text(encoding="utf-8")
         m = re.search(rf"^- id: {re.escape(qid)}\s*$(.*?)(?=^- id: |\Z)", text, re.M | re.S)
         if not m:
-            return f"{qid} not in queue store — entry never consumed"
+            return f"{_q(qid)} not in queue store — entry never consumed"
         sts = re.findall(r"^  status:[ \t]*(\S+)", m.group(1), re.M)
         if len(sts) != 1:
-            return f"{qid} has {len(sts)} item-level status keys; cannot confirm acceptance"
+            return f"{_q(qid)} has {len(sts)} item-level status keys; cannot confirm acceptance"
         status = sts[0]
         if status not in QUEUE_ACCEPTING:
-            return f"{qid} status '{status}' does not accept responsibility"
+            return f"{_q(qid)} status '{_q(status)}' does not accept responsibility"
         if not re.search(rf"(?<![\w.-]){re.escape(ledger_path.name)}(?![\w.-])", m.group(1)):
-            return f"{qid} does not reference {ledger_path.name}; transfer context not carried"
+            return f"{_q(qid)} does not reference {ledger_path.name}; transfer context not carried"
         return None
     if _blank(t.get("ack")):
-        return f"receiver '{recv}' has not acknowledged (no ack receipt)"
+        return f"receiver '{_q(recv)}' has not acknowledged (no ack receipt)"
     return None
 
 
@@ -313,35 +320,35 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
 
     for c in crits:
         if c.get("status") == "unmet":
-            incomplete.append(f"{c.get('id')}: criterion unmet")
+            incomplete.append(f"{_q(c.get('id'))}: criterion unmet")
     for f in findings:
         fid = f.get("id", "?")
         if f.get("assessment") == "unassessed":
-            incomplete.append(f"{fid}: not assessed")
+            incomplete.append(f"{_q(fid)}: not assessed")
         blocks = _list(f.get("blocks"))
         if blocks and f.get("resolution") == "open":
-            why = "protected surface" if f.get("authority") == "protected" else f"lane {f.get('lane', 'parent')}"
-            blocked.append(f"{fid}: open, blocks {', '.join(blocks)} ({why})")
+            why = "protected surface" if f.get("authority") == "protected" else f"lane {_q(f.get('lane', 'parent'))}"
+            blocked.append(f"{_q(fid)}: open, blocks {', '.join(_q(b) for b in blocks)} ({why})")
         if f.get("resolution") == "resolved":
             for name, (ost, _) in _obligations(f).items():
                 if ost == "pending":
-                    incomplete.append(f"{fid}: {name} obligation pending")
+                    incomplete.append(f"{_q(fid)}: {_q(name)} obligation pending")
         cls = f.get("classification")
         if f.get("resolution") == "open" and not blocks:
             if cls in {"original"}:
-                incomplete.append(f"{fid}: original finding still open")
+                incomplete.append(f"{_q(fid)}: original finding still open")
             elif cls in {"independent", "externally_owned"} and fid not in transferred:
-                incomplete.append(f"{fid}: {cls} finding has no transfer record")
+                incomplete.append(f"{_q(fid)}: {_q(cls)} finding has no transfer record")
     for cid, c in children.items():
         blocking = [f.get("id") for f in findings if f.get("lane") == cid and _list(f.get("blocks"))]
         if blocking and _blank(c.get("receipt")):
-            blocked.append(f"{cid}: blocking child has no return receipt")
+            blocked.append(f"{_q(cid)}: blocking child has no return receipt")
 
     pending_transfers = []
     for t in led.of("transfer"):
         why = transfer_acceptance(t, led.path, queue)
         if why:
-            pending_transfers.append(f"{t.get('id')}: {why}")
+            pending_transfers.append(f"{_q(t.get('id'))}: {why}")
     if errs:
         verdict = "invalid"
     elif blocked:
@@ -357,7 +364,7 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
         "transfers_ok": not pending_transfers,
         # The one field an automated caller may branch on: technical completion AND every transfer accepted.
         "closeable": verdict == "complete" and not pending_transfers,
-        "portfolio_open": sorted(transferred & {f.get("id") for f in findings if f.get("resolution") == "open"}),
+        "portfolio_open": sorted(_q(i) for i in transferred & {f.get("id") for f in findings if f.get("resolution") == "open"}),
     }
 
 
