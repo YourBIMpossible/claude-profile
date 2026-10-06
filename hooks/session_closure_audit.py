@@ -386,7 +386,10 @@ def audit_worktree(
             findings.append({
                 "severity": "ATTENTION REQUIRED",
                 "text": f"{path} — modified design/decision doc not committed: {p}",
-                "action": "Commit and push intentionally.",
+                "action": (
+                    "Commit and push the change if it governs future work; "
+                    "otherwise revert it or finish it."
+                ),
             })
             file_level_attention = True
 

@@ -61,6 +61,8 @@ verification step (run it, test it, trace the caller) and is only promoted to
 - Report: `<repo>\audits\YYYY-MM-DD__slop-audit.md` (create `audits\` if absent;
   same-day rerun appends `-2`). Findings by severity, each with `file:line`,
   `HYPOTHESIS|VERIFIED|REFUTED`, and its verification step. Silent-catch census
-  table as an appendix. A finished report is a completed audit record at birth; do not edit it to track remediation—track fixes where the repo tracks work. Keep path and name pattern unchanged so the incremental window still finds it.
+  table as an appendix. A finished report is a completed audit record at birth;
+  do not edit it to track remediation—track fixes where the repo tracks work.
+  Keep path and name pattern unchanged so the incremental window still finds it.
 - Chat reply: link + one line per severity count. Deliverable goes to the file,
   never pasted into chat.
