@@ -53,6 +53,15 @@ verdict (SAFE TO CLOSE, or NEEDS CHECKPOINT: n items). Change nothing.
    hook to merely flag). The automatic `session_closure_audit.py` hook detects
    and warns at session boundaries; this skill is where detection turns into
    an actual durable artifact.
+   Write completed closeout records this session produced straight into the
+   records path the current repo defines (BIMpossible: `docs/ops/_archive/<run>/`).
+   No records path defined → leave files in place and flag it; never invent one.
+   A session ending is not the run closing: move the run anchor there whole, with
+   inbound references repaired in the same commit, only if this session closes the
+   run; otherwise it stays live. A pending decision packet stays live until its
+   decisions are executed or closed; an accepted decision record is never
+   auto-archived. Transition only artifacts this run owns. A file a test or checker
+   names stays at its required path — flag the conflict instead of moving it.
 2. If any decision records were newly written or updated this session and
    `BIMpossible_Workspace/wiki/` has a page whose area overlaps, offer once:
    "N decision record(s) changed — run `/wiki ingest` now?" Accept or decline
