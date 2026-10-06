@@ -63,6 +63,8 @@ ORDINARY_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 BLOCK_OPEN_RE =re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
 OWNER_WORD_RE = re.compile(r"\bowner\b", re.I)
 ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+# Digit-bounded so a date inside an artifact name (audit-resolution_2026-10-12.md) counts.
+LOCATOR_DATE_RE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 BRIEF_RE = re.compile(r"^- (Objective|Scope|Boundaries|Done means|Extra findings|Authority):[ \t]*(.*)$", re.M)
 
 
@@ -79,7 +81,7 @@ class Ledger:
 
 
 def _no_owner_action(v: object) -> bool:
-    """owner_action must cite a dated owner act (contains `owner` and a YYYY-MM-DD date);
+    """owner_action, scope_approval and action_approval must cite a dated owner act (contains `owner` and a YYYY-MM-DD date);
     anything else, placeholders included, does not count."""
     t = "" if v is None else str(v)
     return _blank(t) or not (OWNER_WORD_RE.search(t) and ISO_DATE_RE.search(t))
@@ -249,10 +251,10 @@ def validate(led: Ledger) -> list[str]:
         started = state in EXEC_STATES and EXEC_STATES.index(state) > 0
         if started and f.get("authority") == "protected" and _no_owner_action(f.get("owner_action")):
             errs.append(f"{_q(fid)}: protected surface shows execution '{_q(state)}' — unauthorized action")
-        if started and f.get("classification") == "enhancement" and _blank(f.get("scope_approval")):
-            errs.append(f"{_q(fid)}: enhancement executed without scope_approval")
-        if started and f.get("authority") == "approval_required" and _blank(f.get("action_approval")):
-            errs.append(f"{_q(fid)}: approval_required action executed without action_approval")
+        if started and f.get("classification") == "enhancement" and _no_owner_action(f.get("scope_approval")):
+            errs.append(f"{_q(fid)}: enhancement executed without scope_approval citing a dated owner act")
+        if started and f.get("authority") == "approval_required" and _no_owner_action(f.get("action_approval")):
+            errs.append(f"{_q(fid)}: approval_required action executed without action_approval citing a dated owner act")
 
         names = [n for n, _, _ in _obligation_parts(f)]
         for name in sorted({n for n in names if names.count(n) > 1}):
@@ -294,7 +296,7 @@ def transfer_acceptance(t: dict[str, str], ledger_path: Path, queue: Path | None
 
     `receiver: queue:<ID>` is accepted by the /next store itself: the item exists, carries an
     accepting status, and references this ledger (so it holds the transfer's context).
-    Any other receiver is accepted on a non-blank `ack:` -- a parent attestation the gate does not verify.
+    Any other receiver is accepted on a dated `ack:` -- a parent attestation the gate does not verify.
     """
     recv = t.get("receiver", "")
     if recv.startswith("queue:"):
@@ -316,6 +318,8 @@ def transfer_acceptance(t: dict[str, str], ledger_path: Path, queue: Path | None
         return None
     if _blank(t.get("ack")):
         return f"receiver '{_q(recv)}' has not acknowledged (no ack receipt)"
+    if not LOCATOR_DATE_RE.search(t.get("ack", "")):
+        return f"receiver '{_q(recv)}' ack does not cite a dated acceptance (YYYY-MM-DD)"
     return None
 
 

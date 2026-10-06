@@ -45,8 +45,9 @@ No acceptance yet → leave `ack` out: `transfers_ok: false` is the true result.
 `grrp.py gate --json <ledger>` → print `verdict` and `transfers_ok` verbatim,
 `closeable`, and the ledger path. Never soften the verdict.
 
-**Limitation F-029 (carried, not fixed):** `ack`, `owner_action`, `scope_approval` and
-`action_approval` are free text the parent writes; the gate checks shape, never that
-the act happened. They are attestations, not verified authorization, and never
+**Limitation F-029 (narrowed, not closed):** `ack`, `owner_action`, `scope_approval` and
+`action_approval` are free text the parent writes. The gate requires each approval to
+name the owner and a YYYY-MM-DD date, and each `ack` to carry a dated acceptance; it
+checks that shape, never that the act happened. They are attestations, not verified authorization, and never
 substitute for the workflow's own approval gates (owner sign-off, preflight scripts,
 dirty-tree guards, Checklist rules), which stay in force unchanged.

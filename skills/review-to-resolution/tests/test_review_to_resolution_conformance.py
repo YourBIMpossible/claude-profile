@@ -170,6 +170,19 @@ class ProtocolScenarios(Base):
                                              requirement="n/a: extra")))
         self.assertEqual(r["verdict"], "invalid")
 
+    def test_f029_approvals_must_cite_a_dated_owner_act(self) -> None:
+        # F-029: free-text approvals pass only when they name the owner's act and its date; shape, not proof.
+        cases = [("scope_approval", dict(classification="enhancement", requirement="n/a: extra")),
+                 ("action_approval", dict(authority="approval_required"))]
+        for key, kw in cases:
+            with self.subTest(key=key):
+                base = dict(execution_state="implementing", **kw)
+                bad = self.verdict(self.ledger(finding("F-034", **{key: "approved"}, **base)))
+                self.assertEqual(bad["verdict"], "invalid")
+                self.assertIn("dated owner act", " ".join(bad["validation_errors"]))
+                ok = self.verdict(self.ledger(finding("F-035", **{key: "owner approved in chat 2026-10-06"}, **base)))
+                self.assertNotIn("dated owner act", " ".join(ok["validation_errors"]))
+
 
     def test_protected_progress_needs_owner_action_and_stays_protected(self) -> None:
         f = dict(classification="independent", lane="external", authority="protected", execution_state="integrated",
@@ -405,7 +418,7 @@ class ReviewToResolutionCorrections(Base):
         # F-025: ack is the single writer's attestation, not engine-verified receipt.
         for rel in ("SKILL.md", "references/ledger-format.md"):
             text = " ".join((HERE.parents[0] / rel).read_text(encoding="utf-8").split())
-            for phrase in ("parent attestation", "the gate only checks it is non-blank",
+            for phrase in ("parent attestation", "the gate only checks it carries a date",
                            "name the receiver and where the acceptance lives", "only after"):
                 self.assertIn(phrase, text, f"{rel}: {phrase}")
 
