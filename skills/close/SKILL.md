@@ -20,10 +20,12 @@ finishing side quests.
    the way).
 
 4. GRRP: if this session created or resumed a ledger (`F:\Claude-Tools\reports\grrp\*.ledger.md`
-   or a repo anchor with `grrp: v1`), run `python ~/.claude/skills/grrp/scripts/grrp.py gate <ledger>`
-   and report its verdict (complete / incomplete / blocked / invalid) and transfers line
-   verbatim. The verdict is the mandate's completion status; never upgrade it in prose.
-   An OUTSTANDING transfer is externalized work that has not been accepted — say so.
+   or a repo anchor with `grrp: v1`), run Review to Resolution's gate:
+   `python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`.
+   Read `verdict` (complete / incomplete / blocked / invalid), `transfers_ok`, and
+   `closeable` from the JSON — never infer from the exit code alone (it carries the
+   verdict only). Report `verdict` and transfers verbatim; never upgrade them in prose.
+   `transfers_ok: false` = externalized work not yet accepted → NEEDS CHECKPOINT, not SAFE TO CLOSE.
 
 ## /close status (read-only)
 

@@ -38,8 +38,8 @@ Compute the changed-file list; hand the **same** diff to every lens.
 
 ## Step 0.5 — GRRP entry (enrolled workflow)
 
-Before any lens runs, load governance state per the `grrp` skill:
-`python ~/.claude/skills/grrp/scripts/grrp.py init --slug review-all-<repo>-<branch>`.
+Before any lens runs, load governance state per the `review-to-resolution` skill (automatic; no operator step):
+`python ~/.claude/skills/review-to-resolution/scripts/grrp.py init --slug review-all-<repo>-<branch>`.
 An existing ledger → resume: its known finding IDs feed Step 2 as already-recorded,
 not rediscovered. New ledger → fill the run brief (objective = review this diff;
 scope = the Step 0 range + supplied findings; done means = every lens ran and
@@ -122,7 +122,8 @@ GRRP record: write every converged finding — retained and NOT RETAINED — as 
 `grrp-finding` block (NOT RETAINED = `assessment: disproved` with the retention
 reason as evidence; BLOCKER → `blocks:` the criterion it threatens). Review-only
 runs mark integration/deployment/verification `n/a:review-only`. End the output
-with `grrp.py gate <ledger>`'s verdict line, transfers line, and the ledger path. Do not emit raw per-lens dumps as the
+with `python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`'s
+`verdict` and `transfers_ok` (both, verbatim) and the ledger path. Do not emit raw per-lens dumps as the
 primary output — they are the discovery layer; attach them only as a deep-mode
 appendix.
 
