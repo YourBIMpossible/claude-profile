@@ -36,6 +36,17 @@ changes or the range is empty, also include `git diff HEAD` (working tree). Hono
 `--range` or a PR/branch/path argument if given. Empty diff → say so and stop.
 Compute the changed-file list; hand the **same** diff to every lens.
 
+## Step 0.5 — GRRP entry (enrolled workflow)
+
+Before any lens runs, load governance state per the `grrp` skill:
+`python ~/.claude/skills/grrp/scripts/grrp.py init --slug review-all-<repo>-<branch>`.
+An existing ledger → resume: its known finding IDs feed Step 2 as already-recorded,
+not rediscovered. New ledger → fill the run brief (objective = review this diff;
+scope = the Step 0 range + supplied findings; done means = every lens ran and
+every finding is assessed) and the criteria. The ledger lives in
+`F:\Claude-Tools\reports\grrp\`, outside the reviewed repo, so read-only holds.
+This changes no lens, retention rule, or tiering.
+
 ## Step 1 — Load the repo profile / select lenses
 
 Read `<repo-root>/.claude/review-profile.yaml`. If present it is authoritative for
@@ -105,7 +116,13 @@ one-line stop/re-invoke recommendation and grouped BLOCKER-first then FOLLOW-UP
 (`reference/convergence.md` § Action tiering). Report-only by default. Per finding
 show severity, location, contributing lenses (provenance), lineage against the
 prior report, why it was retained, and the remediation direction. Follow with a
-NOT RETAINED section for transparency. Do not emit raw per-lens dumps as the
+NOT RETAINED section for transparency.
+
+GRRP record: write every converged finding — retained and NOT RETAINED — as a
+`grrp-finding` block (NOT RETAINED = `assessment: disproved` with the retention
+reason as evidence; BLOCKER → `blocks:` the criterion it threatens). Review-only
+runs mark integration/deployment/verification `n/a:review-only`. End the output
+with `grrp.py gate <ledger>`'s verdict line, transfers line, and the ledger path. Do not emit raw per-lens dumps as the
 primary output — they are the discovery layer; attach them only as a deep-mode
 appendix.
 

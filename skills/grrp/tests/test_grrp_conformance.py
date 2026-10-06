@@ -1,0 +1,261 @@
+"""GRRP v1 conformance scenarios, run against skills/grrp/scripts/grrp.py.
+
+Each test builds a ledger for one scenario from the protocol (00 overview, "Minimum
+conformance scenarios") or the absorption brief, then asserts the gate's verdict.
+
+Run: python skills/grrp/tests/test_grrp_conformance.py   (or pytest)
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[2]
+SCRIPT = HERE.parent / "scripts" / "grrp.py"
+sys.path.insert(0, str(SCRIPT.parent))
+
+import grrp  # noqa: E402
+
+BRIEF = """# GRRP ledger — t
+
+grrp: v1
+
+## Run brief
+- Objective: review branch X for correctness
+- Scope: diff main...X; supplied findings F-001..F-002
+- Boundaries: NORTHSTAR off-limits: billing module; no other session's worktree
+- Done means: every finding assessed; AC-1 met with evidence
+- Extra findings: classify; independent -> /next queue
+- Authority: read-only review; edits need approval
+
+## Change log
+- 2026-10-05: ledger created
+"""
+
+OK_CRIT = "id: AC-1\ntext: diff reviewed by all lenses\nstatus: met\nevidence: review-all run 2026-10-05"
+REVIEW_ONLY_OBL = ("review=done:lens receipts; integration=n/a:review-only run; "
+                   "deployment=n/a:review-only run; verification=n/a:review-only run; cleanup=n/a:nothing created")
+
+
+def block(kind: str, body: str) -> str:
+    return f"\n```grrp-{kind}\n{body}\n```\n"
+
+
+def finding(fid: str, **kw: str) -> str:
+    rec = {
+        "source": "original", "classification": "original", "assessment": "confirmed_defect",
+        "resolution": "resolved", "execution_state": "identified", "owner": "parent",
+        "lane": "parent", "requirement": "AC-1", "authority": "authorized", "blocks": "none",
+        "evidence": "file.py:10 red->green test", "obligations": "",
+    }
+    rec.update(kw)
+    return block("finding", f"id: {fid}\n" + "\n".join(f"{k}: {v}" for k, v in rec.items()))
+
+
+class Base(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.queue = self.tmp / "queue.yaml"
+        self.queue.write_text("schema_version: 1\nitems: []\n", encoding="utf-8")
+
+    def ledger(self, *parts: str, crit: str = OK_CRIT, name: str = "2026-10-05-t.ledger.md") -> Path:
+        p = self.tmp / name
+        p.write_text(BRIEF + block("criterion", crit) + "".join(parts), encoding="utf-8")
+        return p
+
+    def verdict(self, p: Path) -> dict:
+        return grrp.gate(grrp.parse(p), self.queue)
+
+
+class ProtocolScenarios(Base):
+    def test_low_info_original_finding_stays_accounted(self) -> None:
+        # A supplied Low/Info finding that nobody assessed must hold the parent open.
+        r = self.verdict(self.ledger(finding("F-001", severity="info", assessment="unassessed", resolution="open")))
+        self.assertEqual(r["verdict"], "incomplete")
+        self.assertTrue(any("not assessed" in x for x in r["incomplete"]))
+
+    def test_blocker_discovered_mid_review_blocks_only_its_requirement(self) -> None:
+        crit = OK_CRIT + "\n```\n\n```grrp-criterion\nid: AC-2\ntext: unrelated\nstatus: met\nevidence: x"
+        r = self.verdict(self.ledger(finding("F-009", source="discovered", classification="blocker",
+                                             resolution="open", blocks="AC-1"), crit=crit))
+        self.assertEqual(r["verdict"], "blocked")
+        self.assertEqual(len(r["blocked"]), 1)
+        self.assertIn("AC-1", r["blocked"][0])
+
+    def test_independent_enhancement_routed_does_not_block(self) -> None:
+        r = self.verdict(self.ledger(
+            finding("F-010", source="discovered", classification="enhancement", assessment="confirmed_defect",
+                    resolution="open", evidence="idea", requirement="n/a: outside objective"),
+        ))
+        self.assertEqual(r["verdict"], "complete")
+
+    def test_duplicate_owned_elsewhere_is_linked_not_redone(self) -> None:
+        p = self.ledger(finding("F-011", source="discovered", classification="externally_owned",
+                                resolution="open", owner="queue:CT-X", lane="external",
+                                duplicate_of="CT-X", requirement="n/a: owned by CT-X"),
+                        block("transfer", "id: T-1\nfindings: F-011\nreceiver: queue:CT-X\nnext_action: n/a: already owned\n"
+                                          "acceptance: CT-X acceptance\nfollow_up: next /next sync"))
+        self.queue.write_text(f"items:\n- id: CT-X\n  status: in_flight\n  source: {p.name}\n", encoding="utf-8")
+        r = self.verdict(p)
+        self.assertEqual(r["verdict"], "complete")
+        self.assertTrue(r["transfers_ok"])
+        self.assertEqual(grrp.metrics(grrp.parse(p))["duplicates_linked"], 1)
+
+    def test_independent_child_stays_open_when_parent_completes(self) -> None:
+        p = self.ledger(finding("F-012", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated module"),
+                        block("transfer", "id: T-2\nfindings: F-012\nreceiver: queue:CT-Y\nnext_action: fix\n"
+                                          "acceptance: test passes\nfollow_up: /next sync"))
+        self.queue.write_text(f"items:\n- id: CT-Y\n  status: ready\n  evidence:\n  - ref: {p.name}\n", encoding="utf-8")
+        r = self.verdict(p)
+        self.assertEqual(r["verdict"], "complete")
+        self.assertEqual(r["portfolio_open"], ["F-012"])
+
+    def test_unauthorized_recursive_delegation_is_invalid(self) -> None:
+        child = ("id: child-1\nobjective: fix F-001\nexclusions: none other\nacceptance: test green\n"
+                 "reserved: a.py\nreturn_evidence: commit + test log\nowner: subagent\nlocation: worktree w1\n"
+                 "may_delegate: false\nspawned: child-1a\nreceipt: commit abc")
+        r = self.verdict(self.ledger(block("child", child)))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertTrue(any("may_delegate" in e for e in r["validation_errors"]))
+
+    def test_child_insufficient_evidence_keeps_parent_blocked(self) -> None:
+        child = ("id: child-2\nobjective: fix\nexclusions: n/a: single file\nacceptance: test green\n"
+                 "reserved: b.py\nreturn_evidence: test log\nowner: subagent\nlocation: worktree w2\nreceipt: none")
+        r = self.verdict(self.ledger(block("child", child),
+                                     finding("F-013", resolution="open", lane="child-2", blocks="AC-1")))
+        self.assertEqual(r["verdict"], "blocked")
+        self.assertTrue(any("no return receipt" in x for x in r["blocked"]))
+
+    def test_resolved_without_closure_proof_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-014", evidence="none")))
+        self.assertEqual(r["verdict"], "invalid")
+
+    def test_merged_not_represented_as_deployed_or_verified(self) -> None:
+        r = self.verdict(self.ledger(finding(
+            "F-015", execution_state="verified",
+            obligations="review=done:pr; integration=done:merged abc; deployment=pending; verification=pending")))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertTrue(any("claims deployment" in e for e in r["validation_errors"]))
+
+    def test_merged_and_pending_deploy_is_incomplete_not_complete(self) -> None:
+        r = self.verdict(self.ledger(finding(
+            "F-016", execution_state="integrated",
+            obligations="review=done:pr 12; integration=done:merged abc; deployment=pending; verification=pending")))
+        self.assertEqual(r["verdict"], "incomplete")
+
+    def test_changed_consequences_require_fresh_action_approval(self) -> None:
+        r = self.verdict(self.ledger(finding("F-017", authority="approval_required", execution_state="implemented",
+                                             obligations="review=done:x", action_approval="none")))
+        self.assertEqual(r["verdict"], "invalid")
+
+    def test_intentional_and_not_applicable_need_evidence_and_reason(self) -> None:
+        r = self.verdict(self.ledger(finding("F-018", assessment="intentional_behavior", evidence="none"),
+                                     crit="id: AC-1\ntext: x\nstatus: not_applicable\nreason: "))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertGreaterEqual(len(r["validation_errors"]), 2)
+
+    def test_unknown_owner_or_requirement_is_rejected(self) -> None:
+        r = self.verdict(self.ledger(finding("F-019", owner="unknown")))
+        self.assertEqual(r["verdict"], "invalid")
+
+    def test_enhancement_executed_without_scope_approval_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-020", classification="enhancement", execution_state="implementing",
+                                             requirement="n/a: extra")))
+        self.assertEqual(r["verdict"], "invalid")
+
+
+class AbsorptionScenarios(Base):
+    def test_off_limits_surface_blocks_included_requirement_without_authorizing_change(self) -> None:
+        open_protected = finding("F-030", source="discovered", classification="blocker", resolution="open",
+                                 authority="protected", blocks="AC-1", evidence="billing returns wrong total")
+        r = self.verdict(self.ledger(open_protected))
+        self.assertEqual(r["verdict"], "blocked")
+        self.assertIn("protected surface", r["blocked"][0])
+        acted = finding("F-031", source="discovered", classification="blocker", resolution="open",
+                        authority="protected", blocks="AC-1", execution_state="implementing")
+        r2 = self.verdict(self.ledger(acted, name="2026-10-05-u.ledger.md"))
+        self.assertEqual(r2["verdict"], "invalid")
+        self.assertTrue(any("unauthorized" in e for e in r2["validation_errors"]))
+
+    def test_queue_entry_without_valid_receiver_is_a_failed_transfer(self) -> None:
+        p = self.ledger(finding("F-032", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated"),
+                        block("transfer", "id: T-3\nfindings: F-032\nreceiver: queue:CT-MISSING\nnext_action: fix\n"
+                                          "acceptance: test\nfollow_up: sync"),
+                        block("transfer", "id: T-4\nfindings: F-032\nreceiver: queue:CT-PARKED\nnext_action: fix\n"
+                                          "acceptance: test\nfollow_up: sync"),
+                        block("transfer", "id: T-5\nfindings: F-032\nreceiver: session lane-b\nnext_action: fix\n"
+                                          "acceptance: test\nfollow_up: sync\nack: none"))
+        self.queue.write_text(f"items:\n- id: CT-PARKED\n  status: parked\n  source: {p.name}\n", encoding="utf-8")
+        r = self.verdict(p)
+        self.assertFalse(r["transfers_ok"])
+        self.assertEqual(len(r["transfers_unacknowledged"]), 3)
+        # Technical completion is reported separately from transfer obligations.
+        self.assertEqual(r["verdict"], "complete")
+
+    def test_queue_entry_must_carry_transfer_context(self) -> None:
+        p = self.ledger(finding("F-033", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated"),
+                        block("transfer", "id: T-6\nfindings: F-033\nreceiver: queue:CT-Z\nnext_action: fix\n"
+                                          "acceptance: test\nfollow_up: sync"))
+        self.queue.write_text("items:\n- id: CT-Z\n  status: ready\n", encoding="utf-8")
+        self.assertFalse(self.verdict(p)["transfers_ok"])
+
+    def test_independent_without_any_transfer_holds_parent(self) -> None:
+        r = self.verdict(self.ledger(finding("F-034", source="discovered", classification="independent",
+                                             resolution="open", requirement="n/a: unrelated")))
+        self.assertEqual(r["verdict"], "incomplete")
+
+    def test_review_only_run_closes_without_fictional_stages(self) -> None:
+        r = self.verdict(self.ledger(
+            finding("F-035", resolution="open", classification="independent", requirement="n/a: fix is separate",
+                    execution_state="reviewed", obligations=REVIEW_ONLY_OBL),
+            block("transfer", "id: T-7\nfindings: F-035\nreceiver: owner-session\nnext_action: fix\n"
+                              "acceptance: test\nfollow_up: sync\nack: session bim-fix accepted 2026-10-05")),
+        )
+        self.assertEqual(r["verdict"], "complete")
+        bad = self.verdict(self.ledger(finding("F-036", execution_state="reviewed", obligations=""),
+                                       name="2026-10-05-v.ledger.md"))
+        self.assertEqual(bad["verdict"], "invalid")
+
+    def test_interruption_resumes_without_rediscovery(self) -> None:
+        d = self.tmp / "ledgers"
+        self.assertEqual(grrp.main(["init", "--slug", "resume", "--dir", str(d)]), 0)
+        p = next(d.glob("*-resume.ledger.md"))
+        p.write_text(p.read_text(encoding="utf-8").replace("## Findings\n", "## Findings\n" + finding("F-040")),
+                     encoding="utf-8")
+        out = subprocess.run([sys.executable, str(SCRIPT), "init", "--slug", "resume", "--dir", str(d)],
+                             capture_output=True, text=True, check=True).stdout
+        self.assertIn("existing:", out)
+        self.assertIn("F-040", out)
+        self.assertEqual(len(list(d.glob("*.ledger.md"))), 1)
+        self.assertIn("F-040", p.read_text(encoding="utf-8"))
+
+
+class Enrollment(unittest.TestCase):
+    """Enrolled workflows must load GRRP state before discovery (tested entry mechanism)."""
+
+    def test_review_all_loads_ledger_before_fan_out(self) -> None:
+        text = (REPO / "skills" / "review-all" / "SKILL.md").read_text(encoding="utf-8")
+        entry, fan_out = text.find("grrp.py init"), text.find("## Step 3")
+        self.assertNotEqual(entry, -1, "review-all must run grrp.py init")
+        self.assertLess(entry, fan_out, "GRRP entry must precede discovery fan-out")
+        self.assertIn("grrp.py gate", text)
+
+    def test_close_applies_gate_when_ledger_exists(self) -> None:
+        text = (REPO / "skills" / "close" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("grrp.py gate", text)
+
+    def test_skill_has_metadata(self) -> None:
+        head = (REPO / "skills" / "grrp" / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
+        self.assertIn("name: grrp", head)
+        self.assertIn("description:", head)
+
+
+if __name__ == "__main__":
+    unittest.main()

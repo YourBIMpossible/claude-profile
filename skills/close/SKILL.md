@@ -19,6 +19,12 @@ finishing side quests.
 3. Classify each item: IN-SCOPE (belongs to the mandate) or WANDER (found along
    the way).
 
+4. GRRP: if this session created or resumed a ledger (`F:\Claude-Tools\reports\grrp\*.ledger.md`
+   or a repo anchor with `grrp: v1`), run `python ~/.claude/skills/grrp/scripts/grrp.py gate <ledger>`
+   and report its verdict (complete / incomplete / blocked / invalid) and transfers line
+   verbatim. The verdict is the mandate's completion status; never upgrade it in prose.
+   An OUTSTANDING transfer is externalized work that has not been accepted — say so.
+
 ## /close status (read-only)
 
 Report ≤10 lines: mandate · in-scope remaining · not-on-disk list · wander list ·
