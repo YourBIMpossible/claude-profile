@@ -69,7 +69,11 @@ follow-up. Accepted when:
 - `receiver: queue:<ID>` — the `/next` store (`F:\Claude-Tools\state\queue.yaml`)
   holds that item with an active status and a reference to this ledger's filename
   (the gate checks this itself — no owner check-in needed);
-- any other receiver — `ack:` cites the receiving executor's acceptance.
+- any other receiver — `ack:` cites the receiving executor's acceptance. This is a
+  parent attestation, not a verified receipt: the gate only checks it is non-blank.
+  The single writer records it only after seeing the acceptance, and it must name
+  the receiver and where the acceptance lives (message, PR, commit, or file path +
+  date) so a later reader can check it.
 A written-but-unaccepted entry is a failed transfer.
 
 ## 5. Gate
@@ -101,6 +105,6 @@ rule applies; this section is where it lives for a GRRP run.
 
 Enrolled: `/review-all` (pilot). `/close` runs the gate when the session used a
 ledger. Other workflows are **not** GRRP-governed until enrolled and covered by
-`tests/test_grrp_conformance.py`. Deferred until a consumer exists: JSON schemas,
+`tests/test_review_to_resolution_conformance.py`. Deferred until a consumer exists: JSON schemas,
 compare-and-swap writes, local-model adapter (the Markdown/stdlib format is
 already portable).
