@@ -13,6 +13,16 @@ swallows failure, over-counts success, or tests a dead twin. Ported from
 `revit-functionality-audit`'s house-defect hunt (where it caught the same bug class
 ≥4 times); this version is language-generic and runs on any repo.
 
+<!-- grrp-enrollment:begin -->
+## GRRP entry (enrolled workflow — review-to-resolution)
+
+Before any discovery step below (automatic, no operator step): unless this run is a
+nested lens of another enrolled run, load governance state with
+`python ~/.claude/skills/review-to-resolution/scripts/grrp.py init --slug slop-audit-<repo>-<YYYY-MM-DD>`
+and follow `~/.claude/skills/review-to-resolution/references/enrollment.md`. This adds
+a ledger only; every check, severity, output and approval gate below is unchanged.
+<!-- grrp-enrollment:end -->
+
 ## Scope & args
 
 - **Argument = repo path** (e.g. `/slop-audit F:\PC-Monitor`). No argument →
@@ -66,3 +76,14 @@ verification step (run it, test it, trace the caller) and is only promoted to
   Keep path and name pattern unchanged so the incremental window still finds it.
 - Chat reply: link + one line per severity count. Deliverable goes to the file,
   never pasted into chat.
+
+<!-- grrp-exit:begin -->
+## GRRP exit
+
+After the report: record every finding of this run (kept, dismissed, HYPOTHESIS) as a
+`grrp-finding` per `enrollment.md`, then end the output with
+`python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`'s
+`verdict` and `transfers_ok` verbatim, `closeable`, and the ledger path. Free-text
+`ack` / `owner_action` / approval fields are attestations the gate does not verify
+(F-029): they never replace this workflow's own approval gates.
+<!-- grrp-exit:end -->

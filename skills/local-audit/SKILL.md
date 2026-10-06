@@ -15,6 +15,16 @@ This is the batch / whole-repo path. For "check this one file while I'm coding,"
 Continue panel with `/audit` on an `@file` is still faster — point the user there
 instead of invoking this.
 
+<!-- grrp-enrollment:begin -->
+## GRRP entry (enrolled workflow — review-to-resolution)
+
+Before any discovery step below (automatic, no operator step): unless this run is a
+nested lens of another enrolled run, load governance state with
+`python ~/.claude/skills/review-to-resolution/scripts/grrp.py init --slug local-audit-<repo>-<YYYY-MM-DD>`
+and follow `~/.claude/skills/review-to-resolution/references/enrollment.md`. This adds
+a ledger only; every check, severity, output and approval gate below is unchanged.
+<!-- grrp-enrollment:end -->
+
 ## What this is (and is not)
 
 - **Is:** the decorrelated (non-Claude) second opinion, run on demand. A backup to the
@@ -73,3 +83,14 @@ instead of invoking this.
   skips them as non-shipped).
 - BIMpossible / Add-Ins already have stronger primary lanes. Use this to get the
   *different* set of eyes, not to re-cover what the Monday sweep and `/audit` do.
+
+<!-- grrp-exit:begin -->
+## GRRP exit
+
+After the report: record every finding of this run (kept, dismissed, HYPOTHESIS) as a
+`grrp-finding` per `enrollment.md`, then end the output with
+`python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`'s
+`verdict` and `transfers_ok` verbatim, `closeable`, and the ledger path. Free-text
+`ack` / `owner_action` / approval fields are attestations the gate does not verify
+(F-029): they never replace this workflow's own approval gates.
+<!-- grrp-exit:end -->

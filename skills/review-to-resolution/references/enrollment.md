@@ -1,0 +1,52 @@
+# Enrolling an audit workflow (GRRP v1)
+
+The contract every enrolled workflow follows. The workflow's own text carries two
+marked blocks — `grrp-enrollment` (entry, before any discovery) and `grrp-exit`
+(after its report) — and points here. Enrollment is additive: it changes none of the
+workflow's checks, lenses, severities, report paths, or approval gates.
+
+## Entry
+1. **Nested run → no ledger of its own.** When the workflow runs as a lens or
+   sub-step of another enrolled run (e.g. `/revit-functionality-audit` inside the
+   weekly BIMpossible audit), it returns its findings to the parent; the parent is the
+   single writer (SKILL.md §3). Skip the rest of Entry and Exit.
+2. `grrp.py init --slug <slug> [--dir <dir>]` with the slug the workflow names. A
+   recurring/scheduled run puts its date in the slug, so a new run never resumes last
+   week's ledger; a same-slug ledger means an interrupted run: resume its finding IDs,
+   do not rediscover.
+3. Run brief from the invocation: Objective = run this workflow's checks over its
+   scope; Scope = the window/paths it resolves; Boundaries = the workflow's own
+   read-only/protected rules plus the active north star; Done means = AC-1 and AC-2
+   below; Extra findings = classify; Authority = the workflow's own.
+4. Criteria: `AC-1` every check/lens the workflow defines ran over its scope (a lens
+   NOT RUN or degraded → `unmet`, evidence = the report's coverage note); `AC-2` every
+   finding is in the report and the ledger.
+
+## Findings (one `grrp-finding` per report finding, kept or dismissed)
+| workflow result | assessment | classification · resolution |
+|---|---|---|
+| verified / confirmed / re-demonstrated | confirmed_defect | fixed in this run → `original`, `resolved` + evidence; otherwise `independent`, `open` + a transfer |
+| refuted / dismissed / NOT RETAINED | disproved (evidence = why) | `original`, `resolved` |
+| HYPOTHESIS / unverified | unassessed | `independent`, `open` + a transfer |
+| intended behaviour | intentional_behavior (evidence) | `original`, `resolved` |
+
+`unassessed` keeps the verdict `incomplete`: an unverified finding is not done, and
+the workflow says so instead of upgrading it. Report-only runs mark implementation
+obligations `n/a:review-only`. A Critical/High that threatens an included criterion
+carries `blocks:`.
+
+## Transfers
+Open findings go in one `grrp-transfer` to the place the workflow already hands work
+to: its resolution artifact (e.g. `/audit-resolution`), or `queue:<ID>` in the `/next`
+store. `ack:` only after that receiver's acceptance exists, naming it and its path.
+No acceptance yet → leave `ack` out: `transfers_ok: false` is the true result.
+
+## Exit
+`grrp.py gate --json <ledger>` → print `verdict` and `transfers_ok` verbatim,
+`closeable`, and the ledger path. Never soften the verdict.
+
+**Limitation F-029 (carried, not fixed):** `ack`, `owner_action`, `scope_approval` and
+`action_approval` are free text the parent writes; the gate checks shape, never that
+the act happened. They are attestations, not verified authorization, and never
+substitute for the workflow's own approval gates (owner sign-off, preflight scripts,
+dirty-tree guards, Checklist rules), which stay in force unchanged.

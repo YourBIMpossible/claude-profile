@@ -105,8 +105,14 @@ rule applies; this section is where it lives for a GRRP run.
 
 ## Enrollment
 
-Enrolled: `/review-all` (pilot). `/close` runs the gate when the session used a
-ledger. Other workflows are **not** GRRP-governed until enrolled and covered by
-`tests/test_review_to_resolution_conformance.py`. Deferred until a consumer exists: JSON schemas,
+Enrolled: `/review-all` (pilot, own Step 0.5). Rollout 2026-10-06, by the contract in
+`references/enrollment.md` (marked entry block before discovery, exit block at the gate):
+`slop-audit`, `local-audit` (Claude-Profile); `revit-functionality-audit`,
+`revit-tool-review` (AddIns); `audit`, `bim-code-review`, `synthetic-concurrency-audit`,
+`security-review-full` (BIMpossible); `revit-project-audit` (Workspace); scheduled
+`bimpossible-weekly-full-audit` (ledger kept in the Workspace) and `slop-audit-weekly`
+(through `slop-audit`). `/close` runs the gate when the session used a ledger. Other
+workflows are **not** GRRP-governed until enrolled and covered by
+`tests/test_review_to_resolution_conformance.py` and `tests/test_enrollment_rollout.py`. Deferred until a consumer exists: JSON schemas,
 compare-and-swap writes, local-model adapter (the Markdown/stdlib format is
 already portable).
