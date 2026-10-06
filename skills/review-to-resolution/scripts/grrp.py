@@ -151,11 +151,11 @@ def _obligation_parts(rec: dict[str, str]) -> list[tuple[str, str, str]]:
 
 
 def _obligations(rec: dict[str, str]) -> dict[str, tuple[str, str]]:
-    """{name: (state, detail)}. A repeated name is a validation error, never last-wins; here the
-    least-finished state is kept so a ledger that skips validation still cannot read as done."""
+    """{name: (state, detail)}. A repeated name is a validation error, never last-wins; here any
+    not-done state is kept over a later one so a ledger that skips validation still cannot read as done."""
     out: dict[str, tuple[str, str]] = {}
     for name, state, detail in _obligation_parts(rec):
-        if name in out and out[name][0] == "pending":
+        if name in out and out[name][0] != "done":
             continue
         out[name] = (state, detail)
     return out
