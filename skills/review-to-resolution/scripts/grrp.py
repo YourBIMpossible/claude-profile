@@ -76,6 +76,12 @@ class Ledger:
         return self.blocks.get(kind, [])
 
 
+def _no_owner_action(v: object) -> bool:
+    """owner_action must cite a real owner act; blank values and placeholders do not count."""
+    t = "" if v is None else str(v).strip().lower()
+    return _blank(v) or t in {"n/a", "na", "tbd", "todo", "pending", "yes", "ok"} or t.startswith(("n/a:", "pending:", "tbd:"))
+
+
 def _blank(v: str | None) -> bool:
     return v is None or v.strip().lower() in NONE_VALUES
 
@@ -238,7 +244,7 @@ def validate(led: Ledger) -> list[str]:
 
         state = f.get("execution_state", "identified")
         started = state in EXEC_STATES and EXEC_STATES.index(state) > 0
-        if started and f.get("authority") == "protected" and _blank(f.get("owner_action")):
+        if started and f.get("authority") == "protected" and _no_owner_action(f.get("owner_action")):
             errs.append(f"{_q(fid)}: protected surface shows execution '{_q(state)}' — unauthorized action")
         if started and f.get("classification") == "enhancement" and _blank(f.get("scope_approval")):
             errs.append(f"{_q(fid)}: enhancement executed without scope_approval")
