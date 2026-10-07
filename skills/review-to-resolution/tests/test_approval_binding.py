@@ -157,27 +157,6 @@ class ApprovalBindingTests(unittest.TestCase):
         st, why = grrp.verify_approval(led, f, "owner_action", OWNER, [self.owner_pub])
         self.assertEqual((st, why), ("unverified", "owner has no hardware-backed SSH signing key"))
 
-    def test_agent_usable_key_rejected(self) -> None:
-        led = self.signed_ledger()
-        st, why = grrp.verify_approval(led, led.of("finding")[0], "owner_action", OWNER, [self.owner_pub], False,
-                                       agent_keys={self.owner_pub})
-        self.assertEqual((st, why[:40]), ("unverified", "owner signing key is usable by the agent"))
-
-    def test_agent_usable_keys_finds_unencrypted_not_passphrase_keys(self) -> None:
-        home = self.td / "home"
-        (home / ".ssh").mkdir(parents=True)
-        _, open_pub = _keypair(home / ".ssh", "open")
-        locked = home / ".ssh" / "locked"
-        subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "a long test passphrase", "-f", str(locked)], check=True)
-        locked_pub = " ".join(locked.with_suffix(".pub").read_text(encoding="utf-8").split()[:2])
-        old_home, old_which = grrp.Path.home, grrp.shutil.which
-        self.addCleanup(lambda: setattr(grrp.Path, "home", old_home) or setattr(grrp.shutil, "which", old_which))
-        grrp.Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]
-        grrp.shutil.which = lambda n: None if n == "ssh-add" else old_which(n)  # ignore the real ssh-agent
-        found = grrp.agent_usable_keys()
-        self.assertIn(open_pub, found)
-        self.assertNotIn(locked_pub, found)
-
     # -- gate activation boundary --------------------------------------------------------
     def test_inactive_binding_keeps_legacy_rule_and_never_reports_verified(self) -> None:
         self.assertIsNone(grrp.APPROVAL_OWNER, "binding must stay inactive until owner setup")

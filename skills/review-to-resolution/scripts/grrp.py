@@ -72,20 +72,16 @@ LOCATOR_DATE_RE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 # F-029 verified approval binding. A free-text owner_action/scope_approval/action_approval
 # ("owner ... YYYY-MM-DD") is a LEGACY ATTESTATION: the gate cannot tell who wrote it. A verified
 # approval is an OpenSSH signature (namespace grrp-approval) over the canonical request built by
-# approval_request(), made with a key published as an SSH *signing* key on APPROVAL_OWNER's GitHub
-# account. The trust boundary: the agent's credentials cannot add signing keys, and the agent
-# cannot use the owner's key - a software key must be passphrase-protected and never loaded in
-# ssh-agent (any key the agent can use - unencrypted under ~/.ssh or listed by `ssh-add -L` - is
-# rejected at verify time); a hardware (sk-*) key additionally needs a touch and can be required
-# with APPROVAL_REQUIRE_HARDWARE. A file hash alone proves nothing about who approved, so the
-# signature is the only evidence accepted.
+# approval_request(), made with a hardware-backed (sk-*) key published as an SSH *signing* key on
+# APPROVAL_OWNER's GitHub account. The trust boundary: the agent's credentials cannot add signing
+# keys, and the agent cannot touch-sign with the owner's hardware key. A file hash alone proves
+# nothing about who approved, so the signature is the only evidence accepted.
 # None = binding inactive (owner setup not done): approvals stay legacy attestations, reported as
 # such, and the gate keeps the legacy rule. Set it only after the owner setup procedure
 # (references/approval-binding.md).
 APPROVAL_OWNER: str | None = None
 APPROVAL_FIELDS = ("owner_action", "scope_approval", "action_approval")
 APPROVAL_NAMESPACE = "grrp-approval"
-APPROVAL_REQUIRE_HARDWARE = False
 HARDWARE_KEY_TYPES = {"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com"}
 # The revision is a canonical snapshot of what the approval is about, not the whole file, so
 # recording the approval (adding <field>_sig) or later progress fields never invalidates it,
@@ -149,8 +145,7 @@ def fetch_owner_signers(login: str) -> list[str] | None:
 
 
 def verify_approval(led: "Ledger", f: dict[str, str], kind: str, owner: str | None,
-                    signers: list[str] | None, require_hardware: bool = True,
-                    agent_keys: set[str] | None = None) -> tuple[str, str]:
+                    signers: list[str] | None, require_hardware: bool = True) -> tuple[str, str]:
     """(status, reason); status is verified | legacy | missing | unverified.
     Only `verified` satisfies a required approval while the binding is active."""
     stmt = (f.get(kind) or "").strip()
@@ -167,9 +162,6 @@ def verify_approval(led: "Ledger", f: dict[str, str], kind: str, owner: str | No
             if len(k.split()) == 2 and (not require_hardware or k.split()[0] in HARDWARE_KEY_TYPES)]
     if not keys:
         return "unverified", "owner has no hardware-backed SSH signing key"
-    keys = [k for k in keys if k.split()[0] in HARDWARE_KEY_TYPES or k not in (agent_keys or set())]
-    if not keys:
-        return "unverified", "owner signing key is usable by the agent (unencrypted under ~/.ssh or loaded in ssh-agent)"
     sig_path = (led.path.parent / sig).resolve()
     if not sig_path.is_file():
         return "unverified", f"{kind}_sig file not found"
@@ -191,34 +183,6 @@ def verify_approval(led: "Ledger", f: dict[str, str], kind: str, owner: str | No
     return "verified", "owner signature over the canonical request"
 
 
-def agent_usable_keys() -> set[str]:
-    """Public keys ("<type> <base64>") the agent's own process could sign with: loaded in ssh-agent,
-    or an unencrypted private key under ~/.ssh. Such a key cannot evidence an owner act."""
-    out: set[str] = set()
-    add, keygen = shutil.which("ssh-add"), shutil.which("ssh-keygen")
-    if add:
-        try:
-            r = subprocess.run([add, "-L"], capture_output=True, text=True, timeout=10)
-            if r.returncode == 0:
-                out |= {" ".join(ln.split()[:2]) for ln in r.stdout.splitlines() if len(ln.split()) >= 2}
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    ssh = Path.home() / ".ssh"
-    if keygen and ssh.is_dir():
-        for pub in ssh.glob("*.pub"):
-            priv = pub.with_suffix("")
-            if not priv.is_file():
-                continue
-            try:  # -P "" succeeds only when the private key has no passphrase
-                r = subprocess.run([keygen, "-y", "-P", "", "-f", str(priv)], capture_output=True, text=True,
-                                   timeout=10, stdin=subprocess.DEVNULL)
-            except (OSError, subprocess.TimeoutExpired):
-                continue
-            if r.returncode == 0 and len(r.stdout.split()) >= 2:
-                out.add(" ".join(r.stdout.split()[:2]))
-    return out
-
-
 def _owner_signers(led: "Ledger") -> list[str] | None:
     if led.signers is _UNSET:
         led.signers = fetch_owner_signers(APPROVAL_OWNER) if APPROVAL_OWNER else None
@@ -229,8 +193,7 @@ def _approval_unmet(led: "Ledger", f: dict[str, str], kind: str) -> str | None:
     """None when the approval is satisfied, else why. Binding inactive -> the legacy rule."""
     if not APPROVAL_OWNER:
         return None if not _no_owner_action(f.get(kind)) else "no dated owner act"
-    st, why = verify_approval(led, f, kind, APPROVAL_OWNER, _owner_signers(led),
-                              APPROVAL_REQUIRE_HARDWARE, agent_usable_keys())
+    st, why = verify_approval(led, f, kind, APPROVAL_OWNER, _owner_signers(led))
     return None if st == "verified" else f"{st}: {why}"
 
 
@@ -242,8 +205,7 @@ def approval_report(led: "Ledger") -> list[dict[str, str]]:
             if _blank(f.get(kind)) and _blank(f.get(f"{kind}_sig")):
                 continue
             if APPROVAL_OWNER:
-                st, _ = verify_approval(led, f, kind, APPROVAL_OWNER, _owner_signers(led),
-                              APPROVAL_REQUIRE_HARDWARE, agent_usable_keys())
+                st, _ = verify_approval(led, f, kind, APPROVAL_OWNER, _owner_signers(led))
             else:
                 st = "legacy" if _blank(f.get(f"{kind}_sig")) else "unverified"
             out.append({"finding": _q(f.get("id")), "type": kind, "status": st})
