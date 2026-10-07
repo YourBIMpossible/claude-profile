@@ -89,7 +89,7 @@ class EnrolledWorkflows(unittest.TestCase):
                 exit_ = text[text.find("<!-- grrp-exit:begin -->"):]
                 self.assertIn("gate --json", exit_, name)
                 self.assertIn("transfers_ok", exit_, name)
-                self.assertIn("F-029", exit_, name)
+                self.assertIn("attestations", exit_, name)
 
     def test_substantive_checks_retained(self) -> None:
         for name, (_, _, _, anchors) in ENROLLED.items():
@@ -198,8 +198,8 @@ class RepresentativeAuditRuns(unittest.TestCase):
         out = self.run_gate(audit_finding("F-001"))
         self.assertEqual(out["verdict"], "incomplete")
 
-    def test_f029_free_text_ack_is_shape_checked_only(self) -> None:
-        # Carried limitation F-029: any non-blank ack passes. Pinned so a later change is deliberate;
+    def test_free_text_ack_is_shape_checked_only(self) -> None:
+        # Accepted limitation: any non-blank ack passes. Pinned so a later change is deliberate;
         # enrollment.md and every exit block state that this is an attestation, not authorization.
         out = self.run_gate(audit_finding("F-001"), transfer("F-001", "owner said fine"))
         self.assertTrue(out["transfers_ok"])

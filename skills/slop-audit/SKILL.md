@@ -84,6 +84,6 @@ After the report: record every finding of this run (kept, dismissed, HYPOTHESIS)
 `grrp-finding` per `enrollment.md`, then end the output with
 `python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`'s
 `verdict` and `transfers_ok` verbatim, `closeable`, and the ledger path. Free-text
-`ack` / `owner_action` / approval fields are attestations the gate does not verify
-(F-029): they never replace this workflow's own approval gates.
+`ack` / `owner_action` / approval fields are attestations the gate does not verify:
+they never replace this workflow's own approval gates.
 <!-- grrp-exit:end -->
