@@ -19,15 +19,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -69,30 +64,7 @@ BLOCK_OPEN_RE =re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
 OWNER_WORD_RE = re.compile(r"\bowner\b", re.I)
 # Digit-bounded so a date inside an artifact name (audit-resolution_2026-10-12.md) counts.
 LOCATOR_DATE_RE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
-# F-029 verified approval binding. A free-text owner_action/scope_approval/action_approval
-# ("owner ... YYYY-MM-DD") is a LEGACY ATTESTATION: the gate cannot tell who wrote it. A verified
-# approval is an OpenSSH signature (namespace grrp-approval) over the canonical request built by
-# approval_request(), made with a hardware-backed (sk-*) key published as an SSH *signing* key on
-# APPROVAL_OWNER's GitHub account. The trust boundary: the agent's credentials cannot add signing
-# keys, and the agent cannot touch-sign with the owner's hardware key. A file hash alone proves
-# nothing about who approved, so the signature is the only evidence accepted.
-# None = binding inactive (owner setup not done): approvals stay legacy attestations, reported as
-# such, and the gate keeps the legacy rule. Set it only after the owner setup procedure
-# (references/approval-binding.md).
-APPROVAL_OWNER: str | None = None
-APPROVAL_FIELDS = ("owner_action", "scope_approval", "action_approval")
-APPROVAL_NAMESPACE = "grrp-approval"
-HARDWARE_KEY_TYPES = {"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com"}
-# The revision is a canonical snapshot of what the approval is about, not the whole file, so
-# recording the approval (adding <field>_sig) or later progress fields never invalidates it,
-# while any change to the run's scope/authority or the finding's identity/target does.
-REVISION_BRIEF_KEYS = ("Objective", "Scope", "Boundaries", "Authority")
-REVISION_FINDING_KEYS = ("id", "source", "classification", "authority", "requirement", "location", "severity")
-APPROVE_RE = re.compile(r"^approved?\b", re.I)
 BRIEF_RE = re.compile(r"^- (Objective|Scope|Boundaries|Done means|Extra findings|Authority):[ \t]*(.*)$", re.M)
-
-
-_UNSET = object()
 
 
 @dataclass
@@ -102,10 +74,6 @@ class Ledger:
     brief: dict[str, str] = field(default_factory=dict)
     blocks: dict[str, list[dict[str, str]]] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
-    signers: object = None  # owner signing keys, fetched at most once per ledger
-
-    def __post_init__(self) -> None:
-        self.signers = _UNSET
 
     def of(self, kind: str) -> list[dict[str, str]]:
         return self.blocks.get(kind, [])
@@ -116,100 +84,6 @@ def _no_owner_action(v: object) -> bool:
     anything else, placeholders included, does not count."""
     t = "" if v is None else str(v)
     return _blank(t) or not OWNER_WORD_RE.search(t) or not _has_date(t)
-
-
-def _sha(t: str) -> str:
-    return hashlib.sha256(t.encode("utf-8")).hexdigest()
-
-
-def approval_request(led: "Ledger", f: dict[str, str], kind: str) -> str:
-    """The exact bytes the owner signs: approval type, ledger, finding, digest of the approved
-    statement, and the pre-approval revision snapshot."""
-    stmt = (f.get(kind) or "").strip()
-    rev = "\n".join(f"brief.{k}={led.brief.get(k, '').strip()}" for k in REVISION_BRIEF_KEYS)
-    rev += "\n" + "\n".join(f"finding.{k}={(f.get(k) or '').strip()}" for k in REVISION_FINDING_KEYS)
-    return (f"grrp-approval-v1\ntype={kind}\nledger={led.path.name}\nfinding={(f.get('id') or '').strip()}\n"
-            f"statement_sha256={_sha(stmt)}\nrevision={_sha(rev)}\n")
-
-
-def fetch_owner_signers(login: str) -> list[str] | None:
-    """Public SSH signing keys of `login` as "<type> <base64>", or None when unavailable."""
-    url = f"https://api.github.com/users/{login}/ssh_signing_keys"
-    try:
-        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        return [" ".join(str(k.get("key", "")).split()[:2]) for k in data if isinstance(k, dict) and k.get("key")]
-    except (OSError, ValueError):
-        return None
-
-
-def verify_approval(led: "Ledger", f: dict[str, str], kind: str, owner: str | None,
-                    signers: list[str] | None, require_hardware: bool = True) -> tuple[str, str]:
-    """(status, reason); status is verified | legacy | missing | unverified.
-    Only `verified` satisfies a required approval while the binding is active."""
-    stmt = (f.get(kind) or "").strip()
-    sig = (f.get(f"{kind}_sig") or "").strip()
-    if _blank(sig):
-        return ("missing", "no approval") if _no_owner_action(stmt) else ("legacy", "free-text attestation; signer unknown")
-    if not APPROVE_RE.match(stmt):
-        return "unverified", f"{kind} statement does not start with 'approve' (pending, refused or other)"
-    if not owner:
-        return "unverified", "approval binding inactive (no APPROVAL_OWNER)"
-    if signers is None:
-        return "unverified", "owner signing keys unavailable"
-    keys = [k for k in signers
-            if len(k.split()) == 2 and (not require_hardware or k.split()[0] in HARDWARE_KEY_TYPES)]
-    if not keys:
-        return "unverified", "owner has no hardware-backed SSH signing key"
-    sig_path = (led.path.parent / sig).resolve()
-    if not sig_path.is_file():
-        return "unverified", f"{kind}_sig file not found"
-    keygen = shutil.which("ssh-keygen")
-    if not keygen:
-        return "unverified", "ssh-keygen not available"
-    with tempfile.TemporaryDirectory() as td:
-        allowed = Path(td) / "allowed_signers"
-        allowed.write_text("".join(f'{owner} namespaces="{APPROVAL_NAMESPACE}" {k}\n' for k in keys), encoding="utf-8")
-        try:
-            r = subprocess.run([keygen, "-Y", "verify", "-f", str(allowed), "-I", owner, "-n", APPROVAL_NAMESPACE,
-                                "-s", str(sig_path)], input=approval_request(led, f, kind).encode("utf-8"),
-                               capture_output=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            return "unverified", "signature check could not run"
-    if r.returncode != 0:
-        return "unverified", ("signature does not match the owner key and this request "
-                              "(wrong signer, type, target, statement or revision, or tampered)")
-    return "verified", "owner signature over the canonical request"
-
-
-def _owner_signers(led: "Ledger") -> list[str] | None:
-    if led.signers is _UNSET:
-        led.signers = fetch_owner_signers(APPROVAL_OWNER) if APPROVAL_OWNER else None
-    return led.signers  # type: ignore[return-value]
-
-
-def _approval_unmet(led: "Ledger", f: dict[str, str], kind: str) -> str | None:
-    """None when the approval is satisfied, else why. Binding inactive -> the legacy rule."""
-    if not APPROVAL_OWNER:
-        return None if not _no_owner_action(f.get(kind)) else "no dated owner act"
-    st, why = verify_approval(led, f, kind, APPROVAL_OWNER, _owner_signers(led))
-    return None if st == "verified" else f"{st}: {why}"
-
-
-def approval_report(led: "Ledger") -> list[dict[str, str]]:
-    """Every recorded approval with its status. Never `verified` while the binding is inactive."""
-    out = []
-    for f in led.of("finding"):
-        for kind in APPROVAL_FIELDS:
-            if _blank(f.get(kind)) and _blank(f.get(f"{kind}_sig")):
-                continue
-            if APPROVAL_OWNER:
-                st, _ = verify_approval(led, f, kind, APPROVAL_OWNER, _owner_signers(led))
-            else:
-                st = "legacy" if _blank(f.get(f"{kind}_sig")) else "unverified"
-            out.append({"finding": _q(f.get("id")), "type": kind, "status": st})
-    return out
 
 
 def _has_date(t: str) -> bool:
@@ -385,12 +259,12 @@ def validate(led: Ledger) -> list[str]:
 
         state = f.get("execution_state", "identified")
         started = state in EXEC_STATES and EXEC_STATES.index(state) > 0
-        if started and f.get("authority") == "protected" and (why := _approval_unmet(led, f, "owner_action")):
-            errs.append(f"{_q(fid)}: protected surface shows execution '{_q(state)}' — unauthorized action ({why})")
-        if started and f.get("classification") == "enhancement" and (why := _approval_unmet(led, f, "scope_approval")):
-            errs.append(f"{_q(fid)}: enhancement executed without scope_approval citing a dated owner act ({why})")
-        if started and f.get("authority") == "approval_required" and (why := _approval_unmet(led, f, "action_approval")):
-            errs.append(f"{_q(fid)}: approval_required action executed without action_approval citing a dated owner act ({why})")
+        if started and f.get("authority") == "protected" and _no_owner_action(f.get("owner_action")):
+            errs.append(f"{_q(fid)}: protected surface shows execution '{_q(state)}' — unauthorized action")
+        if started and f.get("classification") == "enhancement" and _no_owner_action(f.get("scope_approval")):
+            errs.append(f"{_q(fid)}: enhancement executed without scope_approval citing a dated owner act")
+        if started and f.get("authority") == "approval_required" and _no_owner_action(f.get("action_approval")):
+            errs.append(f"{_q(fid)}: approval_required action executed without action_approval citing a dated owner act")
 
         names = [n for n, _, _ in _obligation_parts(f)]
         for name in sorted({n for n in names if names.count(n) > 1}):
@@ -513,9 +387,6 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
         "transfers_ok": not pending_transfers,
         # The one field an automated caller may branch on: technical completion AND every transfer accepted.
         "closeable": verdict == "complete" and not pending_transfers,
-        # F-029: "inactive" = recorded approvals are legacy attestations, never verified.
-        "approval_binding": "active" if APPROVAL_OWNER else "inactive",
-        "approvals": approval_report(led),
         "portfolio_open": sorted(_q(i) for i in transferred & {f.get("id") for f in findings if f.get("resolution") == "open"}),
     }
 
