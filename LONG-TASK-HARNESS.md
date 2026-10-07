@@ -11,6 +11,10 @@ profile overhauls. Smaller jobs: ignore this file.
   (b) ends at a state a 10-line note fully captures.
 - Phase 0 of every long job: write the phase list — goal, done-criterion, and entry
   point for each — into the anchor doc before touching code.
+- For substantial or high-risk jobs where a planning error would be expensive: before
+  Phase 1, pre-mortem the phase list ("assume this failed — why?") and have a second
+  agent review it cold (fresh subagent, phase list + goal only). Fold fixes into the
+  list; note residual risks in the anchor. Skip for routine runs.
 - Scope growth inside a phase is the enemy. New work discovered mid-phase goes into
   the anchor's queue, not into the current phase.
 
@@ -26,7 +30,9 @@ One ANCHOR DOC per job:
 - A per-run record is written where it belongs when it is created. A closeout or run log goes to the repo's excluded records path: in BIMpossible, `docs/ops/_archive/<run>/`. Transient working output (scratch notes, drafts, investigation findings) goes to `F:\Claude-Tools\reports`; a plan or handoff that coordinates ongoing work governs future work, so it stays durable and discoverable in the repo for the workers who need it, with an explicit retrievable pointer where one is required. An open bug does not make its coordination material transient. The run anchor stays live while the run is open, because it is operative. A session ending is not the run closing; lifecycle state decides. It moves to the archive whole in the PR that closes the run, with inbound references repaired in the same commit. A file that a test or checker names stays where it is.
 
 The anchor carries: phase statuses, decisions + why, gotchas hit, and the exact next
-entry point (file/command). The transcript is a working buffer that can be lost at
+entry point (file/command). Verification stays proportional to the phase's
+risk; note significant verification in the anchor when it helps a resumer, not as routine
+bookkeeping. The transcript is a working buffer that can be lost at
 any moment without losing the job.
 
 ## Checkpoints and compaction

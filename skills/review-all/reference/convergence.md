@@ -127,10 +127,16 @@ enforcement.
 - **One or more BLOCKERS** → recommend a re-invoke after remediation, scoped to
   `quick` mode by default, targeting the blocker locations and their lineage.
   Escalate to `deep` only when the user asks for it — never self-escalate.
+- **A third review pass is still discovering substantive new issues** (the prior
+  report chain shows two earlier passes on this branch, and this pass retains
+  non-trivial `new` findings) → recommend reassessing the underlying specification
+  or design before starting a fourth review; the problem is likely upstream of the
+  code. Advisory only.
 
 State the recommendation as one line at the top of the output, e.g.
-`Recommendation: stop — 0 BLOCKERS, 6 FOLLOW-UP.` or `Recommendation: re-invoke
-(quick) after fixing 2 BLOCKERS.`
+`Recommendation: stop — 0 BLOCKERS, 6 FOLLOW-UP.`, `Recommendation: re-invoke
+(quick) after fixing 2 BLOCKERS.`, or `Recommendation: reassess spec/design before
+a 4th pass — pass 3 still found 3 substantive new issues.`
 
 ## Output format
 
