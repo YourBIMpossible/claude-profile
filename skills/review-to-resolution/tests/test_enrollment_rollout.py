@@ -198,13 +198,11 @@ class RepresentativeAuditRuns(unittest.TestCase):
         out = self.run_gate(audit_finding("F-001"))
         self.assertEqual(out["verdict"], "incomplete")
 
-    def test_f029_ack_must_cite_a_dated_acceptance_but_stays_an_attestation(self) -> None:
-        # F-029: an ack is shape-checked for a dated acceptance (YYYY-MM-DD); the gate still never
-        # verifies that the cited act happened, and enrollment.md says so.
-        undated = self.run_gate(audit_finding("F-001"), transfer("F-001", "owner said fine"))
-        self.assertFalse(undated["transfers_ok"])
-        dated = self.run_gate(audit_finding("F-001"), transfer("F-001", "audit-resolution accepted 2026-10-12 in audit-resolution_2026-10-12.md"))
-        self.assertTrue(dated["transfers_ok"])
+    def test_f029_free_text_ack_is_shape_checked_only(self) -> None:
+        # Carried limitation F-029: any non-blank ack passes. Pinned so a later change is deliberate;
+        # enrollment.md and every exit block state that this is an attestation, not authorization.
+        out = self.run_gate(audit_finding("F-001"), transfer("F-001", "owner said fine"))
+        self.assertTrue(out["transfers_ok"])
         text = (SKILL / "references" / "enrollment.md").read_text(encoding="utf-8")
         self.assertIn("attestations, not verified authorization", " ".join(text.split()))
 

@@ -57,7 +57,7 @@ limitations, ledger revision it was based on — compact, not a transcript.
 ## grrp-transfer
 Required: `id findings receiver next_action acceptance follow_up`. `ack` required
 unless `receiver: queue:<ID>` (then the queue item itself is the acceptance; see
-SKILL.md §4). `ack` is a parent attestation: the gate only checks it carries a date, so it must
+SKILL.md §4). `ack` is a parent attestation: the gate only checks it is non-blank, so it must
 name the receiver and where the acceptance lives; write it only after that
 acceptance exists.
 

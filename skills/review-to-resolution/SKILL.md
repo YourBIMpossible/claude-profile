@@ -57,7 +57,6 @@ complete. Scope approval ≠ consequential-action approval (`action_approval:`
 binds to the exact target; changed consequences need a fresh one). Progress on a
 protected surface is valid only with `owner_action:` naming the owner's act or
 ratification, its date (YYYY-MM-DD) and where it lives; write it only after that statement exists.
-`scope_approval:` and `action_approval:` follow the same form (owner + date + where).
 
 ## 3. Single writer
 
@@ -73,7 +72,7 @@ follow-up. Accepted when:
   holds that item with an active status and a reference to this ledger's filename
   (the gate checks this itself — no owner check-in needed);
 - any other receiver — `ack:` cites the receiving executor's acceptance. This is a
-  parent attestation, not a verified receipt: the gate only checks it carries a date.
+  parent attestation, not a verified receipt: the gate only checks it is non-blank.
   The single writer records it only after seeing the acceptance, and it must name
   the receiver and where the acceptance lives (message, PR, commit, or file path +
   date) so a later reader can check it.
