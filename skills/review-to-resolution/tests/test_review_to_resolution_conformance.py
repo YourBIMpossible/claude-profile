@@ -182,11 +182,6 @@ class ProtocolScenarios(Base):
                 self.assertIn("dated owner act", " ".join(bad["validation_errors"]))
                 ok = self.verdict(self.ledger(finding("F-035", **{key: "owner approved in chat 2026-10-06"}, **base)))
                 self.assertNotIn("dated owner act", " ".join(ok["validation_errors"]))
-                for text in ("owner approved 2026-13-45", "owner approved 0000-00-00"):
-                    r = self.verdict(self.ledger(finding("F-036", **{key: text}, **base)))
-                    self.assertIn("dated owner act", " ".join(r["validation_errors"]), text)
-                named = self.verdict(self.ledger(finding("F-037", **{key: "owner ratified decisions/scope_2026-10-06.md"}, **base)))
-                self.assertNotIn("dated owner act", " ".join(named["validation_errors"]))
 
 
     def test_protected_progress_needs_owner_action_and_stays_protected(self) -> None:

@@ -57,7 +57,7 @@ complete. Scope approval ≠ consequential-action approval (`action_approval:`
 binds to the exact target; changed consequences need a fresh one). Progress on a
 protected surface is valid only with `owner_action:` naming the owner's act or
 ratification, its date (YYYY-MM-DD) and where it lives; write it only after that statement exists.
-`scope_approval:` and `action_approval:` follow the same form (owner + date + where). The gate checks only the shape: the word owner and a real date. It cannot tell an approval from text that says approval is pending or refused, and "where" is for the human reader.
+`scope_approval:` and `action_approval:` follow the same form (owner + date + where).
 
 ## 3. Single writer
 

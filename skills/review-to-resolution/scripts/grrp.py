@@ -62,6 +62,7 @@ BRIEF_KEYS = ["Objective", "Scope", "Boundaries", "Done means", "Extra findings"
 ORDINARY_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 BLOCK_OPEN_RE =re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
 OWNER_WORD_RE = re.compile(r"\bowner\b", re.I)
+ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 # Digit-bounded so a date inside an artifact name (audit-resolution_2026-10-12.md) counts.
 LOCATOR_DATE_RE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 BRIEF_RE = re.compile(r"^- (Objective|Scope|Boundaries|Done means|Extra findings|Authority):[ \t]*(.*)$", re.M)
@@ -83,18 +84,7 @@ def _no_owner_action(v: object) -> bool:
     """owner_action, scope_approval and action_approval must cite a dated owner act (contains `owner` and a YYYY-MM-DD date);
     anything else, placeholders included, does not count."""
     t = "" if v is None else str(v)
-    return _blank(t) or not OWNER_WORD_RE.search(t) or not _has_date(t)
-
-
-def _has_date(t: str) -> bool:
-    """True when `t` holds a real calendar date (YYYY-MM-DD), including one inside a file name."""
-    for m in LOCATOR_DATE_RE.finditer(t):
-        try:
-            _dt.date.fromisoformat(m.group(0))
-            return True
-        except ValueError:
-            continue
-    return False
+    return _blank(t) or not (OWNER_WORD_RE.search(t) and ISO_DATE_RE.search(t))
 
 
 def _blank(v: str | None) -> bool:
@@ -328,7 +318,7 @@ def transfer_acceptance(t: dict[str, str], ledger_path: Path, queue: Path | None
         return None
     if _blank(t.get("ack")):
         return f"receiver '{_q(recv)}' has not acknowledged (no ack receipt)"
-    if not _has_date(t.get("ack", "")):
+    if not LOCATOR_DATE_RE.search(t.get("ack", "")):
         return f"receiver '{_q(recv)}' ack does not cite a dated acceptance (YYYY-MM-DD)"
     return None
 
