@@ -122,21 +122,24 @@ Advisory only — `/review-all` is report-only in every mode and never gates a m
 itself; this is guidance for the human (or CI) reading the report, not
 enforcement.
 
-- **Zero BLOCKERS retained** → recommend stopping the review loop on this branch.
-  FOLLOW-UP items go to PR comments or a tracked ticket, not another pass.
+- **Zero BLOCKERS retained, and no retained FOLLOW-UP identifies an unmet
+  acceptance criterion or a violated safety/authority boundary** → recommend
+  stopping the review loop on this branch. Remaining FOLLOW-UP items go to PR
+  comments or a tracked ticket, not another pass. A FOLLOW-UP that does map to an
+  unmet criterion or boundary is a BLOCKER regardless of its severity label.
 - **One or more BLOCKERS** → recommend a re-invoke after remediation, scoped to
   `quick` mode by default, targeting the blocker locations and their lineage.
   Escalate to `deep` only when the user asks for it — never self-escalate.
-- **A third review pass is still discovering substantive new issues** (the prior
-  report chain shows two earlier passes on this branch, and this pass retains
-  non-trivial `new` findings) → recommend reassessing the underlying specification
-  or design before starting a fourth review; the problem is likely upstream of the
-  code. Advisory only.
+- **Retained `new` findings keep tracing to the same specification or design
+  ambiguity** (several lineage keys across passes point at one unclear requirement,
+  not at independent code defects) → recommend resolving that ambiguity before
+  another review; the problem is upstream of the code. The trigger is the evidence,
+  not the number of passes. Advisory only.
 
 State the recommendation as one line at the top of the output, e.g.
 `Recommendation: stop — 0 BLOCKERS, 6 FOLLOW-UP.`, `Recommendation: re-invoke
-(quick) after fixing 2 BLOCKERS.`, or `Recommendation: reassess spec/design before
-a 4th pass — pass 3 still found 3 substantive new issues.`
+(quick) after fixing 2 BLOCKERS.`, or `Recommendation: resolve the spec
+ambiguity first — 3 new findings trace to the unspecified retry contract.`
 
 ## Output format
 

@@ -27,6 +27,11 @@ finishing side quests.
    verdict only). Report `verdict` and transfers verbatim; never upgrade them in prose.
    `transfers_ok: false` = externalized work not yet accepted → NEEDS CHECKPOINT, not SAFE TO CLOSE.
 
+The end-of-session bookend in `CLAUDE.md` (*Completed · Still open · Exact restart
+action · New ideas captured*) is what `/close` writes into the anchor. When the
+owner repeated an instruction this session, add one line: the missed obligation
+and its cause; propose a durable fix only if the cause is not one-off.
+
 ## /close status (read-only)
 
 Report ≤10 lines: mandate · in-scope remaining · not-on-disk list · wander list ·

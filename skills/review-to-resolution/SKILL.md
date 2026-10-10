@@ -50,6 +50,24 @@ never rewrite the original brief.
 | enhancement | record; build only with `scope_approval:` | never silently mandatory |
 | externally_owned | link (`duplicate_of:`), do not redo | tracked, not taken over |
 
+**Disposition.** Every finding ends with exactly one disposition, chosen by its
+relation to the acceptance criteria and the safety/authority boundary — never by
+severity (LOW/INFO is not a reason to defer). Disposition ≠ execution status:
+"Fix in mission" stays `open` until repaired and verified.
+
+| disposition | ledger state |
+|---|---|
+| Fix in mission | `original`/`blocker`, `resolution: resolved` + `evidence` (open until then) |
+| Batch | `independent` + a `grrp-transfer` to a queue item with a finite, frozen list |
+| Defer | `independent`, `resolution: open`, `reconsider_when:` naming the trigger |
+| Close without change | `assessment: intentional_behavior`/`disproved` + `evidence` |
+| Product decision | `authority: approval_required`, owner `blocked_owner` |
+
+An unmet acceptance criterion or a violated safety/authority boundary is always
+Fix in mission. An optional feature is `enhancement`: recorded, not built.
+Deferred or transferred work stays open at its destination. A batch's list is
+frozen: discoveries become new findings, never silent additions.
+
 **Authority is separate from dependency.** A north-star off-limits or protected
 surface gets `authority: protected` — no action on it — but if it breaks an
 included criterion it still carries `blocks:` and the run is **blocked**, not
