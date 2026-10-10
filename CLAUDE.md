@@ -21,22 +21,23 @@ Applies in every session, every repo, every folder — not just under F:\AI-Dev.
 - Multi-phase or multi-hour job: read `F:\Claude-Profile\LONG-TASK-HARNESS.md` first and run the job by it — phases, anchor doc, checkpoints, fresh session per phase.
 - Stay on the session's original mandate. Discoveries outside it get one line in the /next queue or anchor — never handled inline, including "quick" fixes.
 
-# Director guardrails — binds me (the owner) and every agent
+# Operating agreement — binds me (the owner) and every agent
 
 Goal: finish approved work without losing ideas or letting each idea rewrite the current assignment. Apply this to agent-generated scope creep exactly as to mine. My known patterns: I expand scope while investigating; I ask for more review when the next answer needs execution; I carry context between workers in my head; I prefer comprehensive fixes that grow task boundaries; I reopen settled decisions when a review offers alternatives.
 
-- **One active milestone** with observable done-criteria: the anchor doc / north star's current item. If none is written, state the one you're assuming in your first line and proceed.
+- **One active milestone** with observable done-criteria: the anchor doc / north star's current item. If none is written, state the one you're assuming in your first line and proceed. "Done" cites evidence (output, SHA, date) valid for the current state; older than the last change → re-run or "not re-verified".
 - **Three buckets, existing places only — no new list:** **Now** = the active milestone · **Next** = `/next` items `ready` · **Captured** = `/next` items `parked` (with a north star active: `WORKLOG.md` *Needs your call*).
-- **When I introduce a new direction mid-task:** capture it, answer in one line — "Captured under Next/Captured. Not needed for current acceptance. Activating it now delays <X>." — and keep working the approved task. Switch only when I say so explicitly, or it exposes a real safety/design blocker. If I switch, update the milestone and move on; don't argue.
-- **Classify findings:** required for acceptance · required for safe execution · independent improvement · future possibility. Only the first two enter Now.
-- **Settled decisions reopen only for** new evidence, failed acceptance, a security issue, or a changed requirement. Another review proposing alternatives is none of these — say so in one line and keep the decision.
+- **When I introduce a new direction mid-task:** capture it, answer in one line — "Captured under Next/Captured. Not needed for current acceptance. Activating it now delays <X>." — and keep working the approved task. Switch only when I say so explicitly, or it exposes a real safety/design blocker. If a change would cost the milestone, challenge it once (evidence, consequence, recommendation); my explicit instruction in chat then settles it, even under a north star: do it, log the change in WORKLOG (never edit the north-star file), no confirmation loop. If I switch, update the milestone and move on.
+- **Classify findings:** required for acceptance · required for safe execution · independent improvement · future possibility. Only the first two enter Now. Each gets one disposition (Fix in mission · Batch · Defer · Close without change · Product decision — `skills/review-to-resolution`), never chosen by severity: an acceptance or safety violation is Fix in mission even if LOW; an optional feature is recorded, not built.
+- **Learning is its own item.** An experiment gets a written stop condition before it starts, outside the delivery commit.
+- **Settled decisions reopen only for** new evidence, failed acceptance, a security issue, or a changed requirement. Another review proposing alternatives is none of these — say so in one line and keep the decision. Supersede with a new entry; never edit the old one.
 - **Match the next action to the uncertainty** (decision / comparison / inspection / execution / diagnosis). If I ask for more review and only running it can answer the question, say so and offer the smallest execution step.
 - **Don't make me carry context:** handoffs pull from records (anchor, task file, commits, queue). If a needed fact exists only in my head, ask once and write it into the record.
 - **Before expanding active scope, name what gets delayed.** A new idea is not write permission. Close the current loop before opening another active item.
 - Don't lecture, repeatedly interrupt, silently override my decision, or add compliance work. I keep authority to change priorities.
-- **Session bookends** (a few lines in the anchor/WORKLOG, not a journal). Start: *Current milestone · Done means · Next action · Actual blocker · Decision needed from me.* End: *Completed · Still open · Exact restart action · New ideas captured.*
+- **Session bookends** (a few lines in the anchor/WORKLOG, not a journal). Start: *Current milestone · Done means · Next action · Actual blocker · Decision needed from me.* End: *Completed · Still open · Exact restart action · New ideas captured* (`/close` writes it).
 - My one question before adding anything: "Does this help finish the current milestone, or am I choosing to replace it?" Both answers are allowed; the tradeoff just has to be visible.
-- Is it working: did we finish the milestone or deliberately change it; how often did work stop because context or a decision lived only in my head. A repeat failure gets a fix to that handoff — not more rules.
+- Is it working: did we finish the milestone or deliberately change it; how often did work stop because context or a decision lived only in my head. A repeated instruction gets one line naming the missed obligation and cause, the work corrected, and a durable fix only if the cause isn't one-off — not more rules.
 
 # Skills
 

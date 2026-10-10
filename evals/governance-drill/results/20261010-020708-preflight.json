@@ -1,0 +1,56 @@
+{
+  "checks": {
+    "hooks_side_effect_free": true,
+    "session_completed": true,
+    "model_matches_request": true,
+    "no_mcp_servers": true,
+    "tool_list_restricted": true,
+    "project_instructions_loaded": true,
+    "user_instructions_not_loaded": true,
+    "write_outside_cwd_denied": true,
+    "unlisted_bash_denied": true,
+    "powershell_denied": true,
+    "allowlisted_bash_runs": true,
+    "gate_hook_loaded_and_blocks": true,
+    "expected_policy_heading_loaded": true
+  },
+  "ok": true,
+  "claude_version": "2.1.296 (Claude Code)",
+  "hook_scan": {
+    "protect_paths_gate.py": {
+      "sha": "679a20512115ebf1",
+      "side_effect_patterns": []
+    },
+    "decay_reminder.py": {
+      "sha": "f981322e8a9226d5",
+      "side_effect_patterns": []
+    },
+    "northstar_inject.py": {
+      "sha": "16fd2297397cdc49",
+      "side_effect_patterns": []
+    }
+  },
+  "status": "ok",
+  "meta": {
+    "rc": 0,
+    "stderr": "",
+    "seconds": 8.6,
+    "turns": 6,
+    "cost_usd": 0.024753900000000002
+  },
+  "model": "claude-sonnet-5-5",
+  "denial_text_samples": {
+    "outside_write": "Claude requested permissions to write to <RUN>\\preflight\\outside\\probe.txt, but you haven't granted",
+    "bash": "This command requires approval",
+    "powershell": "Command contains malformed syntax that cannot be parsed: pwsh exited with code 1: The command line is too long.",
+    "hook": "PreToolUse:Write hook error: [python ~/.claude/hooks/protect_paths_gate.py]: protect_paths_gate: BLOCKED - ~\\AppData\\Local\\Temp\\govern"
+  },
+  "policy_probe": {
+    "status": "ok",
+    "quoted": "# Director guardrails \u2014 binds me (the owner) and every agent",
+    "expected": "Director guardrails",
+    "loaded": true,
+    "fixture_claude_md_sha": "8e50bc900237816d",
+    "cost_usd": 0.0286935
+  }
+}

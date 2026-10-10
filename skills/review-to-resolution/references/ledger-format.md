@@ -27,8 +27,11 @@ grrp: v1
 ## grrp-finding
 Required: `id source classification assessment resolution execution_state owner
 lane requirement authority blocks evidence`. Optional: `severity location
-obligations scope_approval action_approval owner_action duplicate_of reason` (any other key is
-kept and ignored).
+obligations scope_approval action_approval owner_action duplicate_of reason reconsider_when` (any other key is
+kept and ignored). `reconsider_when:` names the trigger that reopens a deferred
+finding (new evidence, failed acceptance, security issue, changed requirement, or a
+dated event); it is advisory and not checked by the gate. Disposition labels map
+onto these fields as in SKILL.md §2.
 
 | key | values / rule |
 |---|---|

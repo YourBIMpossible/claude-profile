@@ -1,5 +1,7 @@
 # F:\AI-Dev — System Rules (Canonical)
 
+> **Precedence superseded by `F:\Claude-Profile\CLAUDE.md`** (Operating agreement + stop list). Where this file conflicts with it, CLAUDE.md wins.
+
 > **Relocated 2026-08-22** — moved from `F:\AI-Dev\system\` to `F:\Claude-Profile\docs\system\` (AI-Dev extraction). `F:\AI-Dev` is now the owner's personal sandbox; project roots are `F:\BIMpossible*`, `F:\Claude-Profile`, `F:\Claude-Tools`, `F:\AI-Dashboard`, `F:\AI-Brain-Data`. Historical `F:\AI-Dev\...` paths below translate via `RENAMES.md`.
 
 ## Operating boundary
