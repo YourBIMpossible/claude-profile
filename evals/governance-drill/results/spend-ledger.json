@@ -1,0 +1,1100 @@
+[
+ {
+  "run": "20261010-020708",
+  "label": "baseline-preflight",
+  "item": "preflight",
+  "usd": 0.0248
+ },
+ {
+  "run": "20261010-020708",
+  "label": "baseline-preflight",
+  "item": "policy-probe",
+  "usd": 0.0287
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "preflight",
+  "usd": 0.0213
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c1-northstar-lock",
+  "usd": 0.0703
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c2-guard-denial-pressure",
+  "usd": 0.0487
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c3-scope-discovery",
+  "usd": 0.0512
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c4-authorized-control",
+  "usd": 0.0544
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c5-publish-absent",
+  "usd": 0.0544
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c6-publish-present",
+  "usd": 0.0749
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "c7-legacy-silent-analog",
+  "usd": 0.036
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0577
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E2-optional-feature",
+  "usd": 0.0493
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E3-owner-expansion",
+  "usd": 0.0884
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0534
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E4-routine-design-call",
+  "usd": 0.0445
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E5-stale-evidence",
+  "usd": 0.0643
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E6a-reopen-no-evidence",
+  "usd": 0.0495
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E6b-reopen-with-evidence",
+  "usd": 0.0642
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.0728
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E8-repeated-instruction",
+  "usd": 0.0346
+ },
+ {
+  "run": "20261010-020723",
+  "label": "baseline",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0747
+ },
+ {
+  "run": "20261010-021315",
+  "label": "baseline-rerun",
+  "item": "preflight",
+  "usd": 0.0207
+ },
+ {
+  "run": "20261010-021315",
+  "label": "baseline-rerun",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-021315",
+  "label": "baseline-rerun",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0548
+ },
+ {
+  "run": "20261010-021351",
+  "label": "baseline-rerun2",
+  "item": "preflight",
+  "usd": 0.0193
+ },
+ {
+  "run": "20261010-021351",
+  "label": "baseline-rerun2",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-021351",
+  "label": "baseline-rerun2",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0544
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "preflight",
+  "usd": 0.0198
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "policy-probe",
+  "usd": 0.0277
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c1-northstar-lock",
+  "usd": 0.0781
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c2-guard-denial-pressure",
+  "usd": 0.0461
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c3-scope-discovery",
+  "usd": 0.0513
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c4-authorized-control",
+  "usd": 0.0461
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c5-publish-absent",
+  "usd": 0.0505
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c6-publish-present",
+  "usd": 0.0609
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "c7-legacy-silent-analog",
+  "usd": 0.0445
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0682
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E2-optional-feature",
+  "usd": 0.0576
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E3-owner-expansion",
+  "usd": 0.0652
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0609
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E4-routine-design-call",
+  "usd": 0.0509
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E5-stale-evidence",
+  "usd": 0.0534
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E6a-reopen-no-evidence",
+  "usd": 0.0541
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E6b-reopen-with-evidence",
+  "usd": 0.0606
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.0907
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E8-repeated-instruction",
+  "usd": 0.0352
+ },
+ {
+  "run": "20261010-021811",
+  "label": "final",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0668
+ },
+ {
+  "run": "20261010-022337",
+  "label": "final-e3-probe1",
+  "item": "preflight",
+  "usd": 0.0203
+ },
+ {
+  "run": "20261010-022337",
+  "label": "final-e3-probe1",
+  "item": "policy-probe",
+  "usd": 0.0275
+ },
+ {
+  "run": "20261010-022337",
+  "label": "final-e3-probe1",
+  "item": "E3-owner-expansion",
+  "usd": 0.0751
+ },
+ {
+  "run": "20261010-022408",
+  "label": "final-e3-probe2",
+  "item": "preflight",
+  "usd": 0.02
+ },
+ {
+  "run": "20261010-022408",
+  "label": "final-e3-probe2",
+  "item": "policy-probe",
+  "usd": 0.0267
+ },
+ {
+  "run": "20261010-022408",
+  "label": "final-e3-probe2",
+  "item": "E3-owner-expansion",
+  "usd": 0.0678
+ },
+ {
+  "run": "20261010-022437",
+  "label": "final-e3-probe3",
+  "item": "preflight",
+  "usd": 0.0204
+ },
+ {
+  "run": "20261010-022437",
+  "label": "final-e3-probe3",
+  "item": "policy-probe",
+  "usd": 0.0277
+ },
+ {
+  "run": "20261010-022437",
+  "label": "final-e3-probe3",
+  "item": "E3-owner-expansion",
+  "usd": 0.0784
+ },
+ {
+  "run": "20261010-022537",
+  "label": "baseline-e3-probe1",
+  "item": "preflight",
+  "usd": 0.0211
+ },
+ {
+  "run": "20261010-022537",
+  "label": "baseline-e3-probe1",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-022537",
+  "label": "baseline-e3-probe1",
+  "item": "E3-owner-expansion",
+  "usd": 0.0649
+ },
+ {
+  "run": "20261010-022606",
+  "label": "baseline-e3-probe2",
+  "item": "preflight",
+  "usd": 0.0213
+ },
+ {
+  "run": "20261010-022606",
+  "label": "baseline-e3-probe2",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-022606",
+  "label": "baseline-e3-probe2",
+  "item": "E3-owner-expansion",
+  "usd": 0.0742
+ },
+ {
+  "run": "20261010-022639",
+  "label": "baseline-e3-probe3",
+  "item": "preflight",
+  "usd": 0.0209
+ },
+ {
+  "run": "20261010-022639",
+  "label": "baseline-e3-probe3",
+  "item": "policy-probe",
+  "usd": 0.026
+ },
+ {
+  "run": "20261010-022639",
+  "label": "baseline-e3-probe3",
+  "item": "E3-owner-expansion",
+  "usd": 0.0702
+ },
+ {
+  "run": "20261010-022710",
+  "label": "baseline-e3-probe4",
+  "item": "preflight",
+  "usd": 0.0207
+ },
+ {
+  "run": "20261010-022710",
+  "label": "baseline-e3-probe4",
+  "item": "policy-probe",
+  "usd": 0.026
+ },
+ {
+  "run": "20261010-022710",
+  "label": "baseline-e3-probe4",
+  "item": "E3-owner-expansion",
+  "usd": 0.0705
+ },
+ {
+  "run": "20261010-022847",
+  "label": "baseline-e9v2-1",
+  "item": "preflight",
+  "usd": 0.0211
+ },
+ {
+  "run": "20261010-022847",
+  "label": "baseline-e9v2-1",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-022847",
+  "label": "baseline-e9v2-1",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0477
+ },
+ {
+  "run": "20261010-022909",
+  "label": "baseline-e9v2-2",
+  "item": "preflight",
+  "usd": 0.0208
+ },
+ {
+  "run": "20261010-022909",
+  "label": "baseline-e9v2-2",
+  "item": "policy-probe",
+  "usd": 0.026
+ },
+ {
+  "run": "20261010-022909",
+  "label": "baseline-e9v2-2",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0434
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "preflight",
+  "usd": 0.0201
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "policy-probe",
+  "usd": 0.0265
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c1-northstar-lock",
+  "usd": 0.0711
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c2-guard-denial-pressure",
+  "usd": 0.0449
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c3-scope-discovery",
+  "usd": 0.0569
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c4-authorized-control",
+  "usd": 0.0547
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c5-publish-absent",
+  "usd": 0.0538
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c6-publish-present",
+  "usd": 0.0519
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "c7-legacy-silent-analog",
+  "usd": 0.0373
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0574
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E2-optional-feature",
+  "usd": 0.0567
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E3-owner-expansion",
+  "usd": 0.0741
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0609
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E4-routine-design-call",
+  "usd": 0.052
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E5-stale-evidence",
+  "usd": 0.0586
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E6a-reopen-no-evidence",
+  "usd": 0.0537
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E6b-reopen-with-evidence",
+  "usd": 0.0789
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.0975
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E8-repeated-instruction",
+  "usd": 0.0356
+ },
+ {
+  "run": "20261010-022944",
+  "label": "final",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0477
+ },
+ {
+  "run": "20261010-023437",
+  "label": "final-repeat1",
+  "item": "preflight",
+  "usd": 0.0201
+ },
+ {
+  "run": "20261010-023437",
+  "label": "final-repeat1",
+  "item": "policy-probe",
+  "usd": 0.0274
+ },
+ {
+  "run": "20261010-023437",
+  "label": "final-repeat1",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0565
+ },
+ {
+  "run": "20261010-023503",
+  "label": "final-repeat2",
+  "item": "preflight",
+  "usd": 0.02
+ },
+ {
+  "run": "20261010-023503",
+  "label": "final-repeat2",
+  "item": "policy-probe",
+  "usd": 0.0265
+ },
+ {
+  "run": "20261010-023503",
+  "label": "final-repeat2",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0598
+ },
+ {
+  "run": "20261010-023534",
+  "label": "final-repeat3",
+  "item": "preflight",
+  "usd": 0.0203
+ },
+ {
+  "run": "20261010-023534",
+  "label": "final-repeat3",
+  "item": "policy-probe",
+  "usd": 0.0273
+ },
+ {
+  "run": "20261010-023534",
+  "label": "final-repeat3",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0606
+ },
+ {
+  "run": "20261010-023603",
+  "label": "final-repeat1",
+  "item": "preflight",
+  "usd": 0.0212
+ },
+ {
+  "run": "20261010-023603",
+  "label": "final-repeat1",
+  "item": "policy-probe",
+  "usd": 0.0275
+ },
+ {
+  "run": "20261010-023603",
+  "label": "final-repeat1",
+  "item": "E3-owner-expansion",
+  "usd": 0.0786
+ },
+ {
+  "run": "20261010-023637",
+  "label": "final-repeat2",
+  "item": "preflight",
+  "usd": 0.0211
+ },
+ {
+  "run": "20261010-023637",
+  "label": "final-repeat2",
+  "item": "policy-probe",
+  "usd": 0.0275
+ },
+ {
+  "run": "20261010-023637",
+  "label": "final-repeat2",
+  "item": "E3-owner-expansion",
+  "usd": 0.0709
+ },
+ {
+  "run": "20261010-023707",
+  "label": "final-repeat3",
+  "item": "preflight",
+  "usd": 0.0229
+ },
+ {
+  "run": "20261010-023707",
+  "label": "final-repeat3",
+  "item": "policy-probe",
+  "usd": 0.0265
+ },
+ {
+  "run": "20261010-023707",
+  "label": "final-repeat3",
+  "item": "E3-owner-expansion",
+  "usd": 0.0697
+ },
+ {
+  "run": "20261010-023738",
+  "label": "final-repeat1",
+  "item": "preflight",
+  "usd": 0.0212
+ },
+ {
+  "run": "20261010-023738",
+  "label": "final-repeat1",
+  "item": "policy-probe",
+  "usd": 0.0272
+ },
+ {
+  "run": "20261010-023738",
+  "label": "final-repeat1",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0546
+ },
+ {
+  "run": "20261010-023801",
+  "label": "final-repeat2",
+  "item": "preflight",
+  "usd": 0.0198
+ },
+ {
+  "run": "20261010-023801",
+  "label": "final-repeat2",
+  "item": "policy-probe",
+  "usd": 0.0265
+ },
+ {
+  "run": "20261010-023801",
+  "label": "final-repeat2",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0566
+ },
+ {
+  "run": "20261010-023827",
+  "label": "final-repeat3",
+  "item": "preflight",
+  "usd": 0.0239
+ },
+ {
+  "run": "20261010-023827",
+  "label": "final-repeat3",
+  "item": "policy-probe",
+  "usd": 0.0275
+ },
+ {
+  "run": "20261010-023827",
+  "label": "final-repeat3",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0566
+ },
+ {
+  "run": "20261010-023854",
+  "label": "final-repeat1",
+  "item": "preflight",
+  "usd": 0.0191
+ },
+ {
+  "run": "20261010-023854",
+  "label": "final-repeat1",
+  "item": "policy-probe",
+  "usd": 0.0276
+ },
+ {
+  "run": "20261010-023854",
+  "label": "final-repeat1",
+  "item": "E5-stale-evidence",
+  "usd": 0.0534
+ },
+ {
+  "run": "20261010-023921",
+  "label": "final-repeat2",
+  "item": "preflight",
+  "usd": 0.02
+ },
+ {
+  "run": "20261010-023921",
+  "label": "final-repeat2",
+  "item": "policy-probe",
+  "usd": 0.0274
+ },
+ {
+  "run": "20261010-023921",
+  "label": "final-repeat2",
+  "item": "E5-stale-evidence",
+  "usd": 0.0581
+ },
+ {
+  "run": "20261010-023951",
+  "label": "final-repeat3",
+  "item": "preflight",
+  "usd": 0.0197
+ },
+ {
+  "run": "20261010-023951",
+  "label": "final-repeat3",
+  "item": "policy-probe",
+  "usd": 0.0274
+ },
+ {
+  "run": "20261010-023951",
+  "label": "final-repeat3",
+  "item": "E5-stale-evidence",
+  "usd": 0.0502
+ },
+ {
+  "run": "20261010-024019",
+  "label": "final-extra1",
+  "item": "preflight",
+  "usd": 0.0199
+ },
+ {
+  "run": "20261010-024019",
+  "label": "final-extra1",
+  "item": "policy-probe",
+  "usd": 0.0274
+ },
+ {
+  "run": "20261010-024019",
+  "label": "final-extra1",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.101
+ },
+ {
+  "run": "20261010-024019",
+  "label": "final-extra1",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0585
+ },
+ {
+  "run": "20261010-024119",
+  "label": "final-extra2",
+  "item": "preflight",
+  "usd": 0.0209
+ },
+ {
+  "run": "20261010-024119",
+  "label": "final-extra2",
+  "item": "policy-probe",
+  "usd": 0.0274
+ },
+ {
+  "run": "20261010-024119",
+  "label": "final-extra2",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.0734
+ },
+ {
+  "run": "20261010-024119",
+  "label": "final-extra2",
+  "item": "E9-maintenance-creep",
+  "usd": 0.061
+ },
+ {
+  "run": "20261010-024205",
+  "label": "baseline-e7-extra1",
+  "item": "preflight",
+  "usd": 0.0215
+ },
+ {
+  "run": "20261010-024205",
+  "label": "baseline-e7-extra1",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-024205",
+  "label": "baseline-e7-extra1",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.0823
+ },
+ {
+  "run": "20261010-024240",
+  "label": "baseline-e7-extra2",
+  "item": "preflight",
+  "usd": 0.0214
+ },
+ {
+  "run": "20261010-024240",
+  "label": "baseline-e7-extra2",
+  "item": "policy-probe",
+  "usd": 0.026
+ },
+ {
+  "run": "20261010-024240",
+  "label": "baseline-e7-extra2",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.082
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "preflight",
+  "usd": 0.0214
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "policy-probe",
+  "usd": 0.0273
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c1-northstar-lock",
+  "usd": 0.0752
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c2-guard-denial-pressure",
+  "usd": 0.0434
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c3-scope-discovery",
+  "usd": 0.0459
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c4-authorized-control",
+  "usd": 0.0511
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c5-publish-absent",
+  "usd": 0.0592
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c6-publish-present",
+  "usd": 0.0537
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "c7-legacy-silent-analog",
+  "usd": 0.0355
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E1-label-vs-acceptance",
+  "usd": 0.0582
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E2-optional-feature",
+  "usd": 0.0552
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E3-owner-expansion",
+  "usd": 0.0685
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E3b-agent-expansion",
+  "usd": 0.0595
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E4-routine-design-call",
+  "usd": 0.0492
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E5-stale-evidence",
+  "usd": 0.0468
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E6a-reopen-no-evidence",
+  "usd": 0.0636
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E6b-reopen-with-evidence",
+  "usd": 0.0977
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E7-learning-vs-delivery",
+  "usd": 0.0944
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E8-repeated-instruction",
+  "usd": 0.0364
+ },
+ {
+  "run": "20261010-024408",
+  "label": "final-g5",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0461
+ },
+ {
+  "run": "20261010-024901",
+  "label": "final-e9-g5-1",
+  "item": "preflight",
+  "usd": 0.0197
+ },
+ {
+  "run": "20261010-024901",
+  "label": "final-e9-g5-1",
+  "item": "policy-probe",
+  "usd": 0.0275
+ },
+ {
+  "run": "20261010-024901",
+  "label": "final-e9-g5-1",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0552
+ },
+ {
+  "run": "20261010-024929",
+  "label": "final-e9-g5-2",
+  "item": "preflight",
+  "usd": 0.0214
+ },
+ {
+  "run": "20261010-024929",
+  "label": "final-e9-g5-2",
+  "item": "policy-probe",
+  "usd": 0.0275
+ },
+ {
+  "run": "20261010-024929",
+  "label": "final-e9-g5-2",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0483
+ },
+ {
+  "run": "20261010-024951",
+  "label": "final-e9-g5-3",
+  "item": "preflight",
+  "usd": 0.0203
+ },
+ {
+  "run": "20261010-024951",
+  "label": "final-e9-g5-3",
+  "item": "policy-probe",
+  "usd": 0.0274
+ },
+ {
+  "run": "20261010-024951",
+  "label": "final-e9-g5-3",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0502
+ },
+ {
+  "run": "20261010-025012",
+  "label": "baseline-e9-g5-1",
+  "item": "preflight",
+  "usd": 0.0215
+ },
+ {
+  "run": "20261010-025012",
+  "label": "baseline-e9-g5-1",
+  "item": "policy-probe",
+  "usd": 0.0253
+ },
+ {
+  "run": "20261010-025012",
+  "label": "baseline-e9-g5-1",
+  "item": "E9-maintenance-creep",
+  "usd": 0.078
+ },
+ {
+  "run": "20261010-025043",
+  "label": "baseline-e9-g5-2",
+  "item": "preflight",
+  "usd": 0.0209
+ },
+ {
+  "run": "20261010-025043",
+  "label": "baseline-e9-g5-2",
+  "item": "policy-probe",
+  "usd": 0.0261
+ },
+ {
+  "run": "20261010-025043",
+  "label": "baseline-e9-g5-2",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0467
+ },
+ {
+  "run": "20261010-025106",
+  "label": "baseline-e9-g5-3",
+  "item": "preflight",
+  "usd": 0.0198
+ },
+ {
+  "run": "20261010-025106",
+  "label": "baseline-e9-g5-3",
+  "item": "policy-probe",
+  "usd": 0.0262
+ },
+ {
+  "run": "20261010-025106",
+  "label": "baseline-e9-g5-3",
+  "item": "E9-maintenance-creep",
+  "usd": 0.0478
+ }
+]
