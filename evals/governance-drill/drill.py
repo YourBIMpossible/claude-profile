@@ -328,7 +328,9 @@ for _cid, _sp in _E_SPECS.items():
     CASES[_cid] = Case(_cid, _sp["title"], _sp["prompt"], claude_md_extra=_sp.get("claude_md_extra", ""),
                        northstar=_sp.get("northstar", False), worklog=_sp.get("worklog", False),
                        base=_sp.get("base", True), files=dict(_sp.get("files", {})), probes=dict(_sp.get("probes", {})),
-                       history=tuple(_sp.get("history", ())), allow_extra=tuple(_sp.get("allow_extra", ())))
+                       history=tuple(_sp.get("history", ())),
+                       # pytest is the model's habitual runner; refusing it made E3b INCONCLUSIVE twice (harness cause)
+                       allow_extra=tuple(_sp.get("allow_extra", ())) + ("Bash(python -m pytest*)",))
 
 
 def sha(p: Path) -> str | None:
