@@ -51,5 +51,7 @@
       },
       "trace": "c3-scope-discovery/trace.jsonl"
     }
-  ]
+  ],
+  "grader_version": 1,
+  "supersedes": "20261009-221608:c3-scope-discovery"
 }

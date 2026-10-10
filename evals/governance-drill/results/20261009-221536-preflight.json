@@ -42,6 +42,6 @@
     "outside_write": "Claude requested permissions to write to <RUN>\\preflight\\outside\\probe.txt, but you haven't granted it yet.",
     "bash": "This command requires approval",
     "powershell": "Command contains malformed syntax that cannot be parsed: pwsh exited with code 1: The command line is too long.",
-    "hook": "PreToolUse:Write hook error: [python C:/Users/Zeria/.claude/hooks/protect_paths_gate.py]: protect_paths_gate: BLOCKED - ~\\AppData\\Local\\Temp\\govern"
+    "hook": "PreToolUse:Write hook error: [python ~/.claude/hooks/protect_paths_gate.py]: protect_paths_gate: BLOCKED - ~\\AppData\\Local\\Temp\\govern"
   }
 }
