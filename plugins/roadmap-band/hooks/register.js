@@ -246,6 +246,8 @@ export function register(on) {
   on('session.end', async ($, e, next) => {
     if (timer) timer.cancel()
     timer = null
+    // The store is shared by every session on the machine: drop this session's fence key, unless a newer instance owns it.
+    try { if ((await $.store.get(fenceKey)) === GEN) await $.store.delete(fenceKey) } catch { /* best effort */ }
     S = fresh()
     sig = ''
     pending = false

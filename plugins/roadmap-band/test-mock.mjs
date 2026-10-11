@@ -21,7 +21,7 @@ async function makeHost(over = {}) {
       list: async () => [],
     },
     clock: { now: async () => env.now, every: (ms, fn) => { const t = { ms, fn, cancelled: false, cancel() { this.cancelled = true } }; timers.push(t); return t } },
-    store: { get: async (k) => store.get(k), set: async (k, v) => { store.set(k, v) } },
+    store: { get: async (k) => store.get(k), set: async (k, v) => { store.set(k, v) }, delete: async (k) => { store.delete(k) } },
     env: { get: async () => '1' },
     session: {
       cwd: async () => env.cwd, id: async () => env.sid, messages: async () => env.messages,
@@ -171,6 +171,8 @@ const LINE = 'Roadmap: Pilot [active] · acceptance: 3/5 verified (pilot) · nex
   await b.call('turn.complete', { answer: LINE.replace('Pilot', 'Other') })
   ok('12 session B repaints independently', (b.env.invalidations || 0) > b0)
   ok('12 each session has its own store key', store.get('gen:sess-A') !== store.get('gen:sess-B') && store.has('gen:sess-A') && store.has('gen:sess-B'))
+  await b.call('session.end', {})
+  ok('12 session.end removes only its own fence key', !store.has('gen:sess-B') && store.has('gen:sess-A'))
   // hot reload of the SAME session: newest instance wins, older one stands down
   const a2 = await makeHost({ store, env: { sid: 'sess-A' } })
   await a2.call('session.start', {})
@@ -180,6 +182,8 @@ const LINE = 'Roadmap: Pilot [active] · acceptance: 3/5 verified (pilot) · nex
   const a3 = a2.env.invalidations || 0
   await a2.call('turn.complete', { answer: LINE })
   ok('12 same-session newest instance works', (a2.env.invalidations || 0) > a3 && !a2.timers[0].cancelled)
+  await a.call('session.end', {})
+  ok('12 an older instance ending does not delete the newer instance key', store.has('gen:sess-A'))
 }
 { // 13 a forced refresh requested while a tick is running is kept and runs afterwards
   const h = await makeHost()
