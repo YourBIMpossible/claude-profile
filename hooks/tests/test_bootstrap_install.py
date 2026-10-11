@@ -158,7 +158,7 @@ class CleanInstall(BootstrapSandbox):
         result = json.loads(proc.stdout)
         self.assertEqual(result["exit_codes"], [0])
         self.assertEqual(result["stdout_bytes"], 0, "a capture hook printed to the agent")
-        self.assertEqual(result["manifests_unreadable"], 0)
+        self.assertEqual(result["manifests_unreadable"], [])
         self.assertEqual(result["boundary_trusted"], 2)
         self.assertTrue(result["checkout_clean"] and result["index_unchanged"])
         manifests = [json.loads(p.read_text(encoding="utf-8")) for p in out.rglob("*.json")
@@ -211,7 +211,8 @@ class CleanInstall(BootstrapSandbox):
                                   timeout=max(handler.get("timeout", 30), 60))
             self.assertEqual(proc.returncode, 0, f"{event} {name} exit {proc.returncode}: {proc.stderr}")
             ran.add(name)
-        self.assertEqual(ran, EXECUTABLE_HOOKS - NOT_EXECUTED)
+        # Vendored capture hooks run too; the sandbox home has no capture config, so they stay inert.
+        self.assertEqual(ran, (EXECUTABLE_HOOKS - NOT_EXECUTED) | {"capture_start.py", "capture_end.py"})
         # graphify_hint's diagnostic log defaults under the (sandboxed) profile.
         records = (self.hooks_dir / "logs" / "graphify_hint.jsonl").read_text(encoding="utf-8").splitlines()
         self.assertEqual({json.loads(r)["event"] for r in records},

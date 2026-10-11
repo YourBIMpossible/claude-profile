@@ -68,37 +68,24 @@ Rollback of the 2026-10-11 pin (F13b): restore `~/.claude/settings.json` from
 path; deleting `~/.claude/hooks/Show-AuditAlerts.ps1` is optional. Reverting this PR alone
 does not touch a machine already bootstrapped.
 
-## Registered outside this repo — shared temporary pinning exception
+## Pinned upstream unit — evidence-capture (option C, 2026-10-11)
 
-Two hooks are registered in the local `~/.claude/settings.json` and are **deliberately not
-pinned here**. The evidence-capture subsystem is owned by Claude-Tools (`evidence-capture/`);
-Claude-Profile neither copies nor modifies it. This is a documented, temporary exception to
-C1 — not acceptance of the risk below.
+`capture_start.py` (UserPromptSubmit, 5 s) and `capture_end.py` (Stop, 25 s) belong to the
+Claude-Tools evidence-capture subsystem, which **Claude-Tools still owns and develops**. Their
+installation unit is the whole directory (the wrappers import ~20 sibling modules plus
+`evidence-footprints/shell_paths.py`), so it is pinned whole under `vendor/` and bootstrap
+installs it to `~/.claude/hooks/evidence-capture/` and `~/.claude/hooks/evidence-footprints/`
+(staged, then swapped; a changed unit is kept as `<unit>.pre-profile-backup-<stamp>`). The
+template registers the installed paths; legacy `F:/Claude-Tools/evidence-capture/...`
+registrations are superseded, so each hook runs once and no longer follows the Claude-Tools
+checkout. Config (`~/.claude/evidence-capture.json`), stores and evidence are not copied and
+not changed.
 
-| Live registration | Event | Timeout | Runs from |
-|---|---|---|---|
-| `F:/Claude-Tools/evidence-capture/capture_start.py` | UserPromptSubmit | 5 s | Claude-Tools checkout |
-| `F:/Claude-Tools/evidence-capture/capture_end.py` | Stop | 25 s | Claude-Tools checkout |
-
-Installation / execution contract (read from the code, 2026-10-11):
-- Each script is a thin fail-open wrapper (exit 0, prints nothing) that does
-  `sys.path.insert(0, <its own directory>)` and imports `pipeline` and `store`, which in turn
-  import the rest of the subsystem (about 20 modules, ~10k lines). The wrapper cannot run
-  from a copy by itself: **the installation unit is the whole `evidence-capture/` directory**,
-  and the C1 pinned-copy mechanism (one file per hook under `~/.claude/hooks/`) does not fit it.
-- The first `try` (the imports) returns 0 without logging. A checkout switch or edit that
-  breaks an import therefore disables capture **silently**; only later failures reach the
-  capture log.
-- Anything that changes the Claude-Tools working tree (branch switch, pull, edit) changes the
-  code that runs on every prompt and every Stop. Opt-outs exist (`EVIDENCE_CAPTURE=0`,
-  `EVIDENCE_HOOK=0`).
-- `bootstrap.ps1` does not install them and keeps them on re-run (covered by
-  `test_upstream_audit_alert_registration_is_superseded_capture_hooks_are_kept`); a fresh
-  machine would not get them. The upstream README still says "Nothing here registers a hook";
-  that is stale relative to this machine and is Claude-Tools' to correct.
-
-Nothing here changes either registration. Candidate resolutions (smallest first) are in the
-Self Governance exception packet; any of them needs a grant covering the capture subsystem.
+Provenance (upstream commit, `tool_sha256`, per-file sha256), the re-pin procedure and
+rollback: `vendor/README.md`. Installed copies have no `.git`, so manifests record
+`tool_commit: null`; `tool_sha256` identifies the pin. Tests: `CleanInstall` in
+`hooks/tests/test_bootstrap_install.py` (byte-identical install, imports resolve from the
+install, `tool_sha256`, a real dry capture from the installed unit, single registration).
 
 No `context_budget` hook is registered, live or in the template: its registration was
 removed on 2026-08-07 (`docs/adr/0002-defer-context-budget-automation.md`).
