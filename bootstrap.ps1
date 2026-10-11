@@ -273,15 +273,25 @@ $hookSources = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'hooks') -File 
     Where-Object { $_.Extension -in @('.py', '.ps1') -or $hookDataFiles -contains $_.Name })
 $settingsTemplatePath = Join-Path $repoRoot 'settings.template.json'
 $settingsTemplateRaw = Read-Utf8Text $settingsTemplatePath
-$templateHookFiles = @([regex]::Matches($settingsTemplateRaw, '__CLAUDE_HOOKS_DIR__/([^"/]+)') |
+# Vendored units: pinned copies of upstream-owned multi-file hooks (vendor/README.md).
+# Each vendor/<unit>/ directory is installed as a whole to ~/.claude/hooks/<unit>/.
+$vendorRoot = Join-Path $repoRoot 'vendor'
+$vendorUnits = @()
+if (Test-Path -LiteralPath $vendorRoot) {
+    $vendorUnits = @(Get-ChildItem -LiteralPath $vendorRoot -Directory)
+}
+$templateHookFiles = @([regex]::Matches($settingsTemplateRaw, '__CLAUDE_HOOKS_DIR__/([^"]+)') |
     ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
-$missingHookSources = @($templateHookFiles | Where-Object { @($hookSources.Name) -notcontains $_ })
+$missingHookSources = @($templateHookFiles | Where-Object {
+    if ($_.Contains('/')) { -not (Test-Path -LiteralPath (Join-Path $vendorRoot $_) -PathType Leaf) }
+    else { @($hookSources.Name) -notcontains $_ }
+})
 if ($missingHookSources.Count -gt 0) {
-    throw "settings.template.json registers hooks missing from hooks/: $($missingHookSources -join ', ')"
+    throw "settings.template.json registers hooks missing from hooks/ or vendor/: $($missingHookSources -join ', ')"
 }
 $hooksRevision = 'unknown (no git)'
 if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath (Join-Path $repoRoot '.git'))) {
-    $hookPaths = @($hookSources | ForEach-Object { 'hooks/' + $_.Name })
+    $hookPaths = @($hookSources | ForEach-Object { 'hooks/' + $_.Name }) + @($vendorUnits | ForEach-Object { 'vendor/' + $_.Name })
     $hooksDirty = @(& git -C $repoRoot status --porcelain -- $hookPaths)
     if ($LASTEXITCODE -ne 0) { throw "git status failed in $repoRoot (exit $LASTEXITCODE)" }
     if ($hooksDirty.Count -gt 0 -and -not $AllowUncommittedHooks) {
@@ -400,9 +410,12 @@ try {
 # script, say) is machine-specific and is kept.
 # Upstream-checkout paths of hooks now pinned from hooks/ (F13b, 2026-10-11): an
 # existing registration of one of these is replaced by the template's pinned entry.
-# The capture hooks (F:/Claude-Tools/evidence-capture) are deliberately NOT listed -
-# they stay registered where they are (see hooks/README.md, shared pinning exception).
-$supersededHookPaths = @('F:/BIMpossible-Workspace/system/scheduled-tasks/audit-watchdog/Show-AuditAlerts.ps1')
+# The capture hooks were added when vendor/evidence-capture was pinned (option C, 2026-10-11).
+$supersededHookPaths = @(
+    'F:/BIMpossible-Workspace/system/scheduled-tasks/audit-watchdog/Show-AuditAlerts.ps1',
+    'F:/Claude-Tools/evidence-capture/capture_start.py',
+    'F:/Claude-Tools/evidence-capture/capture_end.py'
+)
 $preserved = @()
 if ($existing -and $existing.hooks) {
     $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }) -SupersededPaths $supersededHookPaths)
@@ -554,9 +567,50 @@ foreach ($source in $hookSources) {
     Write-Host "Installed hook: $target"
 }
 
+# Vendored units are replaced as a whole: a file removed upstream must not linger in the
+# installed copy (the capture tool hashes every *.py beside it). Only source files are
+# compared - runtime byproducts such as __pycache__ are ignored. A differing installed
+# unit is kept as <unit>.pre-profile-backup-<stamp>, never deleted.
+foreach ($unit in $vendorUnits) {
+    $target = Join-Path $hooksDir $unit.Name
+    $sourceFiles = @(Get-ChildItem -LiteralPath $unit.FullName -File -Recurse |
+        Where-Object { $_.FullName -notmatch '[\\/]__pycache__[\\/]' })
+    $same = Test-Path -LiteralPath $target
+    if ($same) {
+        $installedFiles = @(Get-ChildItem -LiteralPath $target -File -Recurse |
+            Where-Object { $_.FullName -notmatch '[\\/]__pycache__[\\/]' })
+        if ($installedFiles.Count -ne $sourceFiles.Count) { $same = $false }
+        foreach ($file in $sourceFiles) {
+            if (-not $same) { break }
+            $relative = $file.FullName.Substring($unit.FullName.Length).TrimStart([char[]]'\/')
+            $installed = Join-Path $target $relative
+            if (-not (Test-Path -LiteralPath $installed -PathType Leaf) -or
+                ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)) {
+                $same = $false
+            }
+        }
+    }
+    if ($same) { continue }
+    $staging = "$target.installing"
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    foreach ($file in $sourceFiles) {
+        $relative = $file.FullName.Substring($unit.FullName.Length).TrimStart([char[]]'\/')
+        $destination = Join-Path $staging $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+    }
+    if (Test-Path -LiteralPath $target) {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        Rename-Item -LiteralPath $target -NewName "$($unit.Name).pre-profile-backup-$stamp"
+        Write-Host "Backed up installed unit to $target.pre-profile-backup-$stamp"
+    }
+    Rename-Item -LiteralPath $staging -NewName $unit.Name
+    Write-Host "Installed unit: $target ($($sourceFiles.Count) files)"
+}
+
 # Every hook file the template registers must now exist as an installed copy -
 # a registration pointing at a missing file is a silently dead hook.
-foreach ($match in [regex]::Matches($settingsRaw, [regex]::Escape($hooksDirForward) + '/([^"/]+)')) {
+foreach ($match in [regex]::Matches($settingsRaw, [regex]::Escape($hooksDirForward) + '/([^"]+)')) {
     $registered = Join-Path $hooksDir $match.Groups[1].Value
     if (-not (Test-Path -LiteralPath $registered)) { throw "Template registers a hook that was not installed: $registered" }
 }
