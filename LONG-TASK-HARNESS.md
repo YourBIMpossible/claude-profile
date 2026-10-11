@@ -76,10 +76,11 @@ any moment without losing the job.
 
 - Read slices (offset/limit); whole files only when editing them.
 - Grep: narrow path + head_limit. Command output: big → file → read the slice.
-  The context_budget hook spills >8k-char results; everything under that is on you.
+  No hook truncates or spills tool results (the context_budget hook is not registered;
+  `docs/adr/0002-defer-context-budget-automation.md`), so output size is on you.
 - Subagents for bulk search, git archaeology, and cross-file questions where only
   the conclusion matters. Contract: the subagent writes full findings to a file and
-  returns ≤10 lines + the path — Agent results are NOT spilled by the hook.
+  returns ≤10 lines + the path — nothing spills Agent results automatically.
 - Screenshots only as final proof; zoom the region instead of full-screen; never
   re-shoot an unchanged state.
 - ToolSearch: batch every schema the task needs into one call.
