@@ -28,6 +28,9 @@ HOOK_SOURCES = sorted(
     if p.is_file() and (p.suffix in {".py", ".ps1"} or p.name == "closure_audit_repos.json")
 )
 EXECUTABLE_HOOKS = {p.name for p in HOOK_SOURCES if p.suffix in {".py", ".ps1"}}
+# Pinned copies of upstream-owned multi-file units (vendor/README.md), installed whole.
+VENDOR_UNITS = sorted(p for p in (REPO / "vendor").iterdir() if p.is_dir())
+CAPTURE_TOOL_SHA256 = "ce559bfe38d98a730f0d4195f4349862ec19e253f4acb54d1f0743d3d9bf46e9"
 # session-start-pull runs `git pull` in the repo; it is parse-checked, never executed here.
 NOT_EXECUTED = {"session-start-pull.ps1"}
 POWERSHELL = os.environ.get("BOOTSTRAP_TEST_POWERSHELL", "powershell.exe")
@@ -113,6 +116,56 @@ class CleanInstall(BootstrapSandbox):
             target = args.split(prefix, 1)[1].split()[0]
             self.assertTrue((self.hooks_dir / target).is_file(), f"{event} registers missing {target}")
 
+    def test_every_vendored_unit_is_installed_whole_and_byte_identical(self) -> None:
+        for unit in VENDOR_UNITS:
+            source = {p.relative_to(unit).as_posix(): p.read_bytes() for p in unit.rglob("*")
+                      if p.is_file() and "__pycache__" not in p.parts}
+            target = self.hooks_dir / unit.name
+            installed = {p.relative_to(target).as_posix(): p.read_bytes() for p in target.rglob("*")
+                         if p.is_file() and "__pycache__" not in p.parts}
+            self.assertEqual(installed, source, unit.name)
+
+    def test_capture_hooks_are_registered_once_at_the_installed_unit(self) -> None:
+        seen = [(event, h["args"][-1]) for event, _, h in handlers(self.settings())
+                if h["type"] == "command" and "capture_" in h["args"][-1]]
+        prefix = self.hooks_prefix() + "evidence-capture/"
+        self.assertEqual(sorted((e, a.lower().startswith(prefix), Path(a).name) for e, a in seen),
+                         [("Stop", True, "capture_end.py"), ("UserPromptSubmit", True, "capture_start.py")])
+
+    def test_installed_capture_unit_runs_without_the_upstream_checkout(self) -> None:
+        # The tool hashes every *.py beside it: the installed unit must be the pinned code.
+        unit = self.hooks_dir / "evidence-capture"
+        probe = ("import json, sys; sys.path.insert(0, sys.argv[1]); import pipeline, screen; "
+                 "print(json.dumps([pipeline.tool_identity()[1], screen.__file__, sys.modules['shell_paths'].__file__]))")
+        proc = subprocess.run(["python", "-I", "-c", probe, str(unit)], capture_output=True, text=True, timeout=60,
+                              cwd=self.root)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        sha, screen_file, shell_paths_file = json.loads(proc.stdout)
+        self.assertEqual(sha, CAPTURE_TOOL_SHA256, "vendor/README.md tool_sha256 is stale or the copy differs")
+        for loaded in (screen_file, shell_paths_file):
+            self.assertTrue(Path(loaded).resolve().is_relative_to(self.hooks_dir.resolve()), loaded)
+
+    def test_installed_capture_hooks_capture_synthetic_episodes(self) -> None:
+        # Upstream's own dry mode: the real installed capture_start/capture_end against a
+        # synthetic repository and stores inside the sandbox; nothing else is touched.
+        out = self.root / "dry"
+        out.mkdir()
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("EC_CAPTURE", "EVIDENCE_CAPTURE"))}
+        proc = subprocess.run(["python", "-I", str(self.hooks_dir / "evidence-capture" / "capture.py"),
+                               "dry", "--out", str(out), "-n", "2"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=300, env=env, cwd=self.root)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["exit_codes"], [0])
+        self.assertEqual(result["stdout_bytes"], 0, "a capture hook printed to the agent")
+        self.assertEqual(result["manifests_unreadable"], [])
+        self.assertEqual(result["boundary_trusted"], 2)
+        self.assertTrue(result["checkout_clean"] and result["index_unchanged"])
+        manifests = [json.loads(p.read_text(encoding="utf-8")) for p in out.rglob("*.json")
+                     if '"tool_sha256"' in p.read_text(encoding="utf-8", errors="replace")]
+        self.assertTrue(manifests, "dry run wrote no manifest")
+        self.assertEqual({m["capture"]["tool_sha256"] for m in manifests if "capture" in m}, {CAPTURE_TOOL_SHA256})
+
     def test_every_executable_hook_is_registered(self) -> None:
         text = json.dumps(self.settings()["hooks"])
         for name in EXECUTABLE_HOOKS:
@@ -158,7 +211,8 @@ class CleanInstall(BootstrapSandbox):
                                   timeout=max(handler.get("timeout", 30), 60))
             self.assertEqual(proc.returncode, 0, f"{event} {name} exit {proc.returncode}: {proc.stderr}")
             ran.add(name)
-        self.assertEqual(ran, EXECUTABLE_HOOKS - NOT_EXECUTED)
+        # Vendored capture hooks run too; the sandbox home has no capture config, so they stay inert.
+        self.assertEqual(ran, (EXECUTABLE_HOOKS - NOT_EXECUTED) | {"capture_start.py", "capture_end.py"})
         # graphify_hint's diagnostic log defaults under the (sandboxed) profile.
         records = (self.hooks_dir / "logs" / "graphify_hint.jsonl").read_text(encoding="utf-8").splitlines()
         self.assertEqual({json.loads(r)["event"] for r in records},
@@ -248,7 +302,7 @@ class Reinstall(BootstrapSandbox):
         self.assertEqual(len(graphify), 1, f"UserPromptSubmit graphify_hint not restored: {prompt_hooks}")
         self.assertEqual(Path(graphify[0]).read_bytes(), (REPO / "hooks" / "graphify_hint.py").read_bytes())
 
-    def test_upstream_audit_alert_registration_is_superseded_capture_hooks_are_kept(self) -> None:
+    def test_upstream_checkout_registrations_are_superseded_by_pinned_copies(self) -> None:
         legacy_audit = {"type": "command", "command": "powershell", "timeout": 15, "args": [
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
             "F:/BIMpossible-Workspace/system/scheduled-tasks/audit-watchdog/Show-AuditAlerts.ps1"]}
@@ -270,8 +324,11 @@ class Reinstall(BootstrapSandbox):
         self.assertEqual(len(audit), 1, f"audit-alert hook must run once, found {audit}")
         self.assertTrue(audit[0]["args"][-1].lower().startswith(self.hooks_prefix()),
                         "the surviving audit-alert registration is not the pinned copy")
-        self.assertIn(("UserPromptSubmit", None, capture_start), all_handlers)
-        self.assertIn(("Stop", None, capture_end), all_handlers)
+        capture = sorted((e, h["args"][-1].lower().startswith(self.hooks_prefix()), Path(h["args"][-1]).name)
+                         for e, _, h in all_handlers if h["type"] == "command" and "capture_" in h["args"][-1])
+        self.assertEqual(capture, [("Stop", True, "capture_end.py"), ("UserPromptSubmit", True, "capture_start.py")],
+                         "each capture hook must run once, from the pinned unit")
+        self.assertNotIn("f:/claude-tools/", json.dumps(self.settings()["hooks"]).lower())
         self.assertEqual((self.hooks_dir / "Show-AuditAlerts.ps1").read_bytes(),
                          (REPO / "hooks" / "Show-AuditAlerts.ps1").read_bytes())
 
@@ -339,6 +396,7 @@ class Preflight(BootstrapSandbox):
         shutil.copytree(REPO / "mcp", self.repo / "mcp")
         for source in HOOK_SOURCES:
             shutil.copy2(source, self.repo / "hooks" / source.name)
+        shutil.copytree(REPO / "vendor", self.repo / "vendor", ignore=shutil.ignore_patterns("__pycache__"))
         self.git("init", "-q")
         self.commit()
 
