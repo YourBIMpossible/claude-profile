@@ -42,11 +42,38 @@ are exempt: they live entirely inside settings.json.
 | `ctxdex_autoindex.py` | PostToolUse Bash | convenience | `~/.claude/hooks/` |
 | `decay_reminder.py` | UserPromptSubmit | **advisory** reminder (C2) | `~/.claude/hooks/` |
 | `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; also locks all `NORTHSTAR*.md` except `*.draft.md`) | `~/.claude/hooks/` |
-| `northstar_inject.py` | UserPromptSubmit | **advisory** — re-injects the active locked mission(s) each turn (scope-governor v3, multi-star) | `~/.claude/hooks/` |
+| `northstar_inject.py` | SessionStart (`startup\|resume\|clear`) + UserPromptSubmit | **advisory** — injects the active locked mission(s) at session start and re-injects them each turn (scope-governor v3, multi-star) | `~/.claude/hooks/` |
 | `skill-detection-hook.json` | PostToolUse (Revit MCP) | prompt-type, enabled 2026-08-08 | n/a (JSON in settings.json) |
 | `evidence_evacuate.py` | Stop + SessionEnd | **convenience** — Evidence Compiler measurement plan S0.1: copies any EC packet in `$CLAUDE_PROJECT_DIR`/payload `cwd` `.evidence-compiler/packets/` that `F:/Evidence-Archive/EC-LIVE` lacks, via `F:/Claude-Tools/evidence-archive/evacuate_worktree.py --apply` (sha256-verified, never deletes/overwrites, local-only). A packet counts as archived only when a byte-identical copy is in `packets/` or the evacuator's quarantine (a partial copy is retried). No-op = one listing + one stat per packet (a packet is hashed only against a same-size archive copy). One shared 25 s budget covers the pre-check hashing and evacuator calls across checkouts (a checkout it cannot finish checking is a surfaced deferral); one checkout's failure never skips the rest. Always exit 0 (a Stop hook exiting 2 would block the stop); any failure is surfaced as a `systemMessage`, not just logged; a SessionEnd failure is also appended as its own entry under `evidence_evacuate.pending/` and shown by the next Stop, which deletes only the entries it has printed (an interrupted Stop keeps them; an unreadable entry is shown, never dropped). SessionEnd also sweeps the repo root + every `<root>/.claude/worktrees/*` (the `--sweep` backstop's caller); `--sweep <repo-root>...` exits 1 on failure. Opt-out `EVIDENCE_EVACUATE=0`. Self-test: `python hooks/tests/test_evidence_evacuate.py` or `pytest hooks/tests` (needs the real evacuator; `EVIDENCE_TEST_EVACUATOR` overrides its path, a missing one fails). | `~/.claude/hooks/` |
 | `graphify_hint.py` | SessionStart (`startup\|resume\|clear\|compact`) + SubagentStart + UserPromptSubmit | **advisory** — resolves the canonical graphify graph for the payload `cwd` (cwd walk, repo subfolders like `backend\`, worktree → main checkout; pinned copy of `skills/graphify/scripts/resolve_graph.py`) and, only when one resolves, injects the graph path, the logged wrapper command, and when to prefer it over Grep/Read. No graph → no output. Skips shell-less subagent types. UserPromptSubmit is a fallback for harness paths that fire no SessionStart (desktop forks — 2026-10-05 funnel session 07542a44 — and missed `SessionStart:compact`): after a graph resolves, it scans `transcript_path` back to the last `compact_boundary` and injects the session hint only if no `hook_additional_context` attachment there carries `<graphify-graph>` (no graph → transcript never read; unreadable transcript → inject). Diagnostic log: one JSONL record per invocation in `~/.claude/hooks/logs/graphify_hint.jsonl` (`GRAPHIFY_HINT_LOG_DIR` overrides), rotated to one `.1` at 1 MiB (≤ ~2 MiB total); fields `ts, event, source, agent_type, session_id, cwd, resolved, graph, transcript_read, suppressed_prior_hint, emitted, skipped, error` — never prompt text, transcript content, or exception messages (type + errno/char offset only); separate from the graphify query log; best-effort, written after emission. Fail-open, exit 0. Opt-out `GRAPHIFY_HINT=0`. Self-test (incl. resolver parity): `python hooks/tests/test_graphify_hint.py`. | `~/.claude/hooks/` |
 | `session_closure_audit.py` + `closure_audit_repos.json` | SessionStart + SessionEnd | **advisory** — read-only closure audit: surfaces uncommitted/unpushed design docs, untracked branches, and dirty worktrees across the repos in `closure_audit_repos.json` each session, so knowledge is never lost by deleting a worktree that holds it. Local-only (git status/worktree list; no push/commit/network); fail-open. | `~/.claude/hooks/` (pinned copies of both files; this repo is the source of truth as of 2026-08-21 — update via the C1 copy procedure above) |
+
+## Registered outside this repo (observed 2026-10-10; open, not fixed)
+
+Comparing the installed `~/.claude/settings.json` with `settings.template.json` on
+2026-10-10 found 17 live hook registrations against 14 in the template. The 14 match
+the inventory above. Three are registered only in the local settings, with no source,
+template entry, or pinned copy here:
+
+| Live registration | Event | Runs from |
+|---|---|---|
+| `F:/BIMpossible-Workspace/system/scheduled-tasks/audit-watchdog/Show-AuditAlerts.ps1` | SessionStart (`startup\|resume\|clear`) | BIMpossible-Workspace checkout |
+| `F:/Claude-Tools/evidence-capture/capture_start.py` | UserPromptSubmit | Claude-Tools checkout |
+| `F:/Claude-Tools/evidence-capture/capture_end.py` | Stop | Claude-Tools checkout |
+
+Consequences, stated as observed:
+- They run from switchable git checkouts, which the C1 rule above forbids: a branch
+  switch or pull in either repo changes code that runs every session or turn.
+- `bootstrap.ps1` does not install them. Its merge keeps registrations the template
+  does not own, so they survive on this machine, but a fresh machine never gets them.
+
+Open decisions (owner): for each, pin it here under C1 (source + template entry +
+copy), keep it deliberately unpinned and record that exception, or remove it. Until
+decided, the C1 rule is not met for these three; nothing here has changed their
+registration or behaviour.
+
+No `context_budget` hook is registered, live or in the template: its registration was
+removed on 2026-08-07 (`docs/adr/0002-defer-context-budget-automation.md`).
 
 ## Control vs advisory (from the fail-open lesson)
 
