@@ -12,6 +12,7 @@ Run: python hooks/tests/test_bootstrap_install.py
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
@@ -246,6 +247,83 @@ class Reinstall(BootstrapSandbox):
         graphify = [a for a in prompt_hooks if a.endswith("/graphify_hint.py")]
         self.assertEqual(len(graphify), 1, f"UserPromptSubmit graphify_hint not restored: {prompt_hooks}")
         self.assertEqual(Path(graphify[0]).read_bytes(), (REPO / "hooks" / "graphify_hint.py").read_bytes())
+
+    def test_upstream_audit_alert_registration_is_superseded_capture_hooks_are_kept(self) -> None:
+        legacy_audit = {"type": "command", "command": "powershell", "timeout": 15, "args": [
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            "F:/BIMpossible-Workspace/system/scheduled-tasks/audit-watchdog/Show-AuditAlerts.ps1"]}
+        capture_start = {"type": "command", "command": "python", "timeout": 5,
+                         "args": ["F:/Claude-Tools/evidence-capture/capture_start.py"]}
+        capture_end = {"type": "command", "command": "python", "timeout": 25,
+                       "args": ["F:/Claude-Tools/evidence-capture/capture_end.py"]}
+        existing = {"hooks": {
+            "SessionStart": [{"matcher": "startup|resume|clear", "hooks": [legacy_audit]}],
+            "UserPromptSubmit": [{"hooks": [capture_start]}],
+            "Stop": [{"hooks": [capture_end]}],
+        }}
+        self.claude.mkdir(parents=True)
+        (self.claude / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        self.run_bootstrap()
+        all_handlers = list(handlers(self.settings()))
+        audit = [h for _, _, h in all_handlers if h.get("args", [""])[-1].endswith("Show-AuditAlerts.ps1")]
+        self.assertEqual(len(audit), 1, f"audit-alert hook must run once, found {audit}")
+        self.assertTrue(audit[0]["args"][-1].lower().startswith(self.hooks_prefix()),
+                        "the surviving audit-alert registration is not the pinned copy")
+        self.assertIn(("UserPromptSubmit", None, capture_start), all_handlers)
+        self.assertIn(("Stop", None, capture_end), all_handlers)
+        self.assertEqual((self.hooks_dir / "Show-AuditAlerts.ps1").read_bytes(),
+                         (REPO / "hooks" / "Show-AuditAlerts.ps1").read_bytes())
+
+
+class AuditAlertsHook(BootstrapSandbox):
+    """The pinned Show-AuditAlerts.ps1, run from its install against a sandboxed watchdog state."""
+    def setUp(self) -> None:
+        super().setUp()
+        self.run_bootstrap()
+        self.state = self.home / ".claude" / "scheduled-tasks" / "_watchdog"
+        self.state.mkdir(parents=True)
+
+    def run_hook(self) -> subprocess.CompletedProcess:
+        env = {**os.environ, "USERPROFILE": str(self.home)}
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+             str(self.hooks_dir / "Show-AuditAlerts.ps1")],
+            env=env, input="{}", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def write_status(self, **extra) -> None:
+        status = {"evaluated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "audits": [], **extra}
+        (self.state / "status.json").write_text(json.dumps(status), encoding="utf-8")
+
+    def test_open_alert_is_surfaced_and_exit_is_zero(self) -> None:
+        self.write_status()
+        alert = {"id": "a1", "status": "open", "class": "FINDING", "task": "weekly-audit", "kind": "missed",
+                 "run": "2026-10-05", "first_seen": "2026-10-06T09:00:00", "message": "no report",
+                 "next_action": "run it"}
+        (self.state / "alerts.json").write_text(json.dumps({"a1": alert}), encoding="utf-8")
+        proc = self.run_hook()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        self.assertIn("weekly-audit", out["systemMessage"])
+        self.assertIn("ack id: a1", out["systemMessage"])
+
+    def test_nothing_to_report_prints_nothing(self) -> None:
+        self.write_status()
+        proc = self.run_hook()
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, ""), proc.stderr)
+
+    def test_missing_state_is_reported_not_swallowed(self) -> None:
+        proc = self.run_hook()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("no status", json.loads(proc.stdout)["systemMessage"])
+
+    def test_corrupt_state_never_blocks_startup(self) -> None:
+        self.write_status()
+        (self.state / "alerts.json").write_text("{not json", encoding="utf-8")
+        proc = self.run_hook()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("could not read state", json.loads(proc.stdout)["systemMessage"])
 
 
 class Preflight(BootstrapSandbox):

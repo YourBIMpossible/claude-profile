@@ -80,6 +80,18 @@
               "__CLAUDE_HOOKS_DIR__/session_closure_audit.py"
             ],
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "__CLAUDE_HOOKS_DIR__/Show-AuditAlerts.ps1"
+            ],
+            "timeout": 15
           }
         ]
       },
