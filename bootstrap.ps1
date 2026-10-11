@@ -162,9 +162,11 @@ function Get-UnmanagedHookGroups {
     # still holds handlers the template does not own. A command handler is owned
     # when its command or args point under one of ManagedRoots, or at one of
     # ManagedFileNames in any .claude/hooks directory (a settings.json carried over
-    # from another profile path); a prompt handler is owned when the template
-    # carries the identical prompt.
-    param($Existing, $Generated, [string[]]$ManagedRoots, [string[]]$ManagedFileNames)
+    # from another profile path) or at one of SupersededPaths (a registration that
+    # ran the same script from its upstream checkout before it was pinned here, so
+    # keeping it would run the hook twice); a prompt handler is owned when the
+    # template carries the identical prompt.
+    param($Existing, $Generated, [string[]]$ManagedRoots, [string[]]$ManagedFileNames, [string[]]$SupersededPaths = @())
     $templatePrompts = @()
     foreach ($prop in $Generated.PSObject.Properties) {
         foreach ($group in @($prop.Value)) {
@@ -175,6 +177,7 @@ function Get-UnmanagedHookGroups {
     }
     $roots = @($ManagedRoots | ForEach-Object { (ConvertTo-ForwardSlash $_).TrimEnd('/').ToLowerInvariant() + '/' })
     $pinnedNames = @($ManagedFileNames | ForEach-Object { '/.claude/hooks/' + $_.ToLowerInvariant() })
+    $superseded = @($SupersededPaths | ForEach-Object { (ConvertTo-ForwardSlash $_).ToLowerInvariant() })
     $result = @()
     foreach ($prop in $Existing.PSObject.Properties) {
         foreach ($group in @($prop.Value)) {
@@ -188,6 +191,7 @@ function Get-UnmanagedHookGroups {
                 $owned = $false
                 foreach ($root in $roots) { if ($text.Contains($root)) { $owned = $true } }
                 foreach ($name in $pinnedNames) { if ($text.Contains($name)) { $owned = $true } }
+                foreach ($path in $superseded) { if ($text.Contains($path)) { $owned = $true } }
                 if (-not $owned) { $kept += $handler }
             }
             if ($kept.Count -gt 0) {
@@ -394,9 +398,14 @@ try {
 # into the installed hooks directory or this repo's hooks/ are the template's,
 # so the template's version replaces them. Anything else under the repo (a skill
 # script, say) is machine-specific and is kept.
+# Upstream-checkout paths of hooks now pinned from hooks/ (F13b, 2026-10-11): an
+# existing registration of one of these is replaced by the template's pinned entry.
+# The capture hooks (F:/Claude-Tools/evidence-capture) are deliberately NOT listed -
+# they stay registered where they are (see hooks/README.md, shared pinning exception).
+$supersededHookPaths = @('F:/BIMpossible-Workspace/system/scheduled-tasks/audit-watchdog/Show-AuditAlerts.ps1')
 $preserved = @()
 if ($existing -and $existing.hooks) {
-    $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }))
+    $preserved = @(Get-UnmanagedHookGroups -Existing $existing.hooks -Generated $generated.hooks -ManagedRoots @($hooksDirForward, "$repoRootForward/hooks") -ManagedFileNames @($hookSources | ForEach-Object { $_.Name }) -SupersededPaths $supersededHookPaths)
 }
 foreach ($item in $preserved) {
     $hookEvent = $item.Event
