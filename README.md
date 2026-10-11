@@ -69,6 +69,10 @@ quietly if offline - a best-effort refresh, not a guarantee of freshness. Check
 `hooks/last-run.log` to see what it actually did, or run `git pull` here yourself
 any time to force a refresh.
 
+A SessionStart pull may update the profile after instructions have already been
+captured. After policy updates, verify the policy version loaded by the session;
+reading the updated file on disk alone does not prove it was loaded at startup.
+
 ## Changing your setup (pushing)
 
 This repo is the source of truth, so changes belong here and get committed and
