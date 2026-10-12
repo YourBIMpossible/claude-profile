@@ -36,8 +36,9 @@ loaded every session.
    `decay_reminder.py` drops its copy and keeps its two reporting reminders.
 3. The no-star and inactive-star nudges in `northstar_inject.py` now say to state the assumed milestone
    and proceed within the request's scope. They add that an assumed milestone grants no authority
-   beyond the request, and to escalate consequential ambiguity. Active-star injection is unchanged
-   except for one line that duplicated the gate notice.
+   beyond the request, and to escalate consequential ambiguity. Active-star injection keeps its rule
+   against editing a north-star file, now explicit that it covers every tool (Bash included), since
+   `protect_paths_gate.py` blocks only Write/Edit.
 
 ## Alternatives considered
 
