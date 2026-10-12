@@ -144,29 +144,31 @@ def main() -> None:
 
     if not active:
         # No live mission. Nudge ONCE at session start (never per-turn nag).
+        # Mirrors CLAUDE.md's "state the assumed milestone and proceed" rule;
+        # asking the owner to draft a mission contradicted it (2026-10-11).
         if event == "SessionStart":
             if inactive:
                 names = ", ".join(f"{p.name} ({st})" for p, st in inactive)
                 emit(
                     "<northstar-status>\n"
                     "No ACTIVE north star, but inactive ones exist: " + names + "\n"
-                    "If this session resumes one of those workflows, ask the user;\n"
-                    "resuming = the HUMAN edits that file's 'status:' line back to\n"
-                    "active (you cannot - a gate blocks NORTHSTAR*.md). For new work,\n"
-                    "draft NORTHSTAR.<slug>.draft.md and the human renames it to\n"
-                    "NORTHSTAR.<slug>.md to lock it in.\n"
+                    "Do not work toward them unless the user's request names one;\n"
+                    "reactivating is the HUMAN editing that file's 'status:' line (you\n"
+                    "cannot - a gate blocks NORTHSTAR*.md). Otherwise proceed as in\n"
+                    "CLAUDE.md: state the milestone you are assuming in your first line\n"
+                    "and work within the request's scope. An assumed milestone grants no\n"
+                    "authority beyond the request; escalate only consequential ambiguity.\n"
                     "</northstar-status>"
                 )
             else:
                 emit(
                     "<northstar-setup>\n"
-                    "No north star in this project yet. If this session is real work,\n"
-                    "ask the user what we are building and DRAFT a mission for them as\n"
-                    "NORTHSTAR.<slug>.draft.md (or NORTHSTAR.draft.md for a single-\n"
-                    "mission project) - you cannot save the real file; the human\n"
-                    "renames it to drop '.draft', which locks AND activates it. Keep\n"
-                    "the draft to a few plain sentences: mission, what done looks\n"
-                    "like, what is off-limits.\n"
+                    "No north star in this project. Do not stop to ask for or draft a\n"
+                    "mission: as CLAUDE.md says, state the milestone you are assuming in\n"
+                    "your first line and proceed within the request's scope. An assumed\n"
+                    "milestone grants no authority beyond the request; escalate only\n"
+                    "consequential ambiguity. Draft NORTHSTAR.<slug>.draft.md only if the\n"
+                    "user asks for a north star (the human renames it to activate).\n"
                     "</northstar-setup>"
                 )
         sys.exit(0)
@@ -202,8 +204,8 @@ def main() -> None:
         "  2) bigger, worth doing, but a branch-off -> log under Roadmap, keep going.\n"
         "  3) would change a mission itself -> log under Needs your call using the\n"
         "     plain box; keep working the current mission(s) until the human answers.\n"
-        "Never edit a north-star file yourself. Never abandon, merge, pause, or\n"
-        "close a mission on your own - pausing/closing/switching is the human\n"
+        "Never abandon, merge, pause, or close a mission on your own -\n"
+        "pausing/closing/switching is the human\n"
         "editing that file's 'status:' line.\n"
         "A NEW direction that deserves its own mission is not a conflict anymore:\n"
         "draft NORTHSTAR.<slug>.draft.md beside these and the human renames it to\n"

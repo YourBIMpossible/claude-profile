@@ -6,7 +6,7 @@
   },
   "model": "claude-sonnet-5",
   "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true,
+    "superpowers@superpowers-marketplace": false,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
     "csharp-lsp@claude-plugins-official": true,
