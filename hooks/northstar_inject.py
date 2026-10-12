@@ -10,29 +10,32 @@ WHY THIS EXISTS (unchanged from v2)
   context summaries. Over many autonomous cycles the summary got reworded until
   the reworded plan WAS the new (wrong) plan - the model edited its own orders
   and then followed them faithfully. The fix: keep the mission on DISK in
-  human-owned files and re-read them from disk on every prompt. A summary can
+  owner-approved files and re-read them from disk on every prompt. A summary can
   never be the source of truth for what we are building.
 
 THE v3 MODEL
   - A north star is any file named NORTHSTAR.md or NORTHSTAR.<slug>.md sitting
     at a project level (same walk-up as before, closest level wins).
-  - Lifecycle lives INSIDE the file as a human-edited line near the top:
+  - Lifecycle lives INSIDE the file as an owner-approved line near the top:
         status: active | paused | closed
     No status line means ACTIVE (so every legacy NORTHSTAR.md keeps working).
-    Activation/pause/close/switch = the human edits one line. No renames, no
-    moves, no magic directory.
-  - Drafts (NORTHSTAR.<slug>.draft.md / NORTHSTAR.draft.md) are the ONLY
-    northstar-named files Claude may write; the human renames a draft to drop
-    ".draft" and that act locks + activates it.
+    Activation/pause/close/switch = Claude edits one line and the owner
+    approves it at the gate's prompt. No renames, no moves, no magic directory.
+  - Drafts (NORTHSTAR.<slug>.draft.md / NORTHSTAR.draft.md) are written and
+    revised freely. Making a draft final (saving it as NORTHSTAR.<slug>.md,
+    which activates it) is the one step that needs the owner's approval - the
+    gate's prompt. Since 2026-10-10 Claude does the save; the owner approves.
   - Injection: the closest walk-up directory holding at least one ACTIVE star
     wins, and ALL of its active stars inject. (A worktree lane's own star still
     shadows the portfolio star, exactly like v2's closest-wins.)
 
 SCOPE HONESTY (the C3 lesson)
   This is ADVISORY, not a control. It reminds; it does not enforce. The matching
-  ENFORCEMENT is protect_paths_gate.py blocking Write/Edit on every
-  NORTHSTAR*.md except *.draft.md, so the model cannot rewrite, pause, or close
-  a mission even if it ignores this reminder. The three-doors ROUTING is the
+  ENFORCEMENT is protect_paths_gate.py turning every Write/Edit on a live
+  NORTHSTAR*.md (anything except *.draft.md / *.template.md) into an owner
+  approval prompt, so the model cannot silently rewrite, pause, or close a
+  mission even if it ignores this reminder (Bash writes are NOT covered).
+  The three-doors ROUTING is the
   model's judgment - a hook cannot classify scope, and pretending it can would
   be a fail-open control. Never overclaim what this hook does.
 
@@ -153,11 +156,12 @@ def main() -> None:
                     "<northstar-status>\n"
                     "No ACTIVE north star, but inactive ones exist: " + names + "\n"
                     "Do not work toward them unless the user's request names one;\n"
-                    "reactivating is the HUMAN editing that file's 'status:' line (never\n"
-                    "you, by any tool). Otherwise proceed as in\n"
-                    "CLAUDE.md: state the milestone you are assuming in your first line\n"
-                    "and work within the request's scope. An assumed milestone grants no\n"
-                    "authority beyond the request; escalate only consequential ambiguity.\n"
+                    "reactivating is an edit to that file's 'status:' line that the\n"
+                    "owner approves at the gate's prompt (never via Bash). Otherwise\n"
+                    "proceed as in CLAUDE.md: state the milestone you are assuming in\n"
+                    "your first line and work within the request's scope. An assumed\n"
+                    "milestone grants no authority beyond the request; escalate only\n"
+                    "consequential ambiguity.\n"
                     "</northstar-status>"
                 )
             else:
@@ -168,7 +172,8 @@ def main() -> None:
                     "your first line and proceed within the request's scope. An assumed\n"
                     "milestone grants no authority beyond the request; escalate only\n"
                     "consequential ambiguity. Draft NORTHSTAR.<slug>.draft.md only if the\n"
-                    "user asks for a north star (the human renames it to activate).\n"
+                    "user asks for a north star; saving it as NORTHSTAR.<slug>.md makes\n"
+                    "it active, and the gate's prompt is the owner's approval.\n"
                     "</northstar-setup>"
                 )
         sys.exit(0)
@@ -197,21 +202,24 @@ def main() -> None:
         "<northstar>\n"
         f"LOCKED MISSION{plural.upper() or ''} - {len(blocks)} active north star file{plural}, "
         "re-read from disk every turn.\n"
-        "You cannot edit these files (a gate blocks Write/Edit on NORTHSTAR*.md;\n"
-        "only *.draft.md is writable). Work toward the active mission(s) below.\n"
+        "You may edit these files only with the owner's approval: the gate turns any\n"
+        "Write/Edit on NORTHSTAR*.md into an approval prompt (*.draft.md is free).\n"
+        "Work toward the active mission(s) below.\n"
         "Route anything extra through three doors and record it in WORKLOG.md:\n"
         "  1) small AND serves an active mission -> do it, log under Done.\n"
         "  2) bigger, worth doing, but a branch-off -> log under Roadmap, keep going.\n"
         "  3) would change a mission itself -> log under Needs your call using the\n"
         "     plain box; keep working the current mission(s) until the human answers.\n"
-        "Never edit a north-star file yourself by any tool (Bash included).\n"
-        "Never abandon, merge, pause, or close a mission on your own -\n"
-        "pausing/closing/switching is the human\n"
-        "editing that file's 'status:' line.\n"
+        "To change a mission: say in one or two plain lines what changes and why,\n"
+        "then make the edit and let the owner approve the prompt. Do not also ask\n"
+        "in chat, and never route around the prompt by any tool (Bash included).\n"
+        "Never abandon, merge, pause, or close a mission on your own\n"
+        "initiative - pausing/closing/switching is an edit to that file's\n"
+        "'status:' line that the owner approves.\n"
         "A NEW direction that deserves its own mission is not a conflict anymore:\n"
-        "draft NORTHSTAR.<slug>.draft.md beside these and the human renames it to\n"
-        "activate. To REPLACE an existing mission, draft the replacement the same\n"
-        "way and the human does the swap. Never treat a draft as active.\n"
+        "draft NORTHSTAR.<slug>.draft.md beside these, show it, and on approval\n"
+        "save it as NORTHSTAR.<slug>.md. To REPLACE a mission, draft the\n"
+        "replacement the same way. Never treat a draft as active.\n"
         + paused_note
         + "".join(
             f"----- {f.name} (active) -----\n{text}\n" for f, text in blocks

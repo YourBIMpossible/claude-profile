@@ -40,8 +40,14 @@ status: paused   (also: inactive)            -> kept, not injected
 status: closed   (also: done, archived)      -> finished, kept as history
 ```
 
-Open = human renames a draft in. Pause/close/switch = human edits one word.
-Nothing moves, nothing renames, nothing fights over a canonical path.
+Open = draft saved as the real file; pause/close/switch = one word edited. Nothing moves,
+nothing renames, nothing fights over a canonical path.
+
+> **Superseded 2026-10-10 (approval model):** the human no longer does these edits by
+> hand. Claude makes the edit (or saves the draft as the real file) and the owner
+> approves the prompt `protect_paths_gate` raises; drafts stay free. Wherever this
+> document says "the human renames/edits", read "the owner approves". The original text
+> below is kept as history.
 
 **Injection (northstar_inject.py, advisory):** walk up from cwd (unchanged, 6
 levels); the **closest directory holding at least one ACTIVE star wins, and all

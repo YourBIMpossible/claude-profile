@@ -59,7 +59,7 @@ class NorthstarInject(unittest.TestCase):
         self.assertIn("NORTHSTAR.old.md (paused)", out)
         self.assertIn("state the milestone you are assuming", out)
         self.assertNotIn("ask the user", out)
-        self.assertIn("never\nyou, by any tool", out)
+        self.assertIn("owner approves at the gate's prompt (never via Bash)", out)
         self.assertNotIn("Old mission.", out)
 
     def test_active_star_injects_text_and_doors(self) -> None:
@@ -68,9 +68,9 @@ class NorthstarInject(unittest.TestCase):
         self.assertIn("<northstar>", out)
         self.assertIn("Ship the widget.", out)
         self.assertIn("Needs your call", out)
-        self.assertIn("a gate blocks Write/Edit on NORTHSTAR*.md", out)
+        self.assertIn("the gate turns any\nWrite/Edit on NORTHSTAR*.md into an approval prompt", out)
         # The gate covers Write/Edit only; this rule covers every tool.
-        self.assertEqual(out.count("Never edit a north-star file yourself by any tool (Bash included)."), 1)
+        self.assertEqual(out.count("never route around the prompt by any tool (Bash included)."), 1)
 
 
 if __name__ == "__main__":

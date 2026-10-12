@@ -109,9 +109,11 @@ any moment without losing the job.
 - The guardrail is the locked mission set: if the project has north-star files
   (`NORTHSTAR.md` or `NORTHSTAR.<slug>.md` — one per workflow, many may be active at
   once), work toward the ACTIVE ones and re-read them each turn (the `northstar_inject`
-  hook feeds them in; a file's human-edited `status:` line decides active/paused/closed).
-  Never edit those files — `protect_paths_gate` blocks all `NORTHSTAR*.md` except
-  `*.draft.md`; only the human moves, pauses, or activates a mission.
+  hook feeds them in; a file's owner-approved `status:` line decides active/paused/closed).
+  Edit those files only through the approval prompt `protect_paths_gate` raises on
+  every live `NORTHSTAR*.md` (say what changes and why, make the edit, the owner
+  approves; never via Bash). `*.draft.md` drafts are free; the owner's approval of
+  the prompt is what moves, pauses, or activates a mission.
 - Route anything extra through three doors in `WORKLOG.md`: small-and-serves → do it, log
   under Done; bigger branch-off → Roadmap, keep going; would change the mission itself →
   Needs your call using the plain box, and keep working the current mission until the
