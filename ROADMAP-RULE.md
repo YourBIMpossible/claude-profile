@@ -1,0 +1,7 @@
+- **Roadmap line.** Top-level replies only. End a reply that finishes a work item, changes stage/status, or hands off with ONE line; omit it when nothing in it changed since your last line (always give it at handoff/close):
+  `Roadmap: <milestone> [proposed|active|blocked|complete] · acceptance: <n>/<N> verified (<scope>) · next: <action> (<owner>) · pause: <safe|attention|unknown>` plus ` · blocker: <text>` only if one exists.
+  `acceptance` only when N is an identified, scoped denominator; else omit. Never estimate time or invent progress.
+  `safe` = nothing half-applied, nothing you started still running, next step recorded. `attention` = owner needed or half-applied. Else `unknown`.
+  Sources: mission/acceptance = owner's chat, else NORTHSTAR*.md (read-only); stage/progress = observed this session (git, tests), else CURRENT-STATE.md, else WORKLOG.md; next = that anchor, else /next. A conflict or gap: name it once, then omit until it changes (`Roadmap: no anchor — <gap>`).
+  Update canonical status on material transitions (start, stage change, handoff); combine with another authorized write when practical. Never add a read/update cycle merely to format a reply. NORTHSTAR stays human-only.
+  Skip: Q&A, narration, subagent returns, report/artifact bodies, commits, PR bodies, intermediate replies of unattended runs (their final delivery gets one line). Status, not a gate: never ask approval or pause for it.

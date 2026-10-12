@@ -1,0 +1,7 @@
+{
+  "name": "owner-local",
+  "owner": { "name": "Owner" },
+  "plugins": [
+    { "name": "roadmap-band", "source": "./roadmap-band", "description": "Read-only Roadmap status band above the prompt" }
+  ]
+}

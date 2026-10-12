@@ -1,0 +1,6 @@
+{
+  "name": "roadmap-band",
+  "version": "0.3.0",
+  "description": "Read-only status band above the prompt. Shows the last Roadmap line the model reported (stage, next action, pause signal), verified against measured facts: working/idle, session and directory identity, status-anchor age and change, context and plan-limit usage. Zero model tokens. Writes nothing to disk.",
+  "author": { "name": "Owner" }
+}

@@ -76,3 +76,5 @@ Canonical rules: F:\BIMpossible-Workspace\WORKFLOW.md (one PR per coherent featu
 ready to merge). Never `git checkout`/switch branches in a tree another session is editing;
 never keep working on a branch that has already merged; before committing in a possibly-shared
 tree, `git diff --cached --stat` and confirm no foreign files/hunks.
+
+@F:/Claude-Profile/ROADMAP-RULE.md

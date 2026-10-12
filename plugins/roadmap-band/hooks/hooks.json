@@ -1,0 +1,4 @@
+{
+  "description": "Roadmap band above the prompt (read-only, no model tokens)",
+  "modules": ["./register.js"]
+}
