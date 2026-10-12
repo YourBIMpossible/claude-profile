@@ -60,6 +60,9 @@ UNKNOWN_VALUES = {"unknown", "?", "tbd"}
 BRIEF_KEYS = ["Objective", "Scope", "Boundaries", "Done means", "Extra findings", "Authority"]
 
 ORDINARY_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
+# Any fence opener whose info string starts with "grrp" (any case, any spacing, backticks or
+# tildes) is a grrp record attempt, never an ordinary example fence.
+GRRP_LIKE_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})[ \t]*grrp", re.I)
 BLOCK_OPEN_RE =re.compile(r"^```grrp-(criterion|finding|child|transfer)$")
 OWNER_WORD_RE = re.compile(r"\bowner\b", re.I)
 ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
@@ -100,8 +103,17 @@ def _brief_section(text: str) -> str:
     return m.group(1) if m else ""
 
 
+def _mentions_grrp_fence(line: str) -> bool:
+    return "```grrp" in line or GRRP_LIKE_FENCE_RE.match(line) is not None
+
+
 def parse(path: Path) -> Ledger:
-    """Line state machine: any line mentioning a ```grrp fence must be an exact, closed block."""
+    """Line state machine: any line mentioning a grrp fence must be an exact, closed block.
+
+    "Mentioning" covers the literal ```grrp substring anywhere on the line and any near-miss
+    opener (space after the backticks, GRRP in another case, tildes); none of them may be
+    silently read as an ordinary example fence, because the record inside would be dropped.
+    """
     text = path.read_text(encoding="utf-8")
     led = Ledger(path=path, text=text)
     led.brief = {k: v.strip() for k, v in BRIEF_RE.findall(_brief_section(text))}
@@ -117,20 +129,20 @@ def parse(path: Path) -> Ledger:
             s = line.strip()
             if s and set(s) == {other[0]} and len(s) >= len(other):
                 other = None
-            elif "```grrp" in line:
+            elif _mentions_grrp_fence(line):
                 # Fail closed: a record inside another fence would be invisible to the gate.
                 led.errors.append(f"line {n}: grrp block inside the fence opened at line {other_start}; "
                                   "ledgers hold no example blocks")
             continue
         if kind is None:
             fm = ORDINARY_FENCE_RE.match(line)
-            if fm and "```grrp" not in line:
+            if fm and not _mentions_grrp_fence(line):
                 other, other_start = fm.group(1), n  # ordinary fence: examples inside are prose
                 continue
             m = BLOCK_OPEN_RE.match(line)
             if m:
                 kind, rec, start = m.group(1), {}, n
-            elif "```grrp" in line:
+            elif _mentions_grrp_fence(line):
                 led.errors.append(f"line {n}: malformed grrp fence {_q(line.strip())} (exact '```grrp-<kind>' at column 0)")
             continue
         if line == "```":

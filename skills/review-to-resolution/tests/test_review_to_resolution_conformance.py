@@ -267,6 +267,34 @@ class PilotRegressions(Base):
         indented = "\n".join("  " + ln for ln in finding("F-052", resolution="open").splitlines())
         self.assertEqual(self.verdict(self.ledger(indented, name="2026-10-05-i.ledger.md"))["verdict"], "invalid")
 
+    def test_near_miss_grrp_fence_is_invalid_not_dropped(self) -> None:
+        # SA-1 (2026-10-12): each of these matched ORDINARY_FENCE_RE but not the "```grrp" substring,
+        # so the open finding inside was skipped as example prose and the gate reported complete.
+        open_finding = finding("F-053", resolution="open")
+        cases = {
+            "space": ("``` grrp-finding", "```"),
+            "case": ("```GRRP-finding", "```"),
+            "tilde": ("~~~grrp-finding", "~~~"),
+        }
+        for name, (opener, closer) in cases.items():
+            body = open_finding.replace("```grrp-finding", opener, 1)
+            if closer != "```":
+                body = body[: body.rfind("```")] + closer + body[body.rfind("```") + 3:]
+            r = self.verdict(self.ledger(body, name=f"2026-10-12-{name}.ledger.md"))
+            self.assertEqual(r["verdict"], "invalid", name)
+            self.assertFalse(r["closeable"], name)
+            self.assertTrue(any("malformed grrp fence" in e for e in r["validation_errors"]), (name, r))
+
+    def test_non_grrp_info_string_is_still_an_ordinary_fence(self) -> None:
+        # A quoted example whose info string starts with another word, or only mentions grrp
+        # later, is prose: the guard keys on the info string *starting* with grrp.
+        for fence in ("``` python", "```text grrp", "~~~ md"):
+            close = fence[:3]
+            example = f"\n{fence}\nid: F-999\nresolution: open\n{close}\n"
+            r = self.verdict(self.ledger(example, name=f"2026-10-12-ord-{len(fence)}.ledger.md"))
+            self.assertEqual(r["verdict"], "complete", fence)
+            self.assertEqual(r["validation_errors"], [], fence)
+
     def test_unclosed_fence_is_invalid_and_linear(self) -> None:
         import time
         p = self.ledger("\n```grrp-finding\nid: F-0\n" * 20000)
