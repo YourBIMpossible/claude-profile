@@ -1,5 +1,7 @@
 """Fixture tests for protect_paths_gate.py — run the real script as a subprocess
-with real stdin payloads, assert exit codes. Exit 0 = allow, 2 = block.
+with real stdin payloads, assert exit codes. Exit 0 = allow, 2 = block. Live
+north-star files are a third class: exit 0 plus a permissionDecision "ask" JSON on
+stdout (owner approval prompt), never a silent allow and never a hard block.
 
 Run: python hooks/tests/test_protect_paths_gate.py  (from the repo root or anywhere)
 """
@@ -11,16 +13,23 @@ from pathlib import Path
 GATE = Path(__file__).resolve().parent.parent / "protect_paths_gate.py"
 
 
-def run_gate(stdin_text: str) -> int:
+def run_gate_full(stdin_text: str) -> "tuple[int, str]":
     proc = subprocess.run(
         [sys.executable, str(GATE)],
         input=stdin_text, capture_output=True, text=True, timeout=15,
     )
-    return proc.returncode
+    return proc.returncode, proc.stdout
 
 
-def payload(file_path) -> str:
-    return json.dumps({"tool_name": "Write", "tool_input": {"file_path": file_path}})
+def run_gate(stdin_text: str) -> int:
+    return run_gate_full(stdin_text)[0]
+
+
+def payload(file_path, mode="default") -> str:
+    body = {"tool_name": "Write", "tool_input": {"file_path": file_path}}
+    if mode is not None:
+        body["permission_mode"] = mode
+    return json.dumps(body)
 
 
 BLOCKED = [
@@ -48,7 +57,33 @@ BLOCKED = [
     json.dumps({"tool_name": "Write", "tool_input": {"file_path": 42}}),
 ]
 
+# Live north-star files: owner approval prompt (exit 0 + "ask"), not a block.
+ASKED = [
+    payload("F:/BIMpossible/NORTHSTAR.md"),
+    payload("F:\\BIMpossible\\NORTHSTAR.md"),                     # backslashes
+    payload("proj/northstar.md"),                                  # case
+    payload("proj/NORTHSTAR.share-link.md"),
+    payload("proj/NORTHSTAR.v2.final.md"),                         # slug with dots
+]
+
+# Live north-star files where a prompt cannot be guaranteed: hard block, never a silent allow.
+NS = "F:/BIMpossible/NORTHSTAR.md"
+BLOCKED += [
+    payload(NS, "bypassPermissions"),
+    payload(NS, "dontAsk"),
+    payload(NS, None),                                             # mode missing
+    payload(NS, "somethingNew"),                                   # unknown mode
+]
+ASKED += [payload(NS, "acceptEdits"), payload(NS, "plan"), payload(NS, "auto")]
+
 ALLOWED = [
+    payload("proj/NORTHSTAR.draft.md"),                            # drafts stay free
+    payload("proj/NORTHSTAR.draft.md", "bypassPermissions"),       # ... in every mode
+    payload("proj/NORTHSTAR.draft.md", None),
+    payload("proj/NORTHSTAR.share-link.draft.md"),
+    payload("templates/NORTHSTAR.template.md"),
+    payload("proj/NORTHSTAR-notes.md"),                            # not a north-star file
+    payload("proj/northstar_inject.py"),
     payload("F:/BIMpossible/backend/main.py"),
     payload("F:/BIMpossible/.env.example"),
     payload(".env.template"),
@@ -70,9 +105,22 @@ def run_checks() -> list[str]:
         if rc != 2:
             failures.append(f"expected BLOCK(2), got {rc}: {p[:90]}")
     for p in ALLOWED:
-        rc = run_gate(p)
+        rc, out = run_gate_full(p)
         if rc != 0:
             failures.append(f"expected ALLOW(0), got {rc}: {p[:90]}")
+        elif out.strip():
+            failures.append(f"expected silent ALLOW, got stdout {out[:60]!r}: {p[:90]}")
+    for p in ASKED:
+        rc, out = run_gate_full(p)
+        try:
+            decision = json.loads(out)["hookSpecificOutput"]
+            ok = (decision["hookEventName"] == "PreToolUse"
+                  and decision["permissionDecision"] == "ask"
+                  and bool(decision["permissionDecisionReason"]))
+        except Exception:
+            ok = False
+        if rc != 0 or not ok:
+            failures.append(f"expected ASK (rc 0 + ask JSON), got rc {rc} stdout {out[:60]!r}: {p[:90]}")
     return failures
 
 
@@ -84,13 +132,13 @@ def test_protect_paths_gate() -> None:
 
 def main() -> int:
     failures = run_checks()
-    total = len(BLOCKED) + len(ALLOWED)
+    total = len(BLOCKED) + len(ALLOWED) + len(ASKED)
     if failures:
         print(f"FAIL {len(failures)}/{total}:")
         for f in failures:
             print("  " + f)
         return 1
-    print(f"OK - {total} fixtures ({len(BLOCKED)} blocked, {len(ALLOWED)} allowed)")
+    print(f"OK - {total} fixtures ({len(BLOCKED)} blocked, {len(ASKED)} ask, {len(ALLOWED)} allowed)")
     return 0
 
 

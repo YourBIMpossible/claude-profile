@@ -41,7 +41,7 @@ are exempt: they live entirely inside settings.json.
 | `session-start-pull.ps1` | SessionStart | convenience | `~/.claude/hooks/` (pinned; `$repoRoot` hardcoded) |
 | `ctxdex_autoindex.py` | PostToolUse Bash | convenience | `~/.claude/hooks/` |
 | `decay_reminder.py` | UserPromptSubmit | **advisory** reminder (C2) | `~/.claude/hooks/` |
-| `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; also locks all `NORTHSTAR*.md` except `*.draft.md`) | `~/.claude/hooks/` |
+| `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; live `NORTHSTAR*.md` edits raise an owner approval prompt, `*.draft.md` free) | `~/.claude/hooks/` |
 | `northstar_inject.py` | SessionStart (`startup\|resume\|clear`) + UserPromptSubmit | **advisory** — injects the active locked mission(s) at session start and re-injects them each turn (scope-governor v3, multi-star) | `~/.claude/hooks/` |
 | `skill-detection-hook.json` | PostToolUse (Revit MCP) | prompt-type, enabled 2026-08-08 | n/a (JSON in settings.json) |
 | `evidence_evacuate.py` | Stop + SessionEnd | **convenience** — Evidence Compiler measurement plan S0.1: copies any EC packet in `$CLAUDE_PROJECT_DIR`/payload `cwd` `.evidence-compiler/packets/` that `F:/Evidence-Archive/EC-LIVE` lacks, via `F:/Claude-Tools/evidence-archive/evacuate_worktree.py --apply` (sha256-verified, never deletes/overwrites, local-only). A packet counts as archived only when a byte-identical copy is in `packets/` or the evacuator's quarantine (a partial copy is retried). No-op = one listing + one stat per packet (a packet is hashed only against a same-size archive copy). One shared 25 s budget covers the pre-check hashing and evacuator calls across checkouts (a checkout it cannot finish checking is a surfaced deferral); one checkout's failure never skips the rest. Always exit 0 (a Stop hook exiting 2 would block the stop); any failure is surfaced as a `systemMessage`, not just logged; a SessionEnd failure is also appended as its own entry under `evidence_evacuate.pending/` and shown by the next Stop, which deletes only the entries it has printed (an interrupted Stop keeps them; an unreadable entry is shown, never dropped). SessionEnd also sweeps the repo root + every `<root>/.claude/worktrees/*` (the `--sweep` backstop's caller); `--sweep <repo-root>...` exits 1 on failure. Opt-out `EVIDENCE_EVACUATE=0`. Self-test: `python hooks/tests/test_evidence_evacuate.py` or `pytest hooks/tests` (needs the real evacuator; `EVIDENCE_TEST_EVACUATOR` overrides its path, a missing one fails). | `~/.claude/hooks/` |
@@ -94,8 +94,8 @@ removed on 2026-08-07 (`docs/adr/0002-defer-context-budget-automation.md`).
 
 One **control**, fail-closed (block on its own failure — malformed payload, missing
 field, any exception → exit 2): `protect_paths_gate.py` (protected paths on Write/Edit,
-including every locked north-star mission file — `NORTHSTAR.md` and
-`NORTHSTAR.<slug>.md`; only `*.draft.md` is writable). Everything else is advisory or
+plus an owner-approval prompt on every live north-star mission file — `NORTHSTAR.md` and
+`NORTHSTAR.<slug>.md`; `*.draft.md` is free; since 2026-10-10, see below). Everything else is advisory or
 convenience — a failure there changes nothing about safety.
 
 Scope honesty:
@@ -104,14 +104,17 @@ Scope honesty:
   never describe Bash-side protection as a control.
 - **northstar_inject** (scope-governor v3, multi-star — 2026-08-15; full model in
   `docs/northstar-multi-design.md`): ADVISORY. A project may carry MANY north stars
-  (`NORTHSTAR.md`, `NORTHSTAR.<slug>.md`); each file's own human-edited `status:` line
+  (`NORTHSTAR.md`, `NORTHSTAR.<slug>.md`); each file's own owner-approved `status:` line
   (absent = active; `paused`/`closed` = inactive) decides what injects — no renames, no
   magic location. Each turn the hook re-reads from disk all ACTIVE stars in the closest
   walk-up directory holding one, and injects them + the three-doors routing rule, so the
   plan cannot drift through a rolling context summary. It does not enforce — the matching
-  enforcement is protect_paths_gate blocking edits to `NORTHSTAR*.md` (only the human
-  moves, pauses, closes, or activates a mission; Claude may only write `*.draft.md`,
-  which the human renames to lock in). Whether an extra is a tag-along / roadmap item /
+  enforcement is protect_paths_gate turning every Write/Edit on a live `NORTHSTAR*.md`
+  into an owner approval prompt (Claude edits, the owner approves; `*.draft.md` is
+  free). The prompt fires only in permission modes where it is reliable (`ASK_MODES`
+  in the gate: default, acceptEdits, plan, auto); in bypassPermissions, dontAsk, or an
+  unknown/missing mode the edit is hard-blocked instead. acceptEdits has not been
+  live-tested. Bash writes are not covered. Whether an extra is a tag-along / roadmap item /
   mission-change is the model's judgment; a hook cannot classify scope, so this is not
   dressed up as a control. v2 (single hard-coded `NORTHSTAR.md`) superseded the G6
   loop-grant gate + G7 reground reminder (removed 2026-08-08); v3 removed v2's
