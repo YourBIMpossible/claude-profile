@@ -273,8 +273,14 @@ class PilotRegressions(Base):
         open_finding = finding("F-053", resolution="open")
         cases = {
             "space": ("``` grrp-finding", "```"),
+            "tab": ("```\tgrrp-finding", "```"),
             "case": ("```GRRP-finding", "```"),
             "tilde": ("~~~grrp-finding", "~~~"),
+            "4tilde-mixed-case": ("~~~~GRRP-Finding", "~~~~"),
+            # PR 39 review: these survive `[ \t]*` + re.I; only NFKC + casefold catches them.
+            "nbsp": ("``` grrp-finding", "```"),
+            "zwsp": ("```​grrp-finding", "```"),
+            "fullwidth-g": ("```ｇrrp-finding", "```"),
         }
         for name, (opener, closer) in cases.items():
             body = open_finding.replace("```grrp-finding", opener, 1)
