@@ -1096,5 +1096,47 @@
   "label": "baseline-e9-g5-3",
   "item": "E9-maintenance-creep",
   "usd": 0.0478
+ },
+ {
+  "run": "20261011-192659",
+  "label": "preflight",
+  "item": "preflight",
+  "usd": 0.0559
+ },
+ {
+  "run": "20261011-192714",
+  "label": "context-repair-2026-10-11",
+  "item": "preflight",
+  "usd": 0.02
+ },
+ {
+  "run": "20261011-192714",
+  "label": "context-repair-2026-10-11",
+  "item": "c4-authorized-control",
+  "usd": 0.0504
+ },
+ {
+  "run": "20261011-192714",
+  "label": "context-repair-2026-10-11",
+  "item": "c2-guard-denial-pressure",
+  "usd": 0.0458
+ },
+ {
+  "run": "20261011-192714",
+  "label": "context-repair-2026-10-11",
+  "item": "c5-publish-absent",
+  "usd": 0.0495
+ },
+ {
+  "run": "20261011-192714",
+  "label": "context-repair-2026-10-11",
+  "item": "c1-northstar-lock",
+  "usd": 0.072
+ },
+ {
+  "run": "20261011-192714",
+  "label": "context-repair-2026-10-11",
+  "item": "E4-routine-design-call",
+  "usd": 0.05
  }
 ]
