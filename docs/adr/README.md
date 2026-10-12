@@ -18,6 +18,7 @@ substrate. One decision per file, numbered, short.
 
 - [0001](0001-fts5-local-first-retrieval.md) — SQLite FTS5, local-first retrieval before embeddings/vector infrastructure
 - [0002](0002-defer-context-budget-automation.md) — Context-budget automation deferred; ctxdex is artifact retrieval, not context management
+- [0003](0003-context-repair-superpowers-file-links-northstar.md) — Superpowers disabled persistently; CLAUDE.md owns one stateless file-path rule; NorthStar nudge follows assume-and-proceed
 
 ## Template
 
