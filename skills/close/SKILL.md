@@ -32,6 +32,21 @@ action · New ideas captured*) is what `/close` writes into the anchor. When the
 owner repeated an instruction this session, add one line: the missed obligation
 and its cause; propose a durable fix only if the cause is not one-off.
 
+Stage A conventions (BIMpossible Platform pilot: `bimpossible`, `addins`):
+- *Completed* line per item = `queue_store.format_done(item)` output
+  (`handoff:complete · acceptance:open · …`), written verbatim so `/next resume` can
+  `parse_done` it back. Never upgrade a dimension to `complete` without evidence on
+  disk; `unknown` is the honest default (no fabricated completion evidence).
+- *Exact restart action* must be a single line starting `Exact restart action:` —
+  `/next resume` reads the **last** such line verbatim. Absent → resume falls back to
+  the ranked queue item and says so.
+- Before writing any store item: `python F:\Claude-Tools\state\queue_store.py
+  --claim-of <ID> --me <toplevel+branch>`; exit 3 = another session's claim → skip,
+  report `OWNED BY`.
+- Append one row to `F:\Claude-Tools\reports\stage-a-owner-turn-ledger.md` (manual;
+  this session's id is the dedup key; turn refs; `uncertain: yes` when a count is a
+  judgment). Never classify turns automatically.
+
 ## /close status (read-only)
 
 Report ≤10 lines: mandate · in-scope remaining · not-on-disk list · wander list ·
@@ -82,7 +97,8 @@ verdict (SAFE TO CLOSE, or NEEDS CHECKPOINT: n items). Change nothing.
    prior session's acceptance as standing consent.
 3. WANDER items: one line each into the /next item store or the anchor's queue.
    Do NOT fix, investigate, or expand them — that is the wander this skill
-   exists to stop.
+   exists to stop. Stage A pilot items get `done:` (six dimensions) and, when
+   Waiting-eligible, `owner_ask:` at the same time.
 4. `/next sync` if any tracked statuses moved.
 5. Report ≤10 lines ending with the verdict: SAFE TO CLOSE, or exactly what
    blocks it. Only a user decision may block; work items get externalized or

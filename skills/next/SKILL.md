@@ -44,6 +44,8 @@ and the ranking algorithm before writing to the store.
 
 ## Modes
 
+`bare` · drill · `resume` · `waiting` · `roadmap` · `sync` · `init` · `all deep`. Only `sync`/`init`/`all deep` write.
+
 Dispatch on the argument. Unrecognized argument → try to resolve it as a project name or alias from
 the registry; if it resolves to nothing, show the board and say the name was not recognized.
 
@@ -92,6 +94,23 @@ If any `live_check` contradicts stored `verification`, see Anti-drift below — 
 
 If the watermark is older than 7 days, print the staleness banner and **do not name a #1 move without
 first offering `sync`**. A confident answer off a stale store is the exact failure mode this replaces.
+
+### `<target> resume` — restart from records (Stage A, read-only)
+
+`python F:\Claude-Tools\state\resume_queue.py --resume <key>`. Prints: watermark vs live HEAD and
+the project-leg freshness; items `in_flight` with claim identity and `STALE CLAIM (>24h, not
+auto-released)`; the anchor's last *Exact restart action* line **verbatim** with its git date/author
+(anchor path = optional `anchor:` in `projects.yaml`); the ranked #1 actionable item with freshness;
+the Waiting count. No anchor or no bookend → `no recorded next action (…)` and the #1 is labelled
+`fallback from queue, not a recorded next action` — never a rewritten narrative (AC07). Never writes.
+
+### `waiting` / `<target> waiting` — what only the owner can move (Stage A, read-only)
+
+`python F:\Claude-Tools\state\resume_queue.py --waiting [--project <key>]`. Lists the Waiting set
+(`reference/item-model.md` § Waiting set) ranked like the board, each with `ask:` (or
+`UNSPECIFIED ⚠`), verification level/date, and per-leg freshness; done/status mismatches print
+inline. Parked prints as a trailing count only. Missing asks are counted at the end — `sync`
+supplies them, this mode never does.
 
 ### `<target> roadmap` — whole project, live
 

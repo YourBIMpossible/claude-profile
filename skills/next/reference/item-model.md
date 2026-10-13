@@ -23,6 +23,17 @@ re-parsed.
   status: blocked_owner         # closed vocabulary, see below
   owner_gate: true              # true = only the human can advance it
   owner: null                   # claiming session's identifier, or null if unclaimed — see Claiming below
+  owner_ask: "approve #819"     # Stage A: the one thing the owner must do. Required on every
+                                # Waiting-eligible item; missing -> soft defect + `ask: UNSPECIFIED ⚠`.
+                                # Precedence: owner_ask, else owner_steps[0], else unspecified.
+  done:                         # Stage A: six-dimension completion map. Values: complete|open|unknown|n/a.
+    handoff: complete           # Missing field or dimension reads as `unknown`, never as `complete`.
+    acceptance: open
+    integration: complete
+    validation: open
+    deployment: n/a
+    cleanup: unknown
+  done_note: "validation waits on Revit end-user run"   # optional free text, string only
   unblocks: [P9-1, P10-1, P13-promote, P15d]
                                 # direct downstream item ids. Drives the primary ranking axis.
   blocked_by: []                # upstream item ids that must land first
@@ -99,7 +110,51 @@ extra invariants apply, both machine-enforced by `dormancy_defects`:
   marker so the active leg's evidence never hides the unverified one. (`partial` is a real stored
   level; `SUSPENDED` remains render-only, for the all-dormant case above.)
 
+## Completion semantics (Stage A, shared with `/close`)
+
+`done` is the only completion vocabulary; status is not completion. Consistency rules (soft defects,
+reported by `queue_store.py`, driven to zero by `sync`, never auto-corrected):
+
+- `live` → `integration`, `deployment`, `validation` each ∈ {complete, n/a}
+- `landed` → `integration: complete`, `validation` ∈ {open, unknown}
+- `blocked_owner` → at least one dimension `open`
+
+`/close` writes its *Completed* bookend line from `queue_store.format_done(item)`
+(`handoff:complete · acceptance:open · …`); `parse_done` inverts it exactly, so the anchor prose and
+the store cannot drift. AC04 (local vs integration/publication vs verification distinguishable) is
+read off this map, not inferred from status.
+
+## Freshness (Stage A, read-only, `resume_queue.py`)
+
+Evaluated per project leg; a multi-leg item prints worst-of **and** every leg. First match wins:
+
+| State | Meaning |
+|---|---|
+| `UNREADABLE` | repo path missing or git failed — stored observation printed unchanged |
+| `UNRECONCILED` | no `reconciled.<key>` watermark |
+| `STALE` | watermark older than `STALE_DAYS = 7` — offer `sync` before naming a move |
+| `MOVED` | a `kind: commit` evidence sha is not in HEAD's lineage (rewritten / other branch) |
+| `TOUCHED` | a doc/log/flag evidence path changed since `verification.at` (same-day counts) |
+| `BEHIND` | watermark not in HEAD lineage, or HEAD ≠ watermark and `verification.at` < sweep date |
+| `FRESH` | none of the above |
+| `SUSPENDED` | dormant leg — printed, excluded from worst-of |
+
+A new commit alone never invalidates an item (no status change, no level downgrade); it can only
+lower confidence to `BEHIND`. PR refs never drive `MOVED`. Unresolvable shas are ignored, not errors.
+
+## Waiting set (Stage A)
+
+W = `blocked_owner` ∪ (`owner_gate: true` ∧ status ∈ {`ready`, `landed`}). `parked` is an owner
+choice, reported only as a trailing count. Empty `blocked_by`/`unblocks` is **not** readiness.
+
 ## Claiming (concurrent-session safety)
+
+**Claim vs role label.** `owner` is overloaded in the live store (`owner`, `agent`, `Zeriah`,
+`zeria`, null, plus real identifiers). Only a value shaped like a path, a worktree, or a
+`branch/with-slash` is a *claim* (`queue_store.claim_kind` → `claim`); bare words are *role labels*,
+inert for write protection and reported `(D3: left as-is)` — no normalization sweep. A non-null
+`owner` therefore does **not** mean the item is in flight; only `status: in_flight` does.
+Probe before writing: `python queue_store.py --claim-of <ID> --me <ident>` → exit 3 = foreign claim.
 
 `owner` stops two concurrent sessions from writing conflicting updates to the same item during
 `sync` — this workspace already forbids two sessions sharing one checkout (CLAUDE.md), and `sync`
