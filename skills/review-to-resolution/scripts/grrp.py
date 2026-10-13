@@ -245,6 +245,12 @@ def validate(led: Ledger) -> list[str]:
         for key in ("source", "owner", "requirement"):
             if _blank(f.get(key)):
                 errs.append(f"{_q(fid)}: '{key}' must never be empty")
+        # Required keys whose value may be the canonical empty ('none' / blank) must still be written:
+        # an omitted key is never read as a default.
+        for key, hint in (("lane", "parent, external or a child id"), ("blocks", "write 'none' when empty"),
+                          ("evidence", "write 'none' when empty")):
+            if key not in f:
+                errs.append(f"{_q(fid)}: required key '{key}' missing ({hint})")
         req = f.get("requirement", "")
         if not _blank(req) and req not in crit_ids and not req.startswith("n/a"):
             errs.append(f"{_q(fid)}: requirement '{_q(req)}' is not a criterion id (or 'n/a: <reason>')")
@@ -253,8 +259,8 @@ def validate(led: Ledger) -> list[str]:
         for b in _list(f.get("blocks")):
             if b not in crit_ids:
                 errs.append(f"{_q(fid)}: blocks unknown criterion '{_q(b)}'")
-        lane = f.get("lane", "parent")
-        if lane not in {"parent", "external"} and lane not in child_ids:
+        lane = f.get("lane")
+        if lane is not None and lane not in {"parent", "external"} and lane not in child_ids:
             errs.append(f"{_q(fid)}: lane '{_q(lane)}' is not parent/external/a child id")
 
         assess, res = f.get("assessment"), f.get("resolution")
@@ -278,6 +284,10 @@ def validate(led: Ledger) -> list[str]:
         for name in sorted({n for n in names if names.count(n) > 1}):
             errs.append(f"{_q(fid)}: obligation '{_q(name)}' repeated")
         obl = _obligations(f)
+        if res == "resolved":
+            for name in OBLIGATIONS:
+                if name not in obl:
+                    errs.append(f"{_q(fid)}: resolved without '{name}' obligation (done:<evidence> or n/a:<reason>)")
         for name, (ost, detail) in obl.items():
             if name not in OBLIGATIONS:
                 errs.append(f"{_q(fid)}: unknown obligation '{_q(name)}'")
@@ -359,7 +369,7 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
             incomplete.append(f"{_q(fid)}: not assessed")
         blocks = _list(f.get("blocks"))
         if blocks and f.get("resolution") == "open":
-            why = "protected surface" if f.get("authority") == "protected" else f"lane {_q(f.get('lane', 'parent'))}"
+            why = "protected surface" if f.get("authority") == "protected" else f"lane {_q(f.get('lane', 'missing'))}"
             blocked.append(f"{_q(fid)}: open, blocks {', '.join(_q(b) for b in blocks)} ({why})")
         if f.get("resolution") == "resolved":
             for name, (ost, _) in _obligations(f).items():

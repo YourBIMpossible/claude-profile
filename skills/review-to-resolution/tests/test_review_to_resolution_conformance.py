@@ -147,7 +147,8 @@ class ProtocolScenarios(Base):
     def test_merged_and_pending_deploy_is_incomplete_not_complete(self) -> None:
         r = self.verdict(self.ledger(finding(
             "F-016", execution_state="integrated",
-            obligations="review=done:pr 12; integration=done:merged abc; deployment=pending; verification=pending")))
+            obligations="review=done:pr 12; integration=done:merged abc; deployment=pending; verification=pending; "
+            "cleanup=pending")))
         self.assertEqual(r["verdict"], "incomplete")
 
     def test_changed_consequences_require_fresh_action_approval(self) -> None:
@@ -173,7 +174,8 @@ class ProtocolScenarios(Base):
 
     def test_protected_progress_needs_owner_action_and_stays_protected(self) -> None:
         f = dict(classification="independent", lane="external", authority="protected", execution_state="integrated",
-                 evidence="copied by agent without approval", obligations="review=n/a:storage; integration=done:x")
+                 evidence="copied by agent without approval", obligations="review=n/a:storage; integration=done:x; "
+                 "deployment=n/a:storage; verification=n/a:storage; cleanup=n/a:nothing created")
         r = self.verdict(self.ledger(finding("F-032", **f)))
         self.assertEqual(r["verdict"], "invalid")
         self.assertIn("unauthorized action", " ".join(r["validation_errors"]))
@@ -334,7 +336,9 @@ class PilotRegressions(Base):
 
     def test_comma_in_obligation_evidence_is_kept(self) -> None:
         r = self.verdict(self.ledger(finding("F-056", execution_state="reviewed",
-                                             obligations="review=done:PR 3, line 4")))
+                                             obligations="review=done:PR 3, line 4; integration=n/a:review-only; "
+                                                         "deployment=n/a:review-only; verification=n/a:review-only; "
+                                                         "cleanup=n/a:nothing created")))
         self.assertEqual(r["verdict"], "complete")
 
     def test_brief_and_header_read_only_from_their_sections(self) -> None:
@@ -525,6 +529,76 @@ class Enrollment(unittest.TestCase):
         head = (REPO / "skills" / "review-to-resolution" / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
         self.assertIn("name: review-to-resolution", head)
         self.assertIn("description:", head)
+
+
+class FindingContractSA5(Base):
+    """2026-10-12 slop audit SA-5 (option A): the documented finding contract is enforced, not defaulted."""
+
+    def errors(self, **kw: str) -> list[str]:
+        return self.verdict(self.ledger(finding("F-070", **kw)))["validation_errors"]
+
+    def test_omitted_required_keys_are_invalid(self) -> None:
+        for key in ("lane", "blocks", "evidence"):
+            with self.subTest(key=key):
+                p = self.ledger(finding("F-071", obligations=REVIEW_ONLY_OBL))
+                head, _, tail = p.read_text(encoding="utf-8").rpartition(f"\n{key}: ")  # the finding's key
+                p.write_text(head + "\nx_dropped: " + tail, encoding="utf-8")
+                r = self.verdict(p)
+                self.assertEqual(r["verdict"], "invalid")
+                self.assertTrue(any(e.startswith(f"F-071: required key '{key}' missing") for e in r["validation_errors"]))
+
+    def test_canonical_empty_values_are_valid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-072", resolution="open", classification="independent",
+                                             source="discovered", requirement="n/a: unrelated", blocks="none",
+                                             evidence="none", lane="external")))
+        self.assertEqual(r["validation_errors"], [])
+
+    def test_resolved_with_omitted_obligations_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-073", obligations="")))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertFalse(r["closeable"])
+        for name in ("review", "integration", "deployment", "verification", "cleanup"):
+            self.assertIn(f"F-073: resolved without '{name}' obligation (done:<evidence> or n/a:<reason>)",
+                          r["validation_errors"])
+
+    def test_lane_none_is_not_a_valid_lane(self) -> None:
+        self.assertIn("F-070: lane 'none' is not parent/external/a child id",
+                      self.errors(lane="none", obligations=REVIEW_ONLY_OBL))
+
+    def test_resolved_with_obligations_none_is_invalid(self) -> None:
+        errs = self.errors(obligations="none")
+        self.assertEqual(len([e for e in errs if "resolved without" in e]), 5, errs)
+
+    def test_unknown_obligation_does_not_stand_in_for_a_required_one(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("cleanup=n/a:nothing created", "teardown=done:x"))
+        self.assertIn("F-070: resolved without 'cleanup' obligation (done:<evidence> or n/a:<reason>)", errs)
+
+    def test_resolved_with_one_omitted_obligation_is_invalid(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("; cleanup=n/a:nothing created", ""))
+        self.assertEqual(errs, ["F-070: resolved without 'cleanup' obligation (done:<evidence> or n/a:<reason>)"])
+
+    def test_resolved_with_pending_obligation_is_incomplete(self) -> None:
+        r = self.verdict(self.ledger(finding("F-074", obligations=REVIEW_ONLY_OBL.replace(
+            "deployment=n/a:review-only run", "deployment=pending"))))
+        self.assertEqual(r["verdict"], "incomplete")
+        self.assertIn("F-074: deployment obligation pending", r["incomplete"])
+
+    def test_resolved_with_unjustified_na_is_invalid(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("cleanup=n/a:nothing created", "cleanup=n/a"))
+        self.assertTrue(any(e.startswith("F-070: obligation cleanup=") and "needs evidence or reason" in e
+                            for e in errs), errs)
+
+    def test_resolved_with_full_documented_obligations_is_complete(self) -> None:
+        r = self.verdict(self.ledger(finding("F-075", obligations=REVIEW_ONLY_OBL)))
+        self.assertEqual(r["verdict"], "complete")
+        self.assertEqual(r["validation_errors"], [])
+
+    def test_open_finding_needs_no_obligations(self) -> None:
+        r = self.verdict(self.ledger(finding("F-076", resolution="open", classification="independent",
+                                             source="discovered", requirement="n/a: unrelated", obligations=""),
+                                     block("transfer", "id: T-76\nfindings: F-076\nreceiver: queue:CT-S\n"
+                                                       "next_action: fix\nacceptance: test\nfollow_up: /next sync")))
+        self.assertEqual(r["validation_errors"], [])
 
 
 if __name__ == "__main__":
