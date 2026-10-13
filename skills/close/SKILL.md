@@ -41,7 +41,7 @@ Stage A conventions (BIMpossible Platform pilot: `bimpossible`, `addins`):
   `/next resume` reads the **last** such line verbatim. Absent → resume falls back to
   the ranked queue item and says so.
 - Before writing any store item: `python F:\Claude-Tools\state\queue_store.py
-  --claim-of <ID> --me <toplevel+branch>`; exit 3 = another session's claim → skip,
+  --claim-of <ID> --me <worktree toplevel> --me <branch>`; exit 3 = another session's claim → skip,
   report `OWNED BY`.
 - Append one row to `F:\Claude-Tools\reports\stage-a-owner-turn-ledger.md` (manual;
   this session's id is the dedup key; turn refs; `uncertain: yes` when a count is a
