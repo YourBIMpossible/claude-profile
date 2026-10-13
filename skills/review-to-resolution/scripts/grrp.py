@@ -10,7 +10,7 @@ Commands:
   init   --slug S [--dir D] [--objective TEXT]   create the ledger, or return the existing one
   status LEDGER                                  resume view: checkpoint, open items, known ids
   gate   LEDGER [--json]                         completion verdict
-  metrics LEDGER                                 pilot measurements
+  metrics LEDGER [--queue Q]                     pilot measurements
 
 Gate exit codes: 0 complete, 1 incomplete, 2 blocked, 3 invalid ledger.
 Stdlib only; Python 3.10+.
@@ -321,7 +321,10 @@ def transfer_acceptance(t: dict[str, str], ledger_path: Path, queue: Path | None
         qid = recv[len("queue:"):].strip()
         if queue is None or not queue.is_file():
             return f"queue store not readable ({queue}); cannot confirm {_q(qid)}"
-        text = queue.read_text(encoding="utf-8")
+        try:
+            text = queue.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            return f"queue store not readable ({queue}: {type(e).__name__}); cannot confirm {_q(qid)}"
         m = re.search(rf"^- id: {re.escape(qid)}\s*$(.*?)(?=^- id: |\Z)", text, re.M | re.S)
         if not m:
             return f"{_q(qid)} not in queue store — entry never consumed"
@@ -398,6 +401,9 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
 
 
 EXIT = {"complete": 0, "incomplete": 1, "blocked": 2, "invalid": 3}
+
+# Matches only the evidence-state rule's message in validate(); other "without" errors are not evidence-state.
+EVIDENCE_STATE_ERR_RE = re.compile(r": execution_state '.*' claims .+ but obligation is '")
 
 TEMPLATE = """# GRRP ledger — {slug}
 
@@ -484,15 +490,15 @@ def cmd_gate(a: argparse.Namespace) -> int:
     return EXIT[r["verdict"]]
 
 
-def metrics(led: Ledger) -> dict:
-    r = gate(led)
+def metrics(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
+    r = gate(led, queue)
     fs = led.of("finding")
     return {
         "findings": len(fs),
         "original_findings": sum(f.get("source") == "original" for f in fs),
         "lost_findings": sum(f.get("assessment") == "unassessed" for f in fs),
         "duplicates_linked": sum(not _blank(f.get("duplicate_of")) for f in fs),
-        "evidence_state_errors": sum("claims" in e or "without" in e for e in r["validation_errors"]),
+        "evidence_state_errors": sum(bool(EVIDENCE_STATE_ERR_RE.search(e)) for e in r["validation_errors"]),
         "failed_transfers": len(r["transfers_unacknowledged"]),
         "scope_changes": max(0, len(re.findall(r"^- \d{4}-\d{2}-\d{2}", led.text.split("## Change log", 1)[-1].split("##", 1)[0], re.M)) - 1),
         "owner_interruptions": len(re.findall(r"owner-asked", led.text)),
@@ -506,7 +512,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("init"); p.add_argument("--slug", required=True); p.add_argument("--dir"); p.add_argument("--objective")
     p = sub.add_parser("status"); p.add_argument("ledger")
     p = sub.add_parser("gate"); p.add_argument("ledger"); p.add_argument("--json", action="store_true"); p.add_argument("--queue")
-    p = sub.add_parser("metrics"); p.add_argument("ledger")
+    p = sub.add_parser("metrics"); p.add_argument("ledger"); p.add_argument("--queue")
     a = ap.parse_args(argv)
     if a.cmd == "init":
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", a.slug):
@@ -515,12 +521,17 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd != "init" and not Path(a.ledger).is_file():
         print(f"error: ledger not found: {a.ledger}", file=sys.stderr)
         return 3
-    if a.cmd == "status":
-        return cmd_status(a)
-    if a.cmd == "gate":
-        return cmd_gate(a)
-    print(json.dumps(metrics(parse(Path(a.ledger))), indent=2))
-    return 0
+    try:
+        if a.cmd == "status":
+            return cmd_status(a)
+        if a.cmd == "gate":
+            return cmd_gate(a)
+        print(json.dumps(metrics(parse(Path(a.ledger)), Path(a.queue) if a.queue else DEFAULT_QUEUE), indent=2))
+        return 0
+    except (OSError, UnicodeDecodeError) as e:
+        # An unreadable ledger is invalid (3); a traceback's exit 1 would read as "incomplete".
+        print(f"error: cannot read ledger {a.ledger}: {type(e).__name__}: {e}", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

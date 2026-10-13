@@ -451,6 +451,62 @@ class ReviewToResolutionCorrections(Base):
             self.assertIn("skills/review-to-resolution/scripts/grrp.py", text, name)
 
 
+class SlopAudit20261012(Base):
+    """2026-10-12 slop audit SA-4 (unreadable input exit code) and SA-6a (metrics)."""
+
+    def test_non_utf8_ledger_gate_exits_invalid_not_incomplete(self) -> None:
+        p = self.tmp / "2026-10-05-bad.ledger.md"
+        p.write_bytes(b"grrp: v1\n\xff\xfe bad\n")
+        out = subprocess.run([sys.executable, str(SCRIPT), "gate", str(p), "--json", "--queue", str(self.queue)],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 3, out.stderr)
+        self.assertEqual(out.stdout, "")
+        self.assertIn("cannot read ledger", out.stderr)
+        self.assertNotIn("Traceback", out.stderr)
+        for cmd in (["status", str(p)], ["metrics", str(p), "--queue", str(self.queue)]):
+            self.assertEqual(grrp.main(cmd), 3, cmd)
+
+    def test_non_utf8_queue_is_an_unconfirmed_transfer_not_a_crash(self) -> None:
+        p = self.ledger(finding("F-060", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated module"),
+                        block("transfer", "id: T-60\nfindings: F-060\nreceiver: queue:CT-Q\nnext_action: fix\n"
+                                          "acceptance: test passes\nfollow_up: /next sync"))
+        self.queue.write_bytes(b"items:\n- id: CT-Q\n  status: ready \xff\n")
+        r = self.verdict(p)
+        self.assertEqual(r["verdict"], "complete")
+        self.assertFalse(r["transfers_ok"])
+        self.assertIn("queue store not readable", r["transfers_unacknowledged"][0])
+
+    def test_evidence_state_metric_counts_only_evidence_state_errors(self) -> None:
+        # The three non-evidence-state "without" messages the audit found overcounted.
+        crit = "id: AC-1\ntext: diff reviewed\nstatus: met\nevidence: "
+        p = self.ledger(finding("F-061", classification="enhancement", execution_state="implementing",
+                                requirement="n/a: extra"),
+                        block("child", "id: C-1\nobjective: o\nexclusions: e\nacceptance: a\nreserved: r\n"
+                                       "return_evidence: x\nowner: parent\nlocation: here\nspawned: C-2"),
+                        crit=crit)
+        errs = self.verdict(p)["validation_errors"]
+        self.assertTrue(any("met without evidence" in e for e in errs), errs)
+        self.assertTrue(any("without scope_approval" in e for e in errs), errs)
+        self.assertEqual(grrp.metrics(grrp.parse(p), self.queue)["evidence_state_errors"], 0)
+        q = self.ledger(finding("F-062", execution_state="reviewed", obligations=""), name="2026-10-05-e.ledger.md")
+        self.assertEqual(grrp.metrics(grrp.parse(q), self.queue)["evidence_state_errors"], 1)
+
+    def test_metrics_honours_queue_override(self) -> None:
+        p = self.ledger(finding("F-063", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated module"),
+                        block("transfer", "id: T-63\nfindings: F-063\nreceiver: queue:CT-M\nnext_action: fix\n"
+                                          "acceptance: test passes\nfollow_up: /next sync"))
+        self.queue.write_text(f"items:\n- id: CT-M\n  status: ready\n  evidence:\n  - ref: {p.name}\n",
+                              encoding="utf-8")
+        self.assertEqual(grrp.metrics(grrp.parse(p), self.queue)["failed_transfers"], 0)
+        self.assertEqual(grrp.metrics(grrp.parse(p), self.tmp / "no-queue.yaml")["failed_transfers"], 1)
+        out = subprocess.run([sys.executable, str(SCRIPT), "metrics", str(p), "--queue", str(self.queue)],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout)["failed_transfers"], 0)
+
+
 class Enrollment(unittest.TestCase):
     """Enrolled workflows must load GRRP state before discovery (tested entry mechanism)."""
 
