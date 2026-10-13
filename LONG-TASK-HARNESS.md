@@ -99,6 +99,7 @@ any moment without losing the job.
   are not stops.
 - Everything else: decide, act, and put "picked X over Y/Z because…" in the phase
   report. A mid-phase question is justified only when the answer changes the design.
+- Delegated lane grant: fill `templates/LANE-GRANT.template.md` (task, placement, endpoint, authority, preflight, closeout states).
 
 ## Autonomous / loop lanes (scope-governor v2, 2026-08-08)
 
