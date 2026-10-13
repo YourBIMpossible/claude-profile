@@ -26,7 +26,8 @@ grrp: v1
 
 ## grrp-finding
 Required: `id source classification assessment resolution execution_state owner
-lane requirement authority blocks evidence`. Optional: `severity location
+lane requirement authority blocks evidence`; `obligations` too when `resolution: resolved`.
+Optional: `severity location
 obligations scope_approval action_approval owner_action duplicate_of reason reconsider_when` (any other key is
 kept and ignored). `reconsider_when:` names the trigger that reopens a deferred
 finding (new evidence, failed acceptance, security issue, changed requirement, or a
