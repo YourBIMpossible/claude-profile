@@ -2,15 +2,15 @@
 
 <!--
   Copy into the chat message that starts the lane. Fill every field; delete nothing.
-  A blank or "TBD" Task means the lane asks the owner once and edits nothing until answered.
+  Task blank, "TBD", or both options filled = the lane asks the owner once and edits nothing
+  until answered.
   No field is inferred from memory, a summary, or a prior grant.
 -->
 
 ## Task
-<!-- Exactly one of the two. -->
+<!-- Exactly one of the two. Example: CP-SLOP1012-LOW-BATCH (F:\Claude-Tools\state\queue.yaml) -->
 - Queue ID / task:
-- OR selection authority granted: yes — criteria:
-> Example: CP-SLOP1012-LOW-BATCH (F:\Claude-Tools\state\queue.yaml)
+- OR selection authority (granted / not granted): ___ — criteria: ___
 
 ## Placement
 - Repo:
@@ -20,7 +20,10 @@
 
 ## Delivery endpoint
 <!-- Exactly one. -->
-- [ ] report  - [ ] ready PR  - [ ] merge  - [ ] deploy
+- [ ] report
+- [ ] ready PR
+- [ ] merge
+- [ ] deploy
 
 ## Authority
 | Action | Granted / Withheld |
@@ -30,6 +33,9 @@
 | Deploy | |
 | Live config | |
 | Worktree cleanup | |
+| Audit status change | |
+
+Blank = Withheld. This grant overrides any repo pre-authorization for this lane.
 
 ## Exclusions
 -
@@ -40,7 +46,7 @@
 | | |
 
 ## Pre-publication preflight
-Run before the first push, and again whenever the remote base or the lane's commits change.
+Run before the first push or PR create/update, and again whenever the remote base or the lane's commits change.
 ```
 git fetch origin && git merge-base --is-ancestor origin/HEAD HEAD && echo base-ok
 git log --oneline origin/HEAD..HEAD
@@ -61,9 +67,9 @@ python tools/pre_publish_check.py
 ## Closeout states
 <!-- GRRP meanings. Each line stays blank until its evidence is pasted. Never upgrade a state without evidence. -->
 - Run finished: <!-- the lane's work ran to its end; evidence: closeout path + final HEAD -->
-- Repair resolved: <!-- GRRP ledger findings resolved; evidence: `grrp.py gate --json` verbatim (verdict, transfers_ok) -->
-- Lane closed: <!-- delivery endpoint reached + acceptance verified; evidence: merge SHA / report path / deploy check -->
-- Audit closed: <!-- the audit's own status, set by its owner; `closeable: true` alone is not closure; a lane does not set it unless granted -->
+- Repair resolved: <!-- only when `grrp.py gate --json` (pasted verbatim) shows verdict complete AND transfers_ok true (closeable: true); otherwise record verdict and transfers_ok as-is, unresolved -->
+- Lane closed: <!-- delivery endpoint reached + acceptance verified; evidence matching the endpoint: report path / PR URL + ready (non-draft) state / merge SHA on the remote default / deploy verification -->
+- Audit closed: <!-- the audit's own status, set by its owner; `closeable: true` alone is not closure; a lane does not set it unless Audit status change is Granted -->
 
 ## Return only if
 <!-- Conditions that end the lane early with a closeout naming the smallest owner action. -->
