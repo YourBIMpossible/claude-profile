@@ -56,10 +56,15 @@ active revision verified or the activation blocker stated exactly.
 - Docs: ledger-format.md, orchestrator.md, enrollment.md, SKILL.md.
 
 ## Phase 3 — tests (sanitized incident fixtures)
+- `tests/test_grrp_coordinator_events.py`: 30 tests — late report, duplicates, conflicts, unavailable
+  fixture (deferred), denied-op retry, independent continuation, restart/resume, consolidated handoff,
+  authority boundaries, `where`. Full suite 104 passed / 33 subtests (2026-10-13). Mutation pass: every
+  rule caught except one equivalent mutant.
 ## Phase 4 — delivery (PR, review, merge; activation step)
 ## Phase 5 — shadow replay of 2026-10-12/13 reports
 ## Phase 6 — final evidence report
 
 ## Checkpoint
-- Next action: Phase 2 implementation.
+- Phases 2-3 done (code + docs + tests, committed on this branch).
+- Next action: Phase 4 — independent review, push, PR to master, merge.
 - Running/temporary state: none.
