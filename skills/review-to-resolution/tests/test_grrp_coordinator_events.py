@@ -531,5 +531,34 @@ class ReviewRegressions(Base):
         self.assertTrue(any(x.startswith("F-10: verification") for x in inc), inc)
 
 
+class ReReviewRegressions(Base):
+    """Re-review of c27fc8f: each case was reproduced before the fix."""
+
+    def test_a_deferred_or_failed_track_does_not_hide_the_open_finding(self) -> None:  # N1
+        for outcome, extra in (("deferred", dict(owner="owner", prerequisite="fixture")), ("failed", dict(evidence="x"))):
+            with self.subTest(outcome):
+                self.ledger(finding("F-1", resolution="open", obligations=FULL_PENDING_VERIFY.replace(
+                    "verification=pending", "verification=done:check v1")))
+                shutil.rmtree(grrp.inbox_dir(self.path), ignore_errors=True)
+                self.receipt("r.md", dict(target="F-1", track="cleanup", outcome=outcome, at="2026-10-13T01:00:00Z",
+                                          by="lane-a", supersedes="baseline", **extra))
+                self.apply()
+                h = self.handoff()
+                self.assertEqual(h["open_work"], ["F-1: original finding still open"])
+                if outcome == "failed":
+                    self.assertFalse(any("cleanup obligation" in x for x in h["open_work"]))
+
+    def test_a_denial_in_conflict_is_an_owner_decision(self) -> None:  # N2
+        self.ledger(finding("F-1", obligations=FULL_DONE))
+        self.receipt("r.md", v("E-D", "denied", "02:00", operation="exec pytest"))
+        self.apply()
+        self.assertEqual(self.state("F-1", "verification"), "conflict")
+        h = self.handoff()
+        self.assertEqual([(d["target"], d["track"], d["kind"]) for d in h["decisions_now"]],
+                         [("F-1", "verification", "denied")])
+        self.assertIn("conflicts with other evidence", h["decisions_now"][0]["ask"])
+        self.assertEqual(h["open_work"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

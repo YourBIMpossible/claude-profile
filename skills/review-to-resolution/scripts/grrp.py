@@ -918,7 +918,10 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
     receiver = {fid: t.get("receiver", "") for t in led.of("transfer") for fid in _list(t.get("findings"))}
     asks: list[dict[str, str]] = []
     completed, continuing = [], {}
-    covered: set[str] = set()  # findings shown in some section; the rest surface as open work
+    # What the sections below already show: whole findings (completed, asked, continuing) and single
+    # (finding, track) states. A gate line not represented by either surfaces as open work.
+    covered: set[str] = set()
+    covered_tracks: set[tuple[str, str]] = set()
     for f in led.of("finding"):
         fid = f.get("id", "")
         eff = effective_obligations(f, rec)
@@ -947,7 +950,7 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
     for (target, track), st in sorted(rec.states.items()):
         e = st.event or {}
         if st.outcome in {"deferred", "denied", "failed", "conflict"}:
-            covered.add(_q(target))
+            covered_tracks.add((_q(target), _q(track)))
         if st.outcome == "deferred":
             deferred.append({"target": _q(target), "track": track, "owner": _txt(e.get("owner"), 60),
                              "prerequisite": _txt(e.get("prerequisite")), "since": _ts(e.get("at"))})
@@ -956,14 +959,29 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
             asks.append({"target": target, "track": track, "kind": "denied", "reason": op,
                          "ask": f"denied operation {_txt(op)}: approve it (dated owner approval) "
                                 "or record it deferred with owner and prerequisite"})
+        elif st.outcome == "conflict" and st.denial is not None:
+            # Only an owner approval or a deferral can settle a track whose denial stands (a non-owner
+            # done is rejected, a pending is stale), so the conflict is an owner decision, not agent work.
+            op = st.denial.get("operation", "")
+            asks.append({"target": target, "track": track, "kind": "denied", "reason": op,
+                         "ask": f"denied operation {_txt(op)} conflicts with other evidence: approve it "
+                                "(dated owner approval) or record it deferred with owner and prerequisite"})
         elif st.outcome == "failed":
             blockers.append(f"{_q(target)}: {track} failed ({_txt(st.detail)})")
     blockers += [f"transfer {x}" for x in g["transfers_unacknowledged"]]
     if g["validation_errors"]:
         n = len(g["validation_errors"])
         blockers.append(f"ledger invalid: {n} validation error(s); first: " + "; ".join(g["validation_errors"][:3]))
-    covered |= set(completed) | {_q(a["target"]) for a in asks}
-    open_work = [x for x in g["incomplete"] if x.split(":", 1)[0] not in covered]
+    covered |= set(completed) | {_q(a["target"]) for a in asks if a["kind"] != "denied"}
+
+    def shown(line: str) -> bool:
+        fid, _, rest = line.partition(": ")
+        if fid in covered:
+            return True
+        return any(rest.startswith((f"{t} obligation ", f"{t} evidence conflicts"))
+                   for f, t in covered_tracks if f == fid)
+
+    open_work = [x for x in g["incomplete"] if not shown(x)]
     decisions, awaiting = [], []
     for a in asks:
         fp = fingerprint(a["target"], a["track"], a["kind"], a.get("reason", a["ask"]))

@@ -87,11 +87,14 @@ Required: `target track outcome at by`. Optional: `id` (default: content digest 
   `supersedes` names an event, not "whatever is current": a late receipt that sorts in between
   does not undo it. A denial stands even if it lands in a conflict: a later `done/failed/n/a`
   without a dated owner `approval` is rejected as a retry (`by: owner` alone is not authority),
-  and a `pending` cannot replace it — only an approved event or a `deferred` does.
+  and a `pending` cannot replace it — only an approved event or a `deferred` does, so
+  `handoff` raises a denial in conflict as an owner decision, like any standing denial.
   `supersedes: baseline` overrides the finding block's own obligation value.
 - Gate: `deferred` does not hold a resolved finding open; `pending/failed/denied/conflict` do.
   `escalated` changes no state; it stops the same ask repeating. Only `handoff --record` writes
   it — `apply` rejects it in a receipt. `apply` change-log lines do not count as scope changes.
+- Handoff: every gate `incomplete` line appears somewhere; a deferred, denied or failed track
+  covers only that track's line, never the rest of its finding (e.g. "original finding still open").
 
 ## Example
 ```grrp-finding
