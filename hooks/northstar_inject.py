@@ -74,6 +74,16 @@ def emit(text: str) -> None:
         pass
 
 
+def note(msg: str) -> None:
+    """One stderr line for a fail-open site, so a dropped injection is observable
+    (exit stays 0; stdout, the injected text, is untouched). Never raises."""
+    try:
+        sys.stderr.write(f"northstar_inject: {msg}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def star_status(f: Path) -> str:
     """Return 'active' or the inactive word from the file's status line.
     Unreadable or unparseable -> 'active' (over-injecting a mission is safer
@@ -179,13 +189,18 @@ def main() -> None:
         sys.exit(0)
 
     blocks = []
+    unreadable = []
     for f in active:
         try:
             text = f.read_text(encoding="utf-8-sig").strip()
-        except Exception:
+        except Exception as e:
+            unreadable.append(f"{f.name} ({type(e).__name__})")
             continue  # advisory: skip an unreadable star, keep the rest
         if text:
             blocks.append((f, text))
+    if unreadable:
+        note("skipped unreadable active north star(s): " + ", ".join(unreadable)
+             + ("" if blocks else "; nothing injected"))
     if not blocks:
         sys.exit(0)
 
@@ -230,10 +245,15 @@ def main() -> None:
     sys.exit(0)
 
 
-if __name__ == "__main__":
+def run_fail_open() -> None:
     try:
         main()
     except SystemExit:
         raise
-    except Exception:
+    except Exception as e:
+        note(f"failed open ({type(e).__name__}); nothing injected")
         sys.exit(0)  # advisory hook: fail open, never break a prompt
+
+
+if __name__ == "__main__":
+    run_fail_open()

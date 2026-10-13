@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 HOOK = REPO / "hooks" / "northstar_inject.py"
 
 
-def run_hook(cwd: Path, event: str) -> str:
+def run_hook_proc(cwd: Path, event: str) -> "subprocess.CompletedProcess[bytes]":
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
         cwd=cwd,
@@ -28,7 +28,11 @@ def run_hook(cwd: Path, event: str) -> str:
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
-    return proc.stdout.decode("utf-8")
+    return proc
+
+
+def run_hook(cwd: Path, event: str) -> str:
+    return run_hook_proc(cwd, event).stdout.decode("utf-8")
 
 
 class NorthstarInject(unittest.TestCase):
@@ -71,6 +75,56 @@ class NorthstarInject(unittest.TestCase):
         self.assertIn("the gate turns any\nWrite/Edit on NORTHSTAR*.md into an approval prompt", out)
         # The gate covers Write/Edit only; this rule covers every tool.
         self.assertEqual(out.count("never route around the prompt by any tool (Bash included)."), 1)
+
+
+class FailOpenIsObservable(unittest.TestCase):
+    """2026-10-12 slop audit SA-6(b): fail-open sites stay exit 0 but leave a stderr line."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.proj = Path(self._tmp.name).joinpath(*"abcdefgh")
+        self.proj.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_all_active_stars_unreadable_is_reported_on_stderr(self) -> None:
+        # Invalid UTF-8: the status scan (errors="replace") still says active, the strict read fails.
+        (self.proj / "NORTHSTAR.md").write_bytes(b"Ship it \xff\xfe\n")
+        proc = run_hook_proc(self.proj, "UserPromptSubmit")
+        self.assertEqual(proc.stdout, b"")
+        err = proc.stderr.decode("utf-8")
+        self.assertIn("northstar_inject: skipped unreadable active north star(s): NORTHSTAR.md", err)
+        self.assertIn("nothing injected", err)
+
+    def test_one_unreadable_star_is_reported_and_the_rest_still_inject(self) -> None:
+        (self.proj / "NORTHSTAR.a.md").write_text("Ship the widget.\n", encoding="utf-8")
+        (self.proj / "NORTHSTAR.b.md").write_bytes(b"bad \xff\n")
+        proc = run_hook_proc(self.proj, "UserPromptSubmit")
+        self.assertIn("Ship the widget.", proc.stdout.decode("utf-8"))
+        err = proc.stderr.decode("utf-8")
+        self.assertIn("NORTHSTAR.b.md (UnicodeDecodeError)", err)
+        self.assertNotIn("nothing injected", err)
+
+    def test_top_level_fail_open_is_reported_on_stderr(self) -> None:
+        import contextlib
+        import importlib.util
+        import io
+        spec = importlib.util.spec_from_file_location("northstar_inject_under_test", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+
+        def boom() -> None:
+            raise RuntimeError("synthetic")
+
+        mod.main = boom
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            mod.run_fail_open()
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("northstar_inject: failed open (RuntimeError); nothing injected", err.getvalue())
+        self.assertNotIn("synthetic", err.getvalue())  # type only, never exception text
 
 
 if __name__ == "__main__":
