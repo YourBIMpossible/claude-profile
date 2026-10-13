@@ -61,10 +61,20 @@ active revision verified or the activation blocker stated exactly.
   authority boundaries, `where`. Full suite 104 passed / 33 subtests (2026-10-13). Mutation pass: every
   rule caught except one equivalent mutant.
 ## Phase 4 — delivery (PR, review, merge; activation step)
+- Independent review of de7fb90: C1, C2, I1–I4 + 2 minor → fixed in c27fc8f (+11 tests, red on de7fb90).
+- Re-review of c27fc8f: N1 (open work hidden by a deferred/failed track), N2 (denial in conflict
+  never asked) → fixed in 95b8e8e (+2 tests, red on c27fc8f). Suite 115 passed / 37 subtests.
+- Review record: F:\Claude-Tools\reports\2026-10-13__grrp-repair-review.md.
+- Activation: main checkout master cannot ff (another session's 3 unpushed commits + dirty CLAUDE.md);
+  the installed engine stays stale until that lane is integrated and session-start-pull fast-forwards.
 ## Phase 5 — shadow replay of 2026-10-12/13 reports
+- Scratch copy only (real ledger untouched): 4 receipts, 21 added, 11 duplicates, 0 rejected; re-apply adds 0.
+  One decision now (SEC-A60 verification denied op); recorded once, then awaiting. 4 deferred with owner +
+  prerequisite; T-2 instruction superseded; late 07:36Z pendings stale. Verdict `invalid` from 39
+  pre-existing SA-5 errors (ledger backfill, out of scope).
 ## Phase 6 — final evidence report
 
 ## Checkpoint
-- Phases 2-3 done (code + docs + tests, committed on this branch).
-- Next action: Phase 4 — independent review, push, PR to master, merge.
-- Running/temporary state: none.
+- Phases 2-5 done; review fixes committed (95b8e8e).
+- Next action: re-review verdict on 95b8e8e → PR to master → merge → activation check → report.
+- Running/temporary state: none in repo; replay outputs in session scratchpad.
