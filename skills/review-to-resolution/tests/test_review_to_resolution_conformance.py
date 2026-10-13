@@ -545,7 +545,7 @@ class FindingContractSA5(Base):
                 p.write_text(head + "\nx_dropped: " + tail, encoding="utf-8")
                 r = self.verdict(p)
                 self.assertEqual(r["verdict"], "invalid")
-                self.assertIn(f"F-071: required key '{key}' missing (write 'none' when empty)", r["validation_errors"])
+                self.assertTrue(any(e.startswith(f"F-071: required key '{key}' missing") for e in r["validation_errors"]))
 
     def test_canonical_empty_values_are_valid(self) -> None:
         r = self.verdict(self.ledger(finding("F-072", resolution="open", classification="independent",
@@ -560,6 +560,18 @@ class FindingContractSA5(Base):
         for name in ("review", "integration", "deployment", "verification", "cleanup"):
             self.assertIn(f"F-073: resolved without '{name}' obligation (done:<evidence> or n/a:<reason>)",
                           r["validation_errors"])
+
+    def test_lane_none_is_not_a_valid_lane(self) -> None:
+        self.assertIn("F-070: lane 'none' is not parent/external/a child id",
+                      self.errors(lane="none", obligations=REVIEW_ONLY_OBL))
+
+    def test_resolved_with_obligations_none_is_invalid(self) -> None:
+        errs = self.errors(obligations="none")
+        self.assertEqual(len([e for e in errs if "resolved without" in e]), 5, errs)
+
+    def test_unknown_obligation_does_not_stand_in_for_a_required_one(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("cleanup=n/a:nothing created", "teardown=done:x"))
+        self.assertIn("F-070: resolved without 'cleanup' obligation (done:<evidence> or n/a:<reason>)", errs)
 
     def test_resolved_with_one_omitted_obligation_is_invalid(self) -> None:
         errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("; cleanup=n/a:nothing created", ""))

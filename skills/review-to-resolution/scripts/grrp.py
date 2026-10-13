@@ -247,9 +247,10 @@ def validate(led: Ledger) -> list[str]:
                 errs.append(f"{_q(fid)}: '{key}' must never be empty")
         # Required keys whose value may be the canonical empty ('none' / blank) must still be written:
         # an omitted key is never read as a default.
-        for key in ("lane", "blocks", "evidence"):
+        for key, hint in (("lane", "parent, external or a child id"), ("blocks", "write 'none' when empty"),
+                          ("evidence", "write 'none' when empty")):
             if key not in f:
-                errs.append(f"{_q(fid)}: required key '{key}' missing (write 'none' when empty)")
+                errs.append(f"{_q(fid)}: required key '{key}' missing ({hint})")
         req = f.get("requirement", "")
         if not _blank(req) and req not in crit_ids and not req.startswith("n/a"):
             errs.append(f"{_q(fid)}: requirement '{_q(req)}' is not a criterion id (or 'n/a: <reason>')")
@@ -368,7 +369,7 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
             incomplete.append(f"{_q(fid)}: not assessed")
         blocks = _list(f.get("blocks"))
         if blocks and f.get("resolution") == "open":
-            why = "protected surface" if f.get("authority") == "protected" else f"lane {_q(f.get('lane', 'parent'))}"
+            why = "protected surface" if f.get("authority") == "protected" else f"lane {_q(f.get('lane', 'missing'))}"
             blocked.append(f"{_q(fid)}: open, blocks {', '.join(_q(b) for b in blocks)} ({why})")
         if f.get("resolution") == "resolved":
             for name, (ost, _) in _obligations(f).items():
