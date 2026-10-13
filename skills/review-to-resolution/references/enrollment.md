@@ -47,7 +47,7 @@ No acceptance yet → leave `ack` out: `transfers_ok: false` is the true result.
    `closeable`, and the ledger path. Never soften the verdict.
 3. `grrp.py handoff --record <ledger>` → the one owner handoff: decisions required now,
    blockers, conflicts, deferred items (owner + prerequisite), work continuing under existing
-   authority, completed/superseded. `--record` logs each ask once; an unchanged ask is
+   authority, any other open work the gate counts, completed/superseded. `--record` logs each ask once; an unchanged ask is
    listed under "Awaiting owner", not raised again. Give the owner this, not the lens reports.
 
 Results that arrive after exit (deploy, verification, a fixture becoming available) go in as

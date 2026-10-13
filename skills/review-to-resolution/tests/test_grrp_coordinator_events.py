@@ -233,6 +233,7 @@ class UnavailableFixture(Base):
         self.assertEqual(g["tracks"]["deployment"], {"done": 1})
         d = self.handoff()["deferred"][0]
         self.assertIn("fixture", d["prerequisite"])
+        self.assertEqual(d["since"], "2026-10-13T21:50:00Z")
 
     def test_deferral_without_owner_or_prerequisite_is_rejected(self) -> None:
         self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
@@ -332,6 +333,7 @@ class RestartResume(Base):
         h = self.handoff()
         self.assertEqual(h["decisions_now"], [])
         self.assertEqual(len(h["awaiting_owner"]), 1)
+        self.assertRegex(h["awaiting_owner"][0]["asked_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertEqual(self.state("SEC-X60", "deployment"), "done")
         self.assertEqual(self.state("SEC-X60", "verification"), "denied")
 
@@ -429,6 +431,104 @@ class Where(unittest.TestCase):
         self.assertIn('"loaded": true', out.getvalue())
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(grrp.main(["where", "--expect", "0" * 40]), 3)
+
+
+FULL_DONE = FULL_PENDING_VERIFY.replace("verification=pending", "verification=done:check v1")
+
+
+def v(eid: str, outcome: str, at: str, **kw: str) -> dict[str, str]:
+    return dict(id=eid, target="F-1", track="verification", outcome=outcome, at=f"2026-10-13T{at}:00Z",
+                by=kw.pop("by", "lane-a"), **({"evidence": "x"} if outcome in grrp.NEEDS_EVIDENCE else {}), **kw)
+
+
+class ReviewRegressions(Base):
+    """Independent review of de7fb90: each case was reproduced before the fix."""
+
+    def gate(self) -> dict:
+        return grrp.gate(grrp.parse(self.path), self.queue)
+
+    def test_denial_landing_in_a_conflict_still_blocks_a_retry(self) -> None:  # C1, baseline done
+        self.ledger(finding("F-1", obligations=FULL_DONE))
+        self.receipt("r.md", v("E-D", "denied", "02:00", operation="exec pytest"),
+                     v("E-R", "done", "03:00", supersedes="E-D"))
+        self.apply()
+        rec = grrp.reconcile(grrp.parse(self.path))
+        self.assertEqual([x for x, _ in rec.rejected], ["E-R"])
+        self.assertNotEqual(self.gate()["verdict"], "complete")
+
+    def test_denial_after_a_done_event_still_blocks_a_retry(self) -> None:  # C1, event done
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+        self.receipt("r.md", v("E-A", "done", "01:00"), v("E-D", "denied", "02:00", operation="exec pytest"),
+                     v("E-R", "done", "03:00", supersedes="E-D"))
+        self.apply()
+        self.assertIn("E-R", [x for x, _ in grrp.reconcile(grrp.parse(self.path)).rejected])
+        self.assertNotEqual(self.gate()["verdict"], "complete")
+
+    def test_late_intermediate_receipt_cannot_reclose_an_explicit_reopen(self) -> None:  # C2
+        for outcome in ("pending", "failed"):
+            with self.subTest(outcome):
+                self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+                shutil.rmtree(grrp.inbox_dir(self.path), ignore_errors=True)
+                self.receipt("a.md", v("E-A", "done", "01:00"), v("E-C", outcome, "03:00", supersedes="E-A"))
+                self.receipt("b.md", v("E-B", "done", "02:00", by="lane-b"))  # late, sorts in between
+                self.apply()
+                self.assertEqual(self.state("F-1", "verification"), outcome)
+                self.assertEqual(self.gate()["verdict"], "incomplete")
+
+    def test_pending_after_denial_keeps_the_ask(self) -> None:  # I2
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+        self.receipt("r.md", v("E-D", "denied", "02:00", operation="exec pytest"), v("E-P", "pending", "03:00", by="lane-b"))
+        self.apply()
+        self.assertEqual(self.state("F-1", "verification"), "denied")
+        h = self.handoff()
+        self.assertEqual([(d["target"], d["kind"]) for d in h["decisions_now"]], [("F-1", "denied")])
+        self.assertEqual(h["continuing"], {})
+
+    def test_by_owner_without_dated_approval_is_not_authority(self) -> None:  # I3
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+        self.receipt("r.md", v("E-D", "denied", "02:00", operation="exec pytest"), v("E-R", "done", "03:00", by="owner"))
+        self.apply()
+        self.assertIn("E-R", [x for x, _ in grrp.reconcile(grrp.parse(self.path)).rejected])
+
+    def test_open_work_is_never_missing_from_the_handoff(self) -> None:  # I1
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY),
+                    finding("F-2", resolution="open"),
+                    finding("F-3", authority="protected", owner_action="owner applied it 2026-10-12",
+                            obligations=FULL_PENDING_VERIFY))
+        self.receipt("r.md", dict(target="F-1", track="verification", outcome="deferred", at="2026-10-13T01:00:00Z",
+                                  by="lane-a", owner="owner", prerequisite="fixture"))
+        self.apply()
+        h = self.handoff()
+        self.assertEqual(self.gate()["verdict"], "incomplete")
+        self.assertEqual([x.split(":")[0] for x in h["open_work"]], ["F-2"])
+        self.assertEqual(h["continuing"], {"owner (protected surface)": ["F-3(verification)"]})
+
+    def test_apply_does_not_count_as_a_scope_change(self) -> None:  # I4
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+        for n, at in enumerate(("01:00", "02:00", "03:00")):
+            self.receipt(f"r{n}.md", v(f"E-{n}", "pending", at))
+            self.apply()
+        self.assertEqual(grrp.metrics(grrp.parse(self.path), self.queue)["scope_changes"], 0)
+
+    def test_receipt_cannot_record_an_escalation(self) -> None:
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+        self.receipt("r.md", dict(target="F-1", track="verification", outcome="escalated", at="2026-10-13T01:00:00Z",
+                                  by="lane-a", fingerprint="X-000000000000"))
+        rc, out = self.apply()
+        self.assertEqual(rc, 1)
+        self.assertIn("handoff --record", out)
+        self.assertEqual(grrp.parse(self.path).of("event"), [])
+
+    def test_conflicts_on_prefix_sharing_ids_are_both_reported(self) -> None:
+        self.ledger(finding("F-10", resolution="open", obligations=FULL_PENDING_VERIFY),
+                    finding("F-1", resolution="open", obligations=FULL_PENDING_VERIFY))
+        for fid in ("F-10", "F-1"):  # F-10 first: its line must not hide F-1's
+            self.receipt(f"{fid}.md", {**v(f"E-{fid}a", "done", "01:00"), "target": fid},
+                         {**v(f"E-{fid}b", "failed", "01:00"), "target": fid})
+        self.apply()
+        inc = self.gate()["incomplete"]
+        self.assertTrue(any(x.startswith("F-1: verification") for x in inc), inc)
+        self.assertTrue(any(x.startswith("F-10: verification") for x in inc), inc)
 
 
 if __name__ == "__main__":

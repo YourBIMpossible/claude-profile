@@ -83,11 +83,15 @@ Required: `target track outcome at by`. Optional: `id` (default: content digest 
 - Fold (deterministic, per `(target, track)`, `at` order, file order on ties): newest wins and
   older events stay as history; `pending`/`deferred` cannot reopen `done` without
   `supersedes: <event id>` (recorded as stale); any other contrary outcome without it — or two
-  events at the same `at` that disagree — is a `conflict` until an event supersedes a side;
-  after `denied`, a `done/failed/n/a` event without owner authority is rejected as a retry.
+  events at the same `at` that disagree — is a `conflict` until an event supersedes a side.
+  `supersedes` names an event, not "whatever is current": a late receipt that sorts in between
+  does not undo it. A denial stands even if it lands in a conflict: a later `done/failed/n/a`
+  without a dated owner `approval` is rejected as a retry (`by: owner` alone is not authority),
+  and a `pending` cannot replace it — only an approved event or a `deferred` does.
   `supersedes: baseline` overrides the finding block's own obligation value.
 - Gate: `deferred` does not hold a resolved finding open; `pending/failed/denied/conflict` do.
-  `escalated` (written by `handoff --record`) changes no state; it stops the same ask repeating.
+  `escalated` changes no state; it stops the same ask repeating. Only `handoff --record` writes
+  it — `apply` rejects it in a receipt. `apply` change-log lines do not count as scope changes.
 
 ## Example
 ```grrp-finding

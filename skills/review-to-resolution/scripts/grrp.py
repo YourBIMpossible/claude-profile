@@ -245,8 +245,8 @@ def event_id(ev: dict[str, str]) -> str:
 
 
 def _owner_approved(ev: dict[str, str]) -> bool:
-    """An event is owner-authorized when the owner wrote it or it cites a dated owner approval."""
-    return ev.get("by", "") == "owner" or not _no_owner_action(ev.get("approval"))
+    """Owner authority on an event = an `approval` citing the owner and a date (`by: owner` alone is not)."""
+    return not _no_owner_action(ev.get("approval"))
 
 
 def validate_event(ev: dict[str, str], findings: set[str], transfers: set[str], known: set[str]) -> list[str]:
@@ -357,6 +357,7 @@ def reconcile(led: Ledger) -> Reconciled:
         cur_at: _dt.datetime | None = None
         applied: list[str] = []
         digests: set[str] = set()
+        earlier: set[str] = {BASELINE}  # ids already folded here: what `supersedes:` may name
         for at, _, e in sorted(evs, key=lambda x: (x[0], x[1])):
             eid, o, sup = event_id(e), e["outcome"], set(_list(e.get("supersedes")))
             if event_digest(e) in digests:
@@ -366,16 +367,27 @@ def reconcile(led: Ledger) -> Reconciled:
                 r.rejected.append((eid, f"{o} after denied operation ({_q(event_id(st.denial))}) "
                                         "without a dated owner approval"))
                 continue
+            if o == "denied":
+                st.denial = e  # stands even when the denial itself lands in a conflict
+            elif st.denial and o == "pending" and not _owner_approved(e):
+                earlier.add(eid)
+                r.stale.append((eid, f"pending cannot replace the denial ({_q(event_id(st.denial))}) "
+                                     "without a dated owner approval or a deferral"))
+                continue
+            # A supersede names its event explicitly: a late receipt that sorts in between does not
+            # stand in for the named event.
+            named = bool(sup & earlier)
+            earlier.add(eid)
             if st.outcome == "conflict":
                 if not sup & set(st.conflict):
                     st.conflict.append(eid)
                     continue
                 applied.extend(x for x in st.conflict if x not in (st.event_id, BASELINE))
                 st.conflict = []
-            elif cur_at == at and st.outcome != o and st.event_id not in sup:
+            elif cur_at == at and st.outcome != o and not named:
                 st.outcome, st.conflict = "conflict", [st.event_id, eid]
                 continue
-            elif st.outcome == "done" and o != "done" and st.event_id not in sup:
+            elif st.outcome == "done" and o != "done" and not named:
                 if o in STATUS_ONLY:
                     r.stale.append((eid, f"{o} cannot reopen done ({_q(st.event_id)}) without supersedes"))
                 else:
@@ -385,9 +397,7 @@ def reconcile(led: Ledger) -> Reconciled:
                 applied.append(st.event_id)
             st.outcome, st.event, cur_at = o, e, at
             st.detail = e.get("evidence", "") or e.get("prerequisite", "")
-            if o == "denied":
-                st.denial = e
-            elif _owner_approved(e):
+            if o != "denied" and _owner_approved(e):
                 st.denial = None
         r.superseded.extend((a, st.event_id) for a in applied if a != st.event_id)
     return r
@@ -603,7 +613,8 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
         if why:
             pending_transfers.append(f"{_q(t.get('id'))}: {why}")
     for st in rec.states.values():
-        if st.outcome == "conflict" and not any(st.target in x and "conflict" in x for x in incomplete):
+        if st.outcome == "conflict" and not any(
+                x.startswith(f"{_q(st.target)}: {_q(st.track)} ") and "conflict" in x for x in incomplete):
             incomplete.append(f"{_q(st.target)}: {_q(st.track)} evidence conflicts ({', '.join(_q(c) for c in st.conflict)})")
     if errs:
         verdict = "invalid"
@@ -748,7 +759,7 @@ def metrics(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
         "duplicates_linked": sum(not _blank(f.get("duplicate_of")) for f in fs),
         "evidence_state_errors": sum(bool(EVIDENCE_STATE_ERR_RE.search(e)) for e in r["validation_errors"]),
         "failed_transfers": len(r["transfers_unacknowledged"]),
-        "scope_changes": max(0, len(re.findall(r"^- \d{4}-\d{2}-\d{2}", led.text.split("## Change log", 1)[-1].split("##", 1)[0], re.M)) - 1),
+        "scope_changes": max(0, len(re.findall(r"^- \d{4}-\d{2}-\d{2}(?!: apply:)", led.text.split("## Change log", 1)[-1].split("##", 1)[0], re.M)) - 1),
         "owner_interruptions": len(re.findall(r"owner-asked", led.text)),
         "verdict": r["verdict"],
     }
@@ -806,8 +817,10 @@ def read_receipts(paths: list[Path]) -> tuple[list[tuple[str, dict[str, str]]], 
     return out, problems
 
 
-def apply_events(led: Ledger, incoming: list[tuple[str, dict[str, str]]], today: str) -> ApplyResult:
-    """Append new, valid, not-yet-recorded events; idempotent (dedup by id and by content)."""
+def apply_events(led: Ledger, incoming: list[tuple[str, dict[str, str]]], today: str,
+                 coordinator: bool = False) -> ApplyResult:
+    """Append new, valid, not-yet-recorded events; idempotent (dedup by id and by content).
+    `escalated` records an owner ask and is written only by `handoff --record` (coordinator)."""
     res = ApplyResult(text=led.text)
     findings = {f.get("id", "") for f in led.of("finding")}
     transfers = {t.get("id", "") for t in led.of("transfer")}
@@ -824,6 +837,8 @@ def apply_events(led: Ledger, incoming: list[tuple[str, dict[str, str]]], today:
             res.rejected.append(f"{_q(eid)} ({src}): id already recorded with different content")
             continue
         errs = validate_event(ev, findings, transfers, set(ids) | {event_id(b) for b in batch})
+        if ev.get("outcome") == "escalated" and not coordinator:
+            errs.append(f"event {_q(eid)}: escalated is recorded by `handoff --record` only")
         if errs:
             res.rejected.extend(f"{src}: {e}" for e in errs)
             continue
@@ -869,6 +884,12 @@ def cmd_apply(a: argparse.Namespace) -> int:
     return 1 if res.rejected else 0
 
 
+def _ts(v: str | None) -> str:
+    """Event time for the owner, normalized to UTC; anything unparseable stays `<invalid>`."""
+    d = _at(v)
+    return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else "<invalid>"
+
+
 def _txt(v: object, n: int = 160) -> str:
     """Free record text for the owner: one line, bounded, JSON-quoted so it reads as data."""
     s = " ".join(("" if v is None else str(v)).split())
@@ -897,6 +918,7 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
     receiver = {fid: t.get("receiver", "") for t in led.of("transfer") for fid in _list(t.get("findings"))}
     asks: list[dict[str, str]] = []
     completed, continuing = [], {}
+    covered: set[str] = set()  # findings shown in some section; the rest surface as open work
     for f in led.of("finding"):
         fid = f.get("id", "")
         eff = effective_obligations(f, rec)
@@ -914,18 +936,21 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
             asks.append({"target": fid, "track": "integration", "kind": "approval",
                          "ask": "approve the action (dated action_approval) or route it to a transfer"})
             continue
-        if auth == "protected":
-            continue
-        who = receiver.get(fid) or f"lane:{f.get('lane', 'parent')}"
+        # A protected surface is never continued under agent authority: the owner drives it.
+        who = "owner (protected surface)" if auth == "protected" else _who(
+            receiver.get(fid) or f"lane:{f.get('lane', 'parent')}")
         pending = [n for n in OBLIGATIONS if eff.get(n, ("", ""))[0] == "pending"]
         if pending:
-            continuing.setdefault(_who(who), []).append(f"{_q(fid)}({','.join(pending)})")
+            continuing.setdefault(who, []).append(f"{_q(fid)}({','.join(pending)})")
+            covered.add(_q(fid))
     deferred, blockers = [], list(g["blocked"])
     for (target, track), st in sorted(rec.states.items()):
         e = st.event or {}
+        if st.outcome in {"deferred", "denied", "failed", "conflict"}:
+            covered.add(_q(target))
         if st.outcome == "deferred":
             deferred.append({"target": _q(target), "track": track, "owner": _txt(e.get("owner"), 60),
-                             "prerequisite": _txt(e.get("prerequisite")), "since": _q(e.get("at"))})
+                             "prerequisite": _txt(e.get("prerequisite")), "since": _ts(e.get("at"))})
         elif st.outcome == "denied":
             op = e.get("operation", "")
             asks.append({"target": target, "track": track, "kind": "denied", "reason": op,
@@ -937,12 +962,14 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
     if g["validation_errors"]:
         n = len(g["validation_errors"])
         blockers.append(f"ledger invalid: {n} validation error(s); first: " + "; ".join(g["validation_errors"][:3]))
+    covered |= set(completed) | {_q(a["target"]) for a in asks}
+    open_work = [x for x in g["incomplete"] if x.split(":", 1)[0] not in covered]
     decisions, awaiting = [], []
     for a in asks:
         fp = fingerprint(a["target"], a["track"], a["kind"], a.get("reason", a["ask"]))
         item = {"fingerprint": fp, "target": _q(a["target"]), "track": a["track"], "kind": a["kind"], "ask": a["ask"]}
         if fp in rec.escalated:
-            awaiting.append({**item, "asked_at": _q(rec.escalated[fp])})
+            awaiting.append({**item, "asked_at": _ts(rec.escalated[fp])})
         else:
             decisions.append(item)
     superseded_transfers = [
@@ -957,6 +984,7 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
                                             for c in g["conflicts"]],
         "rejected_events": g["rejected_events"], "deferred": deferred,
         "continuing": {k: sorted(v) for k, v in sorted(continuing.items())},
+        "open_work": open_work,
         "completed": sorted(completed),
         "superseded_transfers": superseded_transfers,
         "superseded_events": [f"{_q(a)} -> {_q(b)}" for a, b in rec.superseded],
@@ -983,6 +1011,7 @@ def render_handoff(h: dict) -> str:
     section("Deferred (owner · prerequisite)",
             [f"{d['target']} {d['track']}: owner {d['owner']} · prerequisite {d['prerequisite']} · since {d['since']}"
              for d in h["deferred"]])
+    section("Open work (gate incomplete, not covered above)", h["open_work"])
     section("Continuing under existing authority",
             [f"{who}: {len(v)} finding(s) — {', '.join(v[:8])}{' …' if len(v) > 8 else ''}"
              for who, v in h["continuing"].items()])
@@ -1004,7 +1033,7 @@ def cmd_handoff(a: argparse.Namespace) -> int:
         evs = [("handoff", {"target": d["target"], "track": d["track"], "outcome": "escalated", "at": now,
                             "by": "coordinator", "fingerprint": d["fingerprint"], "reason": d["kind"]})
                for d in h["decisions_now"]]
-        res = apply_events(led, evs, now[:10])
+        res = apply_events(led, evs, now[:10], coordinator=True)
         if res.rejected:
             print("error: could not record escalations: " + "; ".join(res.rejected), file=sys.stderr)
             return 3
