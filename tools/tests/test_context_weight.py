@@ -368,6 +368,22 @@ def test_14_jsonl_history_append_does_not_overwrite_earlier_entries():
     assert len(lines) == 2
     for ln in lines:
         json.loads(ln)  # each line still valid, independent JSON
+    assert json.loads(lines[0])["status"] == "clean"
+
+
+def test_14b_advisory_run_is_recorded_as_advisory_not_clean():
+    with tempfile.TemporaryDirectory() as td:
+        paths = build_estate(Path(td))
+        paths["write_history"] = True
+        base = cw.run_scan(**{**paths, "write_history": False})["scenario_results"][cw.GLOBAL]["total"]
+        paths["history_path"].write_text(json.dumps(dict(
+            timestamp="2026-09-01T00:00:00+00:00", schema_version=cw.SCHEMA_VERSION,
+            global_session_bytes=base // 2, bimpossible_session_bytes=base // 2,
+        )) + "\n", encoding="utf-8")
+        r = cw.run_scan(**paths)
+        last = json.loads(paths["history_path"].read_text(encoding="utf-8").splitlines()[-1])
+    assert r["exit_code"] == 0 and r["advisory"] is True
+    assert last["status"] == "advisory"
 
 
 # ------------------------------------------------- real signals still work
@@ -419,29 +435,6 @@ def test_skill_descriptions_returns_unmeasured_for_a_missing_dir():
         assert "skills directory not found" in unmeasured[0]
 
 
-def main() -> int:
-    cases = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failures = []
-    for fn in cases:
-        try:
-            fn()
-        except AssertionError as e:
-            failures.append(f"{fn.__name__}: {e}")
-        except Exception as e:  # noqa: BLE001 - surface unexpected errors as failures too
-            failures.append(f"{fn.__name__}: {type(e).__name__}: {e}")
-    if failures:
-        print(f"FAIL {len(failures)}/{len(cases)}:")
-        for f in failures:
-            print("  " + f)
-        return 1
-    print(f"OK - {len(cases)} cases")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-
 # ------------------------------------ Claude Code MEMORY.md truncation still fails
 
 def test_memory_index_at_25kb_truncation_fails():
@@ -472,3 +465,26 @@ def test_advisory_trend_growth_does_not_change_exit_code():
     assert any(t.startswith("WARN") for t in r["trend_lines"])
     assert r["exit_code"] == 0
     assert r["advisory"] is True
+
+
+def main() -> int:
+    cases = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failures = []
+    for fn in cases:
+        try:
+            fn()
+        except AssertionError as e:
+            failures.append(f"{fn.__name__}: {e}")
+        except Exception as e:  # noqa: BLE001 - surface unexpected errors as failures too
+            failures.append(f"{fn.__name__}: {type(e).__name__}: {e}")
+    if failures:
+        print(f"FAIL {len(failures)}/{len(cases)}:")
+        for f in failures:
+            print("  " + f)
+        return 1
+    print(f"OK - {len(cases)} cases")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

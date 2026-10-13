@@ -608,9 +608,10 @@ def run_scan(*,
     complete_enough_for_history = not any(
         s.required and s.state in ("MISSING", "UNMEASURED") for s in sources
     )
+    advisory = any_warn or any(t.startswith("WARN") for t in trend_lines)
     record = None
     if write_history and complete_enough_for_history:
-        record = _build_history_record(now, repo_dir, scenario_results, sources, exit_code)
+        record = _build_history_record(now, repo_dir, scenario_results, sources, exit_code, advisory)
         _append_history(history_path, record)
 
     return dict(
@@ -622,7 +623,7 @@ def run_scan(*,
         missing_n=missing_n, na_n=na_n,
         top3=top3,
         exit_code=exit_code,
-        advisory=any_warn or any(t.startswith("WARN") for t in trend_lines),
+        advisory=advisory,
         trend_lines=trend_lines,
         trend_reset=trend_reset,
         history_recorded=record is not None,
@@ -676,8 +677,9 @@ PRINCIPAL_SOURCE_KEYS = (
 
 
 def _build_history_record(now: datetime, repo_dir: Path, scenario_results: dict,
-                           sources: list, exit_code: int) -> dict:
-    status = {0: "clean", 2: "fail"}[exit_code]
+                           sources: list, exit_code: int, advisory: bool) -> dict:
+    # Same verdict the report prints: exit 0 with any WARN is ADVISORY, not clean.
+    status = {0: "advisory" if advisory else "clean", 2: "fail"}[exit_code]
     rec = {
         "timestamp": now.isoformat(),
         "tool_version_or_git_sha": _git_sha(repo_dir),
