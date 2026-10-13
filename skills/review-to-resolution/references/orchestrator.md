@@ -21,15 +21,20 @@ child per coherent unit, not per edit.
 
 ## Child prompt carries
 The contract, the ledger path (read-only for the child), and: "Return a receipt;
-do not edit the ledger." Retries fix execution failures, never renegotiate
+do not edit the ledger. Also write your per-finding results as `grrp-event` blocks
+(references/ledger-format.md) to a new file in `<ledger-stem>.receipts/`." Retries fix execution failures, never renegotiate
 acceptance. Exhausted retry/concurrency budget → checkpoint + escalate.
 
 ## On return
 Validate the receipt against the contract; prose-only "done" without the
 required proof is rejected (receipt stays `none`, parent stays blocked).
-Changed scope or consequences → stop that action, get approval. Apply the
-receipt to the ledger yourself (single writer), re-reading the ledger first if
-it moved since dispatch. Child closes on its own criteria; parent closure is the
+Changed scope or consequences → stop that action, get approval. Ingest results
+with `grrp.py apply <ledger>` (single writer; reads the `.receipts/` inbox plus any
+receipt paths given; `--dry-run` first when unsure). It dedupes repeated receipts,
+keeps older results as history, refuses retries of a denied operation without a dated
+owner approval, and leaves contradictory evidence as an explicit `conflict` — never
+pick a side by hand-editing the finding. Lanes that never had a contract (a later
+deploy or verification lane) report the same way: a receipt in the inbox, no owner relay. Child closes on its own criteria; parent closure is the
 gate's.
 
 ## Transfers

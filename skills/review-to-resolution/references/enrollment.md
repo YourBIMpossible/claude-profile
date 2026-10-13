@@ -42,8 +42,20 @@ store. `ack:` only after that receiver's acceptance exists, naming it and its pa
 No acceptance yet → leave `ack` out: `transfers_ok: false` is the true result.
 
 ## Exit
-`grrp.py gate --json <ledger>` → print `verdict` and `transfers_ok` verbatim,
-`closeable`, and the ledger path. Never soften the verdict.
+1. `grrp.py apply <ledger>` — ingest any worker receipts waiting in `<ledger-stem>.receipts/`.
+2. `grrp.py gate --json <ledger>` → print `verdict` and `transfers_ok` verbatim,
+   `closeable`, and the ledger path. Never soften the verdict.
+3. `grrp.py handoff --record <ledger>` → the one owner handoff: decisions required now,
+   blockers, conflicts, deferred items (owner + prerequisite), work continuing under existing
+   authority, any other open work the gate counts, completed/superseded. `--record` logs each ask once; an unchanged ask is
+   listed under "Awaiting owner", not raised again. Give the owner this, not the lens reports.
+
+Results that arrive after exit (deploy, verification, a fixture becoming available) go in as
+receipts and the next `apply` → `gate` → `handoff` picks them up; an older report never
+reopens a newer `done` (references/ledger-format.md, `grrp-event`). A check that needs an
+absent fixture or sign-in is `deferred` with `owner` + `prerequisite` — it is retained, and
+it does not hold an otherwise complete audit open. A `denied` operation is never retried
+through another route; it surfaces once as an owner decision.
 
 **Approval fields are attestations:** `ack`, `owner_action`, `scope_approval` and
 `action_approval` are free text the parent writes; the gate checks shape, never that
