@@ -33,13 +33,24 @@ owner repeated an instruction this session, add one line: the missed obligation
 and its cause; propose a durable fix only if the cause is not one-off.
 
 Stage A conventions (BIMpossible Platform pilot: `bimpossible`, `addins`):
-- *Completed* line per item = `queue_store.format_done(item)` output
-  (`handoff:complete · acceptance:open · …`), written verbatim so `/next resume` can
-  `parse_done` it back. Never upgrade a dimension to `complete` without evidence on
-  disk; `unknown` is the honest default (no fabricated completion evidence).
-- *Exact restart action* must be a single line starting `Exact restart action:` —
-  `/next resume` reads the **last** such line verbatim. Absent → resume falls back to
-  the ranked queue item and says so.
+- Bookend form and placement — one dated bullet appended at the **end** of the anchor's
+  completed-work section (BIMpossible: end of `## Done` in `WORKLOG.md`); never edit,
+  reorder, or remove earlier content:
+  ```
+  - <YYYY-MM-DD> /close — <one-line summary>
+    Completed: <ITEM-ID> — <queue_store.format_done(item)>     (one line per closed item)
+    Exact restart action: <one line>
+  ```
+  The fragment (`handoff:complete · acceptance:open · …`) is the store's `done` map verbatim,
+  written **after** the store update, so `/next resume` can `parse_done` it and report
+  `matches store`. Never upgrade a dimension to `complete` without evidence on disk;
+  `unknown` is the honest default (no fabricated completion evidence).
+- Exactly one `Exact restart action:` line per bookend — `/next resume` reads the **last**
+  such line verbatim, plus the `Completed:` lines since the previous one. Absent → resume
+  falls back to the ranked queue item and says so.
+- Commit the bookend hunk alone, under that repo's own commit rules (diff-check for foreign
+  hunks first; foreign hunks in the anchor → stop, don't commit). Resume labels an
+  uncommitted anchor `working tree, uncommitted` rather than crediting the last commit.
 - Before writing any store item: `python F:\Claude-Tools\state\queue_store.py
   --claim-of <ID> --me <worktree toplevel> --me <branch>`; exit 3 = another session's claim → skip,
   report `OWNED BY`.

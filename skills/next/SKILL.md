@@ -100,8 +100,10 @@ first offering `sync`**. A confident answer off a stale store is the exact failu
 `python F:\Claude-Tools\state\resume_queue.py --resume <key>`. Prints: watermark vs live HEAD and
 the project-leg freshness; items `in_flight` with claim identity and `STALE CLAIM (>24h, not
 auto-released)`; the anchor's last *Exact restart action* line **verbatim** with its git date/author
-(anchor path = optional `anchor:` in `projects.yaml`); the ranked #1 actionable item with freshness;
-the Waiting count. No anchor or no bookend → `no recorded next action (…)` and the #1 is labelled
+(anchor path = optional `anchor:` in `projects.yaml`) — or `working tree, uncommitted` when the anchor
+has uncommitted edits, never an older commit's identity; that bookend's `Completed:` lines with
+`matches store` / `differs from store: <dims>` / `item not in store`; each printed item's `done` map
+(open/unknown/n/a shown as-is); the ranked #1 actionable item with freshness; the Waiting count. No anchor or no bookend → `no recorded next action (…)` and the #1 is labelled
 `fallback from queue, not a recorded next action` — never a rewritten narrative (AC07). Never writes.
 
 ### `waiting` / `<target> waiting` — what only the owner can move (Stage A, read-only)
