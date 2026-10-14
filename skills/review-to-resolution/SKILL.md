@@ -40,6 +40,15 @@ only when a missing fact materially changes scope, safety, or completion (log it
 as `owner-asked:` in the change log). Later scope changes → one change-log line;
 never rewrite the original brief.
 
+**Resource boundary (every run, every worker).** Ordinary regression checks are
+authorized. Synthetic CPU, memory, disk, or process-exhaustion tests on shared
+machines require explicit owner approval of the workload, resource cap, duration,
+cleanup, and abort conditions before they start; an expensive experiment also
+needs a specific question it answers. Unexpected infrastructure failures (tool
+crashes, session restarts) stop the experiment; they do not trigger another
+identical run. Coordinators pass this boundary into every worker brief and verify
+cleanup of the specific processes they started — never indiscriminate kills.
+
 ## 2. Classify continuously
 
 | class | handling | parent effect |
