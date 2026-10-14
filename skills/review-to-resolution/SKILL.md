@@ -22,7 +22,7 @@ conversations to prove a role ran:
 - **Reviewer**: discovery → finding blocks. `references/reviewer.md`.
 - **Orchestrator**: child lanes and transfers. `references/orchestrator.md`.
 
-Tool: `python ~/.claude/skills/review-to-resolution/scripts/grrp.py {init|status|gate|metrics|apply|handoff|where}`.
+Tool: `python ~/.claude/skills/review-to-resolution/scripts/grrp.py {init|status|gate|metrics|apply|handoff|where|batch-init|batch}`.
 Ledger format: `references/ledger-format.md`.
 
 ## 1. Enter (before any discovery)
@@ -123,6 +123,16 @@ deployment, acceptance (verification) counted separately — plus `conflicts`,
 `rejected_events` and `deferred`. `grrp.py handoff --record` turns all of it into one
 owner handoff and records each ask so an unchanged blocker is escalated once.
 `grrp.py where --expect <rev>` shows which engine revision is actually loaded.
+
+**Batch completion is a separate claim.** An audit batch (scheduled runs + every follow-through)
+is archive-ready only when `grrp.py batch <manifest>` says `100% COMPLETE — READY TO ARCHIVE`
+(references/ledger-format.md, Batch manifest). Never say complete, done or ready to archive for a
+batch on a ledger verdict, a written report, an accepted transfer, a merged PR or an installed
+coordinator. Missing evidence fails the claim; deferred work stays outstanding until the owner
+explicitly accepts its exclusion (an owner action listing the item in `accepts:` and raised in
+that form while open by `batch --record`, later `done` with the owner's dated resolution — never
+self-written). A
+worker session closing does not close the batch; re-run `batch --record` before the claim.
 
 ## 6. Checkpoint
 
