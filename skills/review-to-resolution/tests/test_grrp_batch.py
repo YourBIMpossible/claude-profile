@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -69,15 +70,38 @@ class Base(unittest.TestCase):
         body = parts or (finding("F-001", execution_state="reviewed", obligations=REVIEW_ONLY_OBL),)
         self.ledger_path.write_text(BRIEF + block("criterion", OK_CRIT) + "".join(body), encoding="utf-8")
 
-    def batch(self, *parts: str, metrics: str = METRICS_DONE, endpoint: str = ENDPOINT, ledger: bool = True) -> Path:
+    def batch(self, *parts: str, metrics: str = METRICS_DONE, endpoint: str = ENDPOINT, ledger: bool = True,
+              keep_record: bool = False) -> Path:
         led = block("ledger", f"id: L1\npath: {self.ledger_path}") if ledger else ""
+        kept = ""
+        if keep_record and self.path.exists():
+            old = self.path.read_text(encoding="utf-8")
+            kept = old[old.index("## Record\n") + len("## Record\n"):old.index("## Checkpoint")]
         self.path.write_text(endpoint + "\n## Ledgers\n" + led + "\n## Items\n" + "".join(parts)
-                             + "\n## Metrics\n" + block("metrics", metrics) + "\n## Record\n\n## Checkpoint\n- next\n",
-                             encoding="utf-8")
+                             + "\n## Metrics\n" + block("metrics", metrics) + "\n## Record\n" + (kept or "\n")
+                             + "## Checkpoint\n- next\n", encoding="utf-8")
         return self.path
 
     def check(self) -> dict:
         return grrp.batch_check(self.path, self.queue)
+
+    def record(self) -> None:
+        rc, _ = self.run_cli("batch", str(self.path), "--record")
+        self.assertIn(rc, (0, 1, 2, 3))
+
+    def recorded_check(self) -> dict:
+        """The archive claim needs the endpoint and inventory recorded: record, then check."""
+        self.record()
+        return self.check()
+
+    def raise_then_accept(self, iid: str, oid: str, *others: str, **kw: str) -> None:
+        """The honest acceptance path: the ask is raised while open, then the owner resolves it."""
+        self.batch(item(iid, "blocked_owner", owner_action=oid, **kw), owner_action(oid, f"accept exclusion of {iid}"),
+                   *others)
+        self.record()
+        self.batch(item(iid, "owner_accepted", acceptance=oid, **kw),
+                   owner_action(oid, f"accept exclusion of {iid}", status="done", accepts=iid,
+                                resolution="owner accepted in chat 2026-10-14"), *others, keep_record=True)
 
     def run_cli(self, *args: str) -> tuple[int, str]:
         buf, err = io.StringIO(), io.StringIO()
@@ -88,12 +112,9 @@ class Base(unittest.TestCase):
 
 class CompletePath(Base):
     def test_all_cleared_is_archive_ready(self) -> None:
-        self.batch(item("B-1", "complete"), item("B-2", "superseded", replacement="B-1"),
-                   item("B-3", "inapplicable", reviewed="independent reviewer 2026-10-14"),
-                   item("B-4", "owner_accepted", acceptance="OA-9"),
-                   owner_action("OA-9", "accept exclusion of B-4", status="done",
-                                resolution="owner accepted in chat 2026-10-14"))
-        r = self.check()
+        self.raise_then_accept("B-4", "OA-9", item("B-1", "complete"), item("B-2", "superseded", replacement="B-1"),
+                               item("B-3", "inapplicable", reviewed="independent reviewer 2026-10-14"))
+        r = self.recorded_check()
         self.assertEqual(r["verdict"], "complete", r)
         self.assertEqual(r["claim"], "100% COMPLETE — READY TO ARCHIVE")
         rc, out = self.run_cli("batch", str(self.path))
@@ -152,7 +173,7 @@ class OpenLedgerRepairPR(Base):
         self.assertEqual(r["verdict"], "incomplete")
         self.assertTrue(r["failed_claims"] and r["failed_claims"][0].startswith("B-PR212: claimed complete"))
         subprocess.run([*g, "merge", "-q", "--ff-only", "pr"], check=True)
-        self.assertEqual(self.check()["verdict"], "complete")
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_in_progress_pr_is_outstanding(self) -> None:
         self.batch(item("B-PR212", "in_progress", kind="integration"))
@@ -173,7 +194,7 @@ class PendingMirror(Base):
         _, out = self.run_cli("batch", str(self.path))
         self.assertIn("B-MIRROR", out)
         mirror.write_text("v2\n", encoding="utf-8")
-        self.assertEqual(self.check()["verdict"], "complete")
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_open_mirror_item_is_outstanding(self) -> None:
         self.batch(item("B-MIRROR", "open", kind="mirror"))
@@ -187,7 +208,7 @@ class SupersededDeployment(Base):
     def test_superseded_instruction_is_cleared_not_actionable(self) -> None:
         self.batch(item("B-DEPLOY", "complete", kind="delivery", text="deploy 8ccdeec0", check="ledger L1 complete"),
                    item("B-T2", "superseded", kind="instruction", text="owner restarts the backend", replacement="B-DEPLOY"))
-        r = self.check()
+        r = self.recorded_check()
         self.assertEqual(r["verdict"], "complete")
         self.assertFalse(any("B-T2" in x for x in r["outstanding"]))
         self.assertEqual(r["owner_actions_new"], [])
@@ -225,11 +246,8 @@ class TransferredOrDeferredCannotDisappear(Base):
         self.assertEqual(self.check()["verdict"], "incomplete")
         self.batch(item("B-SIGNIN", "transferred", kind="behavior", covers="L1:F-001"))
         self.assertEqual(self.check()["verdict"], "incomplete")
-        self.batch(item("B-SIGNIN", "owner_accepted", kind="behavior", covers="L1:F-001",
-                        acceptance="OA-1"),
-                   owner_action("OA-1", "accept exclusion of the sign-in check", status="done",
-                                resolution="owner accepted in chat 2026-10-14"))
-        self.assertEqual(self.check()["verdict"], "complete")
+        self.raise_then_accept("B-SIGNIN", "OA-1", kind="behavior", covers="L1:F-001")
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_owner_accepted_needs_a_dated_owner_act(self) -> None:
         self.batch(item("B-1", "owner_accepted", acceptance="looks fine"))
@@ -366,7 +384,7 @@ class Validation(Base):
         self.batch(item("B-1", "complete"), item("B-2", "superseded", replacement="NOPE-999"))
         self.assertTrue(any("replacement" in e for e in self.errors()))
         self.batch(item("B-1", "complete"), item("B-2", "superseded", replacement="L1:F-001"))
-        self.assertEqual(self.check()["verdict"], "complete")
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_checked_kind_needs_a_check(self) -> None:
         self.batch(item("B-M", "complete", kind="mirror"))
@@ -374,7 +392,7 @@ class Validation(Base):
         self.batch(item("B-M", "complete", kind="mirror", check="none"))
         self.assertTrue(any("needs a check" in e for e in self.errors()))
         self.batch(item("B-M", "complete", kind="mirror", check="none (mirror lives on another machine)"))
-        self.assertEqual(self.check()["verdict"], "complete")
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_relative_paths_resolve_against_the_manifest(self) -> None:
         (self.tmp / "same.txt").write_text("x\n", encoding="utf-8")
@@ -386,7 +404,7 @@ class Validation(Base):
         elsewhere = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, elsewhere, True)
         with contextlib.chdir(elsewhere):
-            self.assertEqual(self.check()["verdict"], "complete")
+            self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_vacuous_checks_fail(self) -> None:
         f = self.tmp / "same.txt"
@@ -402,13 +420,13 @@ class Validation(Base):
             self.assertTrue(any(key in e for e in self.errors()), key)
         ep = ENDPOINT.replace("- Authority gaps: owner sign-in for acceptance checks", "- Authority gaps: none")
         self.batch(item("B-1", "complete"), endpoint=ep)
-        self.assertEqual(self.check()["verdict"], "complete")
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_owner_accepted_needs_a_done_owner_action(self) -> None:
         self.batch(item("B-1", "owner_accepted", acceptance="OA-1"), owner_action("OA-1", "accept exclusion"))
-        self.assertTrue(any("owner_accepted needs acceptance" in e for e in self.errors()))
+        self.assertTrue(any("owner_accepted: its owner action is not done" in e for e in self.errors()))
         self.batch(item("B-1", "owner_accepted", acceptance="owner accepted 2026-10-14"))
-        self.assertTrue(any("owner_accepted needs acceptance" in e for e in self.errors()))
+        self.assertTrue(any("owner_accepted: acceptance names no" in e for e in self.errors()))
 
     def test_blocked_owner_on_a_closed_owner_action_is_invalid(self) -> None:
         for st in ("done", "declined"):
@@ -465,10 +483,6 @@ class LedgerCoverage(Base):
 
 
 class RecordedThingsCannotDisappear(Base):
-    def record(self) -> None:
-        rc, _ = self.run_cli("batch", str(self.path), "--record")
-        self.assertIn(rc, (0, 1, 2))
-
     def test_deleting_a_recorded_ledger_is_invalid(self) -> None:
         self.batch(item("B-1", "complete"))
         self.record()
@@ -499,11 +513,16 @@ class RecordedThingsCannotDisappear(Base):
         changed = text.replace("- Runs: weekly full audit 2026-10-12;", "- Runs: weekly full audit only;")
         self.path.write_text(changed, encoding="utf-8")
         self.assertTrue(any("endpoint changed" in e for e in self.check()["validation_errors"]))
-        amended = changed.replace("- Archive evidence:", "- Amended: owner narrowed the runs 2026-10-14\n- Archive evidence:")
+        pin = text.split("endpoint: ", 1)[1].split()[0]
+        amended = changed.replace("- Archive evidence:",
+                                  f"- Amended: owner narrowed the runs 2026-10-14 (from {pin})\n- Archive evidence:")
         self.path.write_text(amended, encoding="utf-8")
-        self.assertEqual(self.check()["verdict"], "complete")
+        r = self.check()
+        self.assertEqual(r["validation_errors"], [])
+        self.assertEqual(r["verdict"], "incomplete")  # the amended endpoint is not recorded yet
         self.record()  # the amended endpoint is re-pinned
         self.assertEqual(self.path.read_text(encoding="utf-8").count("endpoint: EP-"), 2)
+        self.assertEqual(self.check()["verdict"], "complete")
 
 
 class RealRestart(Base):
@@ -534,6 +553,167 @@ class RealRestart(Base):
         with contextlib.redirect_stdout(buf):
             self.assertEqual(grrp.main(["batch-init", "--slug", "audit", "--dir", str(d)]), 0)
         self.assertIn("created: ", buf.getvalue())  # not "existing: ...nightly-audit.batch.md"
+
+
+class RecordIsTheContract(Base):
+    """The archive claim stands on a recorded contract: ids, item content, ledger files and every
+    ledger obligation any record saw are binding afterwards (second-review findings N1-N8)."""
+
+    DEFERRED = TransferredOrDeferredCannotDisappear.DEFERRED
+
+    def deferral(self) -> None:
+        TransferredOrDeferredCannotDisappear.ledger_with_deferral(self)  # type: ignore[arg-type]
+
+    def test_never_recorded_is_not_archive_ready(self) -> None:
+        self.batch(item("B-1", "complete"))
+        r = self.check()
+        self.assertEqual(r["verdict"], "incomplete")
+        self.assertTrue(any("not recorded" in x for x in r["record_open"]), r["record_open"])
+
+    def test_deleted_record_block_is_not_archive_ready(self) -> None:
+        self.batch(item("B-1", "complete"))
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
+        text = self.path.read_text(encoding="utf-8")
+        s = text.index("```grrp-record")
+        self.path.write_text(text[:s] + text[text.index("```\n", s + 5) + 4:], encoding="utf-8")
+        self.assertEqual(self.check()["verdict"], "incomplete")
+
+    def test_edited_earlier_record_breaks_the_chain(self) -> None:
+        self.batch(item("B-1", "complete"))
+        self.record()
+        self.batch(item("B-1", "complete"), item("B-2", "complete"), keep_record=True)
+        self.record()
+        text = self.path.read_text(encoding="utf-8")
+        self.assertEqual(text.count("```grrp-record"), 2)
+        self.path.write_text(text.replace("items: B-1\n", "items: B-1, B-9\n", 1), encoding="utf-8")
+        self.assertTrue(any("chain broken" in e for e in self.check()["validation_errors"]))
+
+    def test_ledger_path_swap_after_record_is_invalid(self) -> None:  # N1
+        self.deferral()
+        clean = self.tmp / "clean.ledger.md"
+        clean.write_text(BRIEF + block("criterion", OK_CRIT)
+                         + finding("F-001", execution_state="reviewed", obligations=REVIEW_ONLY_OBL), encoding="utf-8")
+        self.batch(item("B-1", "complete"), item("B-DEF", "deferred", covers="L1:F-001"))
+        self.record()
+        text = self.path.read_text(encoding="utf-8").replace(f"path: {self.ledger_path}", f"path: {clean}")
+        self.path.write_text(text.replace("status: deferred", "status: complete"), encoding="utf-8")
+        self.assertTrue(any("path changed" in e for e in self.check()["validation_errors"]))
+
+    def test_recorded_ledger_obligation_must_stay_carried(self) -> None:  # N1
+        self.deferral()
+        self.batch(item("B-1", "complete"))
+        self.record()
+        self.assertIn("obligations: L1:F-001", self.path.read_text(encoding="utf-8"))
+        self.complete_ledger()  # the same ledger file, now without the deferral
+        r = self.recorded_check()
+        self.assertEqual(r["verdict"], "incomplete")
+        self.assertTrue(any("recorded as open" in x for x in r["ledger_open"]), r["ledger_open"])
+
+    def test_ledger_update_lets_its_carrier_clear(self) -> None:
+        self.deferral()
+        self.batch(item("B-1", "complete"), item("B-DEF", "deferred", covers="L1:F-001"))
+        self.record()
+        self.complete_ledger()  # verification done and written to the ledger: the legitimate route
+        self.batch(item("B-1", "complete"), item("B-DEF", "complete", covers="L1:F-001"), keep_record=True)
+        self.assertEqual(self.recorded_check()["verdict"], "complete")
+
+    def test_done_owner_action_never_raised_cannot_accept(self) -> None:  # N2
+        self.batch(item("B-1", "owner_accepted", acceptance="OA-X"),
+                   owner_action("OA-X", "unrelated: approve font change", status="done", accepts="B-1",
+                                resolution="owner said ok 2026-10-13"))
+        self.record()
+        self.assertTrue(any("never raised" in e for e in self.check()["validation_errors"]))
+
+    def test_acceptance_must_name_the_item(self) -> None:  # N2
+        self.raise_then_accept("B-1", "OA-1")
+        text = self.path.read_text(encoding="utf-8").replace("accepts: B-1\n", "accepts: B-7\n")
+        self.path.write_text(text, encoding="utf-8")
+        self.assertTrue(any("does not list this item" in e for e in self.check()["validation_errors"]))
+
+    def test_replacement_cycle_and_dangling_ref_are_invalid(self) -> None:  # N4
+        self.batch(item("B-1", "superseded", replacement="B-2"), item("B-2", "superseded", replacement="B-1"))
+        self.assertTrue(any("loops back" in e for e in self.check()["validation_errors"]))
+        self.batch(item("B-1", "complete"), item("B-2", "duplicate", replacement="L1:NOPE-999"))
+        self.assertTrue(any("has no finding or transfer" in e for e in self.check()["validation_errors"]))
+
+    def test_empty_or_mixed_none_check_runs_nothing_free(self) -> None:  # N5
+        self.batch(item("B-M", "complete", kind="mirror", check=";"))
+        self.assertTrue(any("needs a check" in e for e in self.check()["validation_errors"]))
+        self.batch(item("B-M", "complete", kind="mirror", check="none (n/a); file does-not-exist.txt"))
+        self.assertEqual(self.check()["verdict"], "incomplete")
+        self.batch(item("B-M", "complete", kind="mirror", check="nonexistent_tool --verify"))
+        self.assertEqual(self.check()["verdict"], "incomplete")
+
+    def test_amendment_binds_to_the_pin_it_replaces(self) -> None:  # N6
+        self.batch(item("B-1", "complete"))
+        self.record()
+        text = self.path.read_text(encoding="utf-8")
+        pin = text.split("endpoint: ", 1)[1].split()[0]
+        step = text.replace("- Runs: weekly full audit 2026-10-12;", "- Runs: weekly full audit only;").replace(
+            "- Archive evidence:", f"- Amended: owner narrowed the runs 2026-10-14 (from {pin})\n- Archive evidence:")
+        self.path.write_text(step, encoding="utf-8")
+        self.record()  # re-pinned
+        again = self.path.read_text(encoding="utf-8").replace("changes merged and active", "a report exists")
+        self.path.write_text(again, encoding="utf-8")
+        self.assertTrue(any("endpoint changed" in e for e in self.check()["validation_errors"]))
+
+    def test_backdated_amendment_does_not_count(self) -> None:  # N6
+        self.batch(item("B-1", "complete"))
+        self.record()
+        text = self.path.read_text(encoding="utf-8")
+        pin = text.split("endpoint: ", 1)[1].split()[0]
+        self.path.write_text(text.replace("- Runs: weekly full audit 2026-10-12;", "- Runs: x;").replace(
+            "- Archive evidence:", f"- Amended: owner 2026-01-01 (from {pin})\n- Archive evidence:"), encoding="utf-8")
+        self.assertTrue(any("endpoint changed" in e for e in self.check()["validation_errors"]))
+
+    def test_endpoint_can_be_pinned_before_execution(self) -> None:  # N7
+        self.batch()  # endpoint and ledger stated, no items yet: invalid, but recordable
+        self.assertEqual(self.check()["verdict"], "invalid")
+        self.record()
+        self.assertIn("endpoint: EP-", self.path.read_text(encoding="utf-8"))
+
+    def test_invalid_run_still_never_re_asks(self) -> None:  # N7
+        self.batch(item("B-5", "blocked_owner", owner_action="OA-1"), item("B-X", "complete", kind="bogus"),
+                   owner_action("OA-1", "sign in and run the hub check"))
+        rc, out = self.run_cli("batch", str(self.path), "--record")
+        self.assertEqual(rc, 3)
+        self.assertIn("Owner actions, new (1)", out)
+        rc, out = self.run_cli("batch", str(self.path), "--record")
+        self.assertNotIn("Owner actions, new", out)
+
+    def test_item_dropped_while_invalid_is_still_caught(self) -> None:  # N7
+        self.batch(item("B-1", "complete"), item("B-2", "open"), item("B-X", "complete", kind="bogus"))
+        self.record()
+        self.batch(item("B-1", "complete"), keep_record=True)
+        self.assertTrue(any("B-2 was recorded but is gone" in e for e in self.check()["validation_errors"]))
+
+    def test_item_content_is_pinned(self) -> None:  # N8
+        self.batch(item("B-M", "open", kind="mirror", text="publish Workspace mirror"))
+        self.record()
+        self.batch(item("B-M", "complete", kind="obligation", text="n/a"), keep_record=True)
+        self.assertTrue(any("changed after it was recorded" in e for e in self.check()["validation_errors"]))
+
+    def test_repeated_endpoint_key_and_fenced_version_are_invalid(self) -> None:  # m2
+        ep = ENDPOINT.replace("- Runs: weekly", "- Runs: tbd\n- Runs: weekly")
+        self.batch(item("B-1", "complete"), endpoint=ep)
+        self.assertTrue(any("stated more than once" in e for e in self.check()["validation_errors"]))
+        ep = ENDPOINT.replace("grrp-batch: v1\n", "~~~\ngrrp-batch: v1\n~~~\n")
+        self.batch(item("B-1", "complete"), endpoint=ep)
+        self.assertTrue(any("grrp-batch: v1" in e for e in self.check()["validation_errors"]))
+
+    def test_hard_link_compare_is_vacuous(self) -> None:  # m3
+        a, b = self.tmp / "a.txt", self.tmp / "b.txt"
+        a.write_text("x\n", encoding="utf-8")
+        try:
+            os.link(a, b)
+        except OSError:
+            self.skipTest("no hard links here")
+        self.batch(item("B-M", "complete", kind="mirror", check=f"same {a} == {b}"))
+        self.assertEqual(self.check()["verdict"], "incomplete")
+
+    def test_future_end_is_invalid(self) -> None:  # m4
+        self.batch(item("B-1", "complete"), metrics=METRICS_OPEN.replace("end: none", "end: 2099-01-01T00:00:00Z"))
+        self.assertTrue(any("in the future" in e for e in self.check()["validation_errors"]))
 
 
 if __name__ == "__main__":

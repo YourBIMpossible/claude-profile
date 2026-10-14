@@ -1169,7 +1169,7 @@ def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path(".")) -> s
             a, b = _resolve(base, " ".join(parts[1:i])), _resolve(base, " ".join(parts[i + 1:]))
             if not (a.is_file() and b.is_file()):
                 return "file missing"
-            if a.resolve() == b.resolve():
+            if a.resolve() == b.resolve() or os.path.samefile(a, b):
                 return "vacuous check (file compared with itself)"
             return None if a.read_bytes() == b.read_bytes() else "files differ"
     except (OSError, ValueError, subprocess.SubprocessError) as e:
@@ -1182,41 +1182,129 @@ def _endpoint_digest(endpoint: dict[str, str]) -> str:
     return "EP-" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
 
 
+def _sha12(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
+
+
+def _record_digest(rec: dict[str, str]) -> str:
+    """Identity of one grrp-record block; the next record names it in `prev:`, so editing or
+    removing an earlier record breaks the chain."""
+    return _sha12("\n".join(f"{k}: {' '.join(v.split())}" for k, v in sorted(rec.items())))
+
+
+def _item_pin(it: dict[str, str]) -> str:
+    """What an item *is* (kind, text, source, covers) is fixed once recorded; status, evidence and
+    checks move. A different obligation is a new item that supersedes the old one."""
+    return _sha12("\n".join(f"{k}: {' '.join((it.get(k) or '').split())}" for k in ("kind", "text", "source", "covers")))
+
+
+def _path_pin(p: Path) -> str:
+    return _sha12(os.path.normcase(str(p.resolve())))
+
+
+def _pins(rec: dict[str, str], key: str) -> dict[str, str]:
+    """`B-1@abc123, B-2@def456` -> {id: pin}."""
+    return {x.partition("@")[0]: x.partition("@")[2] for x in _list(rec.get(key)) if "@" in x}
+
+
+def _unfenced(text: str) -> str:
+    """Text with ordinary (non-grrp) fenced examples removed: a version line or an endpoint bullet
+    inside an example is not the manifest's own."""
+    out: list[str] = []
+    other: str | None = None
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if other:
+            s = line.strip()
+            if s and set(s) == {other[0]} and len(s) >= len(other):
+                other = None
+            continue
+        fm = ORDINARY_FENCE_RE.match(line)
+        if fm and not _mentions_grrp_fence(line):
+            other = fm.group(1)
+            continue
+        out.append(raw)
+    return "\n".join(out) + "\n"
+
+
 def _covers(item: dict[str, str]) -> list[tuple[str, str]]:
     """`covers: L1:SEC-A61, L1:T-2` — ledger obligations this item carries in the batch."""
     return [(c.partition(":")[0].strip(), c.partition(":")[2].strip()) for c in _list(item.get("covers"))]
+
+
+AMENDED_RE = re.compile(r"^- Amended:[ \t]*(.*?)[ \t]*\(from (EP-[0-9a-f]{12})\)[ \t]*$", re.M)
+CHECK_NONE_RE = re.compile(r"none \(.*\S.*\)", re.I)
+CLOCK_SKEW = _dt.timedelta(days=1)
 
 
 def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
     """The archive-ready claim for one batch. complete = every item cleared with evidence, every
     deterministic check passing, every ledger gate complete, every ledger-side deferral/transfer
     carried by an inventory item (and cleared only by owner acceptance while the ledger still shows
-    it), no open owner action, nothing recorded that has since vanished, and the batch end recorded."""
+    it), no open owner action, the whole inventory and endpoint recorded with nothing recorded since
+    vanished or changed, and the batch end recorded."""
     text = path.read_text(encoding="utf-8")
     base = path.resolve().parent
     man = parse_text(path, text, BATCH_OPEN_RE)
     errors = list(man.errors)
-    if not re.search(r"^grrp-batch: v1$", text, re.M):
+    plain = _unfenced(text)
+    if not re.search(r"^grrp-batch: v1$", plain, re.M):
         errors.append("missing 'grrp-batch: v1' line")
-    ep_section = _endpoint_section(text)
-    endpoint = {k: v.strip() for k, v in ENDPOINT_RE.findall(ep_section)}
+    ep_section = _endpoint_section(plain)
+    pairs = ENDPOINT_RE.findall(ep_section)
+    endpoint = {k: v.strip() for k, v in pairs}
+    endpoint_ok = True
+    for k in sorted({k for k, _ in pairs if [p[0] for p in pairs].count(k) > 1}):
+        errors.append(f"endpoint: '{k}' stated more than once")
+        endpoint_ok = False
     for k in ENDPOINT_KEYS:
         v = endpoint.get(k, "")
         bad = (not v or v.lower() in UNKNOWN_VALUES) if k == "Authority gaps" else (_blank(v) or v.lower() in UNKNOWN_VALUES)
         if bad:
             errors.append(f"endpoint: '{k}' must be stated before execution (write 'none' only for Authority gaps)")
+            endpoint_ok = False
+
+    mbs = man.of("metrics")
+    mb = mbs[0] if len(mbs) == 1 else {}
+    start, end = _at(mb.get("start")), _at(mb.get("end"))
+    if len(mbs) != 1:
+        errors.append("exactly one grrp-metrics block required")
+    elif start is None:
+        errors.append("metrics: start must be an ISO datetime with timezone")
+    elif end is not None and end < start:
+        errors.append("metrics: end is earlier than start")
+    elif end is not None and end > _dt.datetime.now(_dt.timezone.utc) + CLOCK_SKEW:
+        errors.append("metrics: end is in the future")
+    metrics_open = [] if end is not None else ["batch end not recorded"]
+
+    # Records: an append-only chain. Each names its predecessor, so an edited or removed earlier
+    # record is detected; what any record saw is binding from then on.
     records = man.of("record")
+    for n, r in enumerate(records):
+        want = _record_digest(records[n - 1]) if n else "none"
+        if (r.get("prev") or "none").strip() != want:
+            errors.append(f"grrp-record {n + 1}: chain broken (prev does not name the record before it); "
+                          "records are append-only")
     ep_digest = _endpoint_digest(endpoint)
     pinned = [r.get("endpoint", "").strip() for r in records if not _blank(r.get("endpoint"))]
-    amended = re.search(r"^- Amended:[ \t]*(.*)$", ep_section, re.M)
-    if pinned and pinned[-1] != ep_digest and (amended is None or _no_owner_action(amended.group(1))):
-        errors.append("endpoint changed after it was recorded: restore it, or add '- Amended: <owner, YYYY-MM-DD, why>'")
+    if pinned and pinned[-1] != ep_digest:
+        am = AMENDED_RE.search(ep_section)
+        am_date = ISO_DATE_RE.search(am.group(1)) if am else None
+        ok = (am is not None and am.group(2) == pinned[-1] and not _no_owner_action(am.group(1))
+              and am_date is not None and (start is None or am_date.group(0) >= start.date().isoformat()))
+        if not ok:
+            errors.append(f"endpoint changed after it was recorded ({pinned[-1]}): restore it, or add "
+                          f"'- Amended: <owner, YYYY-MM-DD, why> (from {pinned[-1]})' and re-record")
 
-    # Ledgers: one block per id and per file, resolved against the manifest's folder.
+    # Ledgers: one block per id and per file, resolved against the manifest's folder; the file a
+    # recorded id points at is fixed.
     ledger_ids = [b.get("id", "") for b in man.of("ledger")]
     for x in sorted({x for x in ledger_ids if ledger_ids.count(x) > 1}):
         errors.append(f"grrp-ledger {_q(x)}: id repeated")
+    recorded_ledger_pins = {k: v for r in records for k, v in _pins(r, "ledger_pins").items()}
     ledgers: dict[str, dict] = {}
+    ledger_refs: dict[str, set[str]] = {}
+    ledger_pin_now: dict[str, str] = {}
     seen_paths: dict[Path, str] = {}
     for b in man.of("ledger"):
         lid, lp = b.get("id", ""), b.get("path", "")
@@ -1233,29 +1321,67 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         seen_paths.setdefault(rp, lid)
         if lid in ledgers:
             continue
+        ledger_pin_now[lid] = _path_pin(p)
+        if lid in recorded_ledger_pins and recorded_ledger_pins[lid] != ledger_pin_now[lid]:
+            errors.append(f"grrp-ledger {_q(lid)}: path changed after it was recorded (a recorded ledger keeps its file)")
         try:
-            ledgers[lid] = gate(parse(p), queue)
+            led = parse(p)
+            ledgers[lid] = gate(led, queue)
+            ledger_refs[lid] = {blk.get("id", "") for k in ("finding", "transfer", "criterion") for blk in led.of(k)}
         except (OSError, UnicodeDecodeError) as e:
             errors.append(f"grrp-ledger {_q(lid)}: unreadable ({type(e).__name__})")
 
     items = man.of("item")
     ids = [i.get("id", "") for i in items]
+    by_id = {i.get("id", ""): i for i in items}
     for x in sorted({x for x in ids if ids.count(x) > 1}):
         errors.append(f"item {_q(x)}: id repeated")
     if not items:
         errors.append("no grrp-item: an empty inventory cannot be archive-ready")
     if not man.of("ledger"):
         errors.append("no grrp-ledger: list the ledger of every scheduled run in the batch")
+    recorded_item_pins = {k: v for r in records for k, v in _pins(r, "item_pins").items()}
 
     oa_blocks = man.of("owner-action")
     oa_ids = [o.get("id", "") for o in oa_blocks]
     for x in sorted({x for x in oa_ids if oa_ids.count(x) > 1}):
         errors.append(f"owner action {_q(x)}: id repeated")
     oas = {o.get("id", ""): o for o in oa_blocks}
+    raised = {x for r in records for x in _list(r.get("raised"))}
+    raised_ids = {x for r in records for x in _list(r.get("raised_ids"))}
 
-    def oa_done(oid: str) -> bool:
+    def acceptance_error(iid: str, oid: str) -> str | None:
+        """owner_accepted stands only on an owner action that was raised while open (so the owner
+        was actually asked), is done with a dated owner resolution, and names this item in accepts."""
         o = oas.get(oid.strip())
-        return bool(o) and o.get("status") == "done" and not _no_owner_action(o.get("resolution"))
+        if not o:
+            return "acceptance names no grrp-owner-action"
+        if o.get("status") != "done" or _no_owner_action(o.get("resolution")):
+            return "its owner action is not done with a resolution citing the owner and a date"
+        if oid.strip() not in raised_ids and owner_action_fingerprint(o.get("action", "")) not in raised:
+            return "its owner action was never raised (record it while open, before it is resolved)"
+        if iid not in _list(o.get("accepts")):
+            return "its owner action does not list this item in accepts"
+        return None
+
+    def replacement_error(iid: str) -> str | None:
+        """Follow superseded/duplicate links to their end: no cycle, no dangling target."""
+        seen = [iid]
+        cur = iid
+        while True:
+            rep = (by_id[cur].get("replacement") or "").strip()
+            rl, _, rr = rep.partition(":")
+            if rep in by_id:
+                if rep in seen:
+                    return "replacement chain loops back to " + _q(rep)
+                if by_id[rep].get("status") not in {"duplicate", "superseded"}:
+                    return None
+                seen.append(rep)
+                cur = rep
+                continue
+            if rr and rl in ledger_ids:
+                return None if rr in ledger_refs.get(rl, set()) else f"{_q(rl)} has no finding or transfer {_q(rr)}"
+            return "replacement must name another listed item id or <ledger id>:<finding or transfer id>"
 
     outstanding: list[str] = []
     hard_open: list[str] = []      # outstanding for a reason the agent can still act on
@@ -1275,6 +1401,9 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         for k, v in it.items():
             if v.strip().lower() in UNKNOWN_VALUES:
                 errors.append(f"item {q}: '{_q(k)}' is a placeholder")
+        if iid in recorded_item_pins and recorded_item_pins[iid] != _item_pin(it):
+            errors.append(f"item {q}: kind/text/source/covers changed after it was recorded "
+                          "(a different obligation is a new item that supersedes this one)")
         kind = it.get("kind", "")
         if kind and kind not in ITEM_KINDS:
             errors.append(f"item {q}: kind '{_q(kind)}' unknown")
@@ -1283,26 +1412,26 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
             continue
         if st in {"complete", "duplicate", "superseded", "inapplicable"} and _blank(it.get("evidence")):
             errors.append(f"item {q}: {st} needs evidence")
-        if st in {"duplicate", "superseded"}:
-            rep = it.get("replacement", "").strip()
-            rl, _, rr = rep.partition(":")
-            if _blank(rep) or rep == iid or not (rep in ids or (rr and rl in ledger_ids)):
-                errors.append(f"item {q}: {st} needs replacement naming another listed item id or <ledger id>:<ref>")
+        if st in {"duplicate", "superseded"} and ids.count(iid) == 1:
+            why = replacement_error(iid)
+            if why:
+                errors.append(f"item {q}: {st}: {why}")
         if st == "inapplicable" and _blank(it.get("reviewed")):
             errors.append(f"item {q}: inapplicable needs reviewed (who reviewed the explanation, and how)")
-        if st == "owner_accepted" and not oa_done(it.get("acceptance", "")):
-            errors.append(f"item {q}: owner_accepted needs acceptance naming a done grrp-owner-action "
-                          "whose resolution cites the owner and a date")
+        if st == "owner_accepted":
+            why = acceptance_error(iid, it.get("acceptance", ""))
+            if why:
+                errors.append(f"item {q}: owner_accepted: {why}")
         check = (it.get("check") or "").strip()
-        no_check = check.lower().startswith("none")
-        if st == "complete" and kind in CHECKED_KINDS and (_blank(check) or (no_check and "(" not in check)):
-            errors.append(f"item {q}: complete {kind} needs a check (or 'check: none (<why none is possible>)')")
+        none_ok = CHECK_NONE_RE.fullmatch(check) is not None
+        specs = [] if none_ok or _blank(check) else [s.strip() for s in check.split(";") if s.strip()]
+        if st == "complete" and kind in CHECKED_KINDS and not (none_ok or specs):
+            errors.append(f"item {q}: complete {kind} needs a check (or the whole field 'none (<why none is possible>)')")
         for lid, ref in _covers(it):
             if lid not in ledger_ids or not ref:
                 errors.append(f"item {q}: covers '{_q(lid)}:{_q(ref)}' names no listed ledger")
             covered_by.setdefault((lid, ref), []).append((iid, st))
         # A claim is only as good as its check: a cleared item whose check fails is not cleared.
-        specs = [] if no_check else [s.strip() for s in check.split(";") if s.strip()]
         fails = [f"{_q(spec.split()[0])}: {why}" for spec in specs for why in [_run_check(spec, ledgers, base)] if why]
         label = f"{q}: {st} ({_q(kind)}, owner {_q(it.get('owner'))})"
         if st in ITEM_CLEARED and st != "owner_accepted" and fails:
@@ -1331,8 +1460,10 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
 
     # The ledger gate lets a deferral or an accepted transfer pass; the batch does not. Each must be
     # carried by an inventory item, which holds the batch open until it is cleared, and while the
-    # ledger still shows the obligation only an owner acceptance can clear it.
+    # ledger still shows the obligation only an owner acceptance can clear it. A ref any record saw
+    # open stays an obligation that some item must carry, whatever the ledger says later.
     ledger_open: list[str] = []
+    open_refs_now: set[str] = set()
     for lid, g in ledgers.items():
         if g["verdict"] != "complete":
             n = len(g["validation_errors"])
@@ -1341,6 +1472,7 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         needs += [(x.split(":")[0], "transfer not acknowledged") for x in g["transfers_unacknowledged"]]
         needs += [(x, "transferred and still open") for x in g["portfolio_open"]]
         for ref, why in needs:
+            open_refs_now.add(f"{lid}:{ref}")
             carriers = covered_by.get((lid, ref), [])
             if not carriers:
                 ledger_open.append(f"{_q(lid)}:{_q(ref)}: {why} in the ledger but carried by no batch item")
@@ -1348,10 +1480,14 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
                 if cst in ITEM_CLEARED and cst != "owner_accepted":
                     failed_claims.append(f"{_q(cid)}: claimed {cst}, but {_q(lid)}:{_q(ref)} is still {why} "
                                          "in the ledger (update the ledger, or record an owner acceptance)")
+    recorded_obligations = {x for r in records for x in _list(r.get("obligations"))}
+    for ob in sorted(recorded_obligations - open_refs_now):
+        lid, _, ref = ob.partition(":")
+        if not covered_by.get((lid, ref)):
+            ledger_open.append(f"{_q(lid)}:{_q(ref)}: recorded as open in the ledger and carried by no batch item")
 
     # Owner actions: one ask per fingerprint; --record marks them raised so a rerun never re-asks.
-    raised = {x for r in records for x in _list(r.get("raised"))}
-    seen: dict[str, str] = {}
+    seen_fp: dict[str, str] = {}
     duplicate_asks: list[str] = []
     new_asks: list[dict] = []
     awaiting: list[dict] = []
@@ -1371,25 +1507,24 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         if ost != "open":
             continue
         fp = owner_action_fingerprint(o.get("action", ""))
-        if fp in seen:
-            duplicate_asks.append(f"{_q(oid)} repeats {_q(seen[fp])}")
+        if fp in seen_fp:
+            duplicate_asks.append(f"{_q(oid)} repeats {_q(seen_fp[fp])}")
             continue
-        seen[fp] = oid
+        seen_fp[fp] = oid
         entry = {"id": oid, "fingerprint": fp, "action": _txt(o.get("action")),
                  "recommendation": _txt(o.get("recommendation")), "why_not_agent": _txt(o.get("why_not_agent")),
                  "enables": _txt(o.get("enables"))}
-        (awaiting if fp in raised else new_asks).append(entry)
+        (awaiting if fp in raised or oid in raised_ids else new_asks).append(entry)
 
-    mbs = man.of("metrics")
-    mb = mbs[0] if len(mbs) == 1 else {}
-    start, end = _at(mb.get("start")), _at(mb.get("end"))
-    if len(mbs) != 1:
-        errors.append("exactly one grrp-metrics block required")
-    elif start is None:
-        errors.append("metrics: start must be an ISO datetime with timezone")
-    elif end is not None and end < start:
-        errors.append("metrics: end is earlier than start")
-    metrics_open = [] if end is not None else ["batch end not recorded"]
+    # The claim stands only on a recorded contract: the endpoint and every id pinned.
+    record_open: list[str] = []
+    unrecorded = sorted((set(ids) - {x for r in records for x in _list(r.get("items"))})
+                        | (set(ledger_ids) - {x for r in records for x in _list(r.get("ledgers"))})
+                        | (set(oa_ids) - {x for r in records for x in _list(r.get("owner_actions"))}))
+    if not records or not pinned or pinned[-1] != ep_digest:
+        record_open.append("endpoint not recorded: run `grrp.py batch --record`")
+    if unrecorded:
+        record_open.append(f"{len(unrecorded)} id(s) not recorded: run `grrp.py batch --record`")
 
     if errors:
         verdict = "invalid"
@@ -1397,20 +1532,38 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         verdict = "incomplete"
     elif outstanding or new_asks or awaiting:
         verdict = "blocked"  # only open owner actions stand between the batch and archive
-    elif metrics_open:
+    elif metrics_open or record_open:
         verdict = "incomplete"
     else:
         verdict = "complete"
+    # What a --record run would add (well-formed ids only; computed whatever the verdict, so the
+    # endpoint and inventory can be pinned before execution and an invalid run still never re-asks).
+    seen_rec = {f: {x for r in records for x in _list(r.get(f))} for f in ("items", "ledgers", "owner_actions", "obligations")}
+    to_record = {
+        "items": sorted(x for x in set(ids) - seen_rec["items"] if SAFE_ID_RE.fullmatch(x) and ids.count(x) == 1),
+        "ledgers": sorted(x for x in set(ledger_pin_now) - seen_rec["ledgers"]),
+        "owner_actions": sorted(x for x in set(oa_ids) - seen_rec["owner_actions"] if SAFE_ID_RE.fullmatch(x) and oa_ids.count(x) == 1),
+        "obligations": sorted(x for x in open_refs_now - seen_rec["obligations"] if SAFE_ID_RE.fullmatch(x.partition(":")[2])),
+        "raised": sorted({a["fingerprint"] for a in new_asks}),
+        "raised_ids": sorted({a["id"] for a in new_asks}),
+    }
+    to_record["item_pins"] = [f"{x}@{_item_pin(by_id[x])}" for x in to_record["items"]]
+    to_record["ledger_pins"] = [f"{x}@{ledger_pin_now[x]}" for x in to_record["ledgers"]]
+    to_record["endpoint"] = ep_digest if endpoint_ok and (not pinned or pinned[-1] != ep_digest) else ""
+    if pinned and pinned[-1] != ep_digest and any("endpoint changed" in e for e in errors):
+        to_record["endpoint"] = ""  # an unamended change is never pinned over the old contract
     return {
         "batch": str(path), "verdict": verdict, "archive_ready": verdict == "complete",
         "claim": "100% COMPLETE — READY TO ARCHIVE" if verdict == "complete" else "NOT COMPLETE",
         "validation_errors": errors, "failed_claims": failed_claims, "ledger_open": ledger_open,
-        "outstanding": outstanding, "metrics_open": metrics_open,
+        "outstanding": outstanding, "metrics_open": metrics_open, "record_open": record_open,
         "owner_actions_new": new_asks, "owner_actions_awaiting": awaiting, "duplicate_owner_actions": duplicate_asks,
         "cleared": cleared, "ledgers": {k: v["verdict"] for k, v in ledgers.items()}, "endpoint_digest": ep_digest,
         "metrics": {k: _txt(mb.get(k), 60) for k in ("start", "end", "blocked_on_owner",
                                                       "avoidable_continuations", "relay_requests")},
         "items": {"total": len(items), "cleared": len(cleared), "outstanding": len(outstanding) + len(failed_claims)},
+        "_to_record": to_record, "_record_prev": _record_digest(records[-1]) if records else "none",
+        "_parse_ok": not man.errors,
     }
 
 
@@ -1419,7 +1572,8 @@ def render_batch(r: dict) -> str:
            + (", ".join(f"{k} {v}" for k, v in r["ledgers"].items()) or "none")]
     for k, title in (("validation_errors", "Invalid manifest"), ("failed_claims", "Claims whose check failed"),
                      ("ledger_open", "Ledger obligations"), ("outstanding", "Outstanding items"),
-                     ("metrics_open", "Metrics"), ("duplicate_owner_actions", "Repeated owner asks (asked once)")):
+                     ("metrics_open", "Metrics"), ("record_open", "Record"),
+                     ("duplicate_owner_actions", "Repeated owner asks (asked once)")):
         if r[k]:
             out.append(f"{title} ({len(r[k])}):")
             out += [f"  - {x}" for x in r[k]]
@@ -1479,30 +1633,52 @@ def cmd_batch_init(a: argparse.Namespace) -> int:
     return 0
 
 
+RECORD_FIELDS = ["items", "item_pins", "ledgers", "ledger_pins", "owner_actions", "obligations", "raised", "raised_ids"]
+
+
+def _record_payload(r: dict, now: str) -> str:
+    """The next grrp-record block, or "" when nothing new would be recorded."""
+    tr = r["_to_record"]
+    if not any(tr[f] for f in RECORD_FIELDS) and not tr["endpoint"]:
+        return ""
+    body = "".join(f"{f}: {', '.join(tr[f]) or 'none'}\n" for f in RECORD_FIELDS)
+    return (f"```grrp-record\nat: {now}\nprev: {r['_record_prev']}\n{body}"
+            + (f"endpoint: {tr['endpoint']}\n" if tr["endpoint"] else "") + "```\n")
+
+
 def cmd_batch(a: argparse.Namespace) -> int:
     path = Path(a.manifest)
-    r = batch_check(path, Path(a.queue) if a.queue else DEFAULT_QUEUE)
-    print(json.dumps(r, indent=2) if a.json else render_batch(r), end="" if not a.json else "\n")
-    if a.record and r["verdict"] != "invalid":
-        text = path.read_text(encoding="utf-8")
-        man = parse_text(path, text, BATCH_OPEN_RE)
-        records = man.of("record")
-        fresh = {}
-        for field_name, kind in (("items", "item"), ("ledgers", "ledger"), ("owner_actions", "owner-action")):
-            have = {b.get("id", "") for b in man.of(kind)}
-            fresh[field_name] = have - {x for b in records for x in _list(b.get(field_name))}
-        fps = {x["fingerprint"] for x in r["owner_actions_new"]}
-        pinned = [b.get("endpoint", "").strip() for b in records if not _blank(b.get("endpoint"))]
-        ep = r["endpoint_digest"] if not pinned or pinned[-1] != r["endpoint_digest"] else ""
-        if any(fresh.values()) or fps or ep:
+    queue = Path(a.queue) if a.queue else DEFAULT_QUEUE
+    r = batch_check(path, queue)
+    if a.record:
+        # Recording does not depend on the verdict: the endpoint and inventory are pinned before
+        # execution, and an ask printed by an invalid run is still never re-asked. Only a manifest
+        # that does not parse is refused, since its ids cannot be trusted.
+        if not r["_parse_ok"]:
+            print("not recorded: the manifest does not parse (fix the blocks first)", file=sys.stderr)
+        else:
             now = _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            body = "".join(f"{k}: {', '.join(sorted(v)) or 'none'}\n" for k, v in fresh.items())
-            payload = (f"```grrp-record\nat: {now}\n{body}raised: {', '.join(sorted(fps)) or 'none'}\n"
-                       + (f"endpoint: {ep}\n" if ep else "") + "```\n")
-            _write_atomic(path, _append_to_section(text, "## Record", payload, "\n\n"))
-            print(f"recorded {sum(map(len, fresh.values()))} id(s), {len(fps)} owner ask(s)"
-                  + (", endpoint pinned" if ep else "") + "; recorded ids must stay, raised asks are not repeated",
-                  file=sys.stderr)
+            payload = _record_payload(r, now)
+            if payload:
+                try:
+                    _write_atomic(path, _append_to_section(path.read_text(encoding="utf-8"), "## Record", payload, "\n\n"))
+                except OSError as e:
+                    print(f"grrp: cannot write the record to {path}: {e}", file=sys.stderr)
+                    print("NOT COMPLETE (record not written)")
+                    return 3
+                tr = r["_to_record"]
+                print(f"recorded {len(tr['items']) + len(tr['ledgers']) + len(tr['owner_actions'])} id(s), "
+                      f"{len(tr['raised'])} owner ask(s), {len(tr['obligations'])} ledger obligation(s)"
+                      + (", endpoint pinned" if tr["endpoint"] else "")
+                      + "; recorded ids must stay, raised asks are not repeated", file=sys.stderr)
+                asked = r["owner_actions_new"]
+                r = batch_check(path, queue)  # the verdict reflects what is now on file
+                # This run is the one raising those asks: show them as new once, never again.
+                ids_now = {x["id"] for x in asked}
+                r["owner_actions_new"] = asked
+                r["owner_actions_awaiting"] = [x for x in r["owner_actions_awaiting"] if x["id"] not in ids_now]
+    public = {k: v for k, v in r.items() if not k.startswith("_")}
+    print(json.dumps(public, indent=2) if a.json else render_batch(public), end="" if not a.json else "\n")
     return EXIT[r["verdict"]]
 
 

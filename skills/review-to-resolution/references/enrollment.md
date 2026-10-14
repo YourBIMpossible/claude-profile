@@ -27,8 +27,10 @@ workflow's checks, lenses, severities, report paths, or approval gates.
    this run's ledger as a `grrp-ledger` and, before any execution, state the endpoint: runs and
    follow-through included, authority available for repair/publish/merge/activation, authority
    gaps (never infer permission for a protected operation), and the archive evidence required.
-   Then run `grrp.py batch --record <manifest>` once: it pins the endpoint and the inventory so a
-   restarted session cannot quietly change the contract or drop an obligation.
+   Then run `grrp.py batch --record <manifest>` once, even while items are still missing (it
+   records whenever the manifest parses): it pins the endpoint, the inventory and every open
+   ledger obligation so a restarted session cannot quietly change the contract or drop one.
+   Changing the endpoint later needs `- Amended: <owner, date, why> (from EP-<latest pin>)`.
 
 ## Findings (one `grrp-finding` per report finding, kept or dismissed)
 | workflow result | assessment | classification · resolution |
@@ -61,7 +63,7 @@ No acceptance yet → leave `ack` out: `transfers_ok: false` is the true result.
 4. `grrp.py batch --record <manifest>` → the batch claim. Every criterion, finding
    disposition, delivery, left-flag and artifact disposition is a `grrp-item` carried to its latest
    evidence; owner actions are consolidated there (one per action, raised once, kept visible).
-   Report its first line verbatim. Only `100% COMPLETE — READY TO ARCHIVE` lets anyone call the
+   Report its first line verbatim, and cite the latest `grrp-record` in the closeout. Only `100% COMPLETE — READY TO ARCHIVE` lets anyone call the
    batch complete; the ledger verdict above is one input to it. Keep working independent items
    while one waits on the owner; routine merges, bookkeeping and coordination are the agent's.
 

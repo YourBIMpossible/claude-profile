@@ -47,5 +47,14 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
   requests: 0. Owner-relay requests: 0.
 
 ## Checkpoint
-- Phase 0 in progress: inventory subagents A/B running; Stage A commits owner identified via
-  reports (2026-10-13-bimpossible-stage-a-*-closeout.md).
+- Phase 0 done: inventories inv-A/inv-B gathered; manifest drafter running.
+- Phase 1: batch check hardened (0500a71: review C1-C3, I1-I11, M1-M2 closed; 446 tests pass);
+  re-review 2 found N1-N8, m1-m4 -> v3 (record chain, item/ledger pins, recorded obligations,
+  raised+accepts owner acceptance, bound amendments, record-before-complete): 465 tests pass
+  (bootstrap file needs PSModulePath unset when launched from pwsh). PR/merge/activation pending.
+- Phase 0 manifest: drafter done (104 items, 25 OAs, 6 ledgers; plain check incomplete, no
+  validation errors); v3 adaptation + placement in F:\Claude-Tools\reports\grrp pending.
+- Phase 2: deploy 8ccdeec0 verified intact (backend created 2026-10-13T21:12:47Z); PR #212 OPEN/CLEAN,
+  merge denied to agent -> owner action. CQ-A60/SLOP-A60 passive: 0 events since deploy.
+- Phase 3: queue patch dry-run OK on a copy (12 items, 293 count); canonical write hook-blocked ->
+  owner runs F:/Claude-Tools/reports/2026-10-14__queue-batch-patch.py; WS mirror PR follows it.
