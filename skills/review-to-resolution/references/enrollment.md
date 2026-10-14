@@ -22,6 +22,16 @@ workflow's checks, lenses, severities, report paths, or approval gates.
    NOT RUN or degraded → `unmet`, evidence = the report's coverage note); `AC-2` every
    finding is in the report and the ledger.
 
+5. **Batch.** A scheduled run belongs to an audit batch (its runs plus all follow-through).
+   `grrp.py batch-init --slug <batch-slug>` returns the existing manifest or creates one; list
+   this run's ledger as a `grrp-ledger` and, before any execution, state the endpoint: runs and
+   follow-through included, authority available for repair/publish/merge/activation, authority
+   gaps (never infer permission for a protected operation), and the archive evidence required.
+   Then run `grrp.py batch --record <manifest>` once, even while items are still missing (it
+   records whenever the manifest parses): it pins the endpoint, the inventory and every open
+   ledger obligation so a restarted session cannot quietly change the contract or drop one.
+   Changing the endpoint later needs `- Amended: <owner, date, why> (from EP-<latest pin>)`.
+
 ## Findings (one `grrp-finding` per report finding, kept or dismissed)
 | workflow result | assessment | classification · resolution |
 |---|---|---|
@@ -49,6 +59,13 @@ No acceptance yet → leave `ack` out: `transfers_ok: false` is the true result.
    blockers, conflicts, deferred items (owner + prerequisite), work continuing under existing
    authority, any other open work the gate counts, completed/superseded. `--record` logs each ask once; an unchanged ask is
    listed under "Awaiting owner", not raised again. Give the owner this, not the lens reports.
+
+4. `grrp.py batch --record <manifest>` → the batch claim. Every criterion, finding
+   disposition, delivery, left-flag and artifact disposition is a `grrp-item` carried to its latest
+   evidence; owner actions are consolidated there (one per action, raised once, kept visible).
+   Report its first line verbatim, and cite the latest `grrp-record` in the closeout. Only `100% COMPLETE — READY TO ARCHIVE` lets anyone call the
+   batch complete; the ledger verdict above is one input to it. Keep working independent items
+   while one waits on the owner; routine merges, bookkeeping and coordination are the agent's.
 
 Results that arrive after exit (deploy, verification, a fixture becoming available) go in as
 receipts and the next `apply` → `gate` → `handoff` picks them up; an older report never

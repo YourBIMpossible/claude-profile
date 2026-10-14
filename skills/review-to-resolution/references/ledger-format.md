@@ -96,6 +96,72 @@ Required: `target track outcome at by`. Optional: `id` (default: content digest 
 - Handoff: every gate `incomplete` line appears somewhere; a deferred, denied or failed track
   covers only that track's line, never the rest of its finding (e.g. "original finding still open").
 
+## Batch manifest (`grrp-batch: v1`)
+An audit **batch** = its scheduled runs plus all follow-through (repairs, PRs, deployment,
+activation, mirrors, behaviour checks, artifact cleanup). One `<date>-<slug>.batch.md`, created by
+`grrp.py batch-init --slug S` (a restarted session gets the same file back), checked by
+`grrp.py batch MANIFEST [--json] [--record]`. Separate from every ledger gate: a complete ledger,
+a merged PR or an active coordinator is one item, never the batch.
+- `## Endpoint`, written before execution — bullets `Runs`, `Follow-through`, `Authority`,
+  `Authority gaps` (the only one where `none` is allowed), `Archive evidence`. Blank, `none` or
+  `tbd` or a key stated twice → `invalid`. The first `--record` pins it (`endpoint: EP-<hash>`);
+  a later edit is `invalid` unless the section adds `- Amended: <owner, YYYY-MM-DD, why> (from
+  EP-<the latest pin>)`, dated no earlier than the metrics `start`. An amended endpoint is
+  `incomplete` until the next `--record` re-pins it.
+- `grrp-ledger`: `id path` (at least one; ids and files unique; a relative path resolves against
+  the manifest's folder) — each ledger's own gate must be `complete`; its deferrals,
+  unacknowledged transfers and transferred-but-open findings must each be carried by an item
+  (`covers: <ledger id>:<finding|transfer id>`), or the batch stays open. While the ledger still
+  shows one, the carrying item clears only as `owner_accepted`; any other cleared status is a
+  failed claim.
+- `grrp-item` (at least one): `id kind text source owner action status evidence`, optional
+  `check covers replacement reviewed acceptance owner_action`. `id`: 1-64 of `[A-Za-z0-9._-]`.
+  `kind`: criterion obligation owner_ask left_flag artifact delivery integration activation
+  behavior mirror alert decision instruction. Cleared statuses: `complete` (evidence),
+  `duplicate`/`superseded` (evidence + `replacement` naming another listed item id or
+  `<ledger id>:<ref>` where the ref is a finding, transfer or criterion id in that ledger;
+  chains are followed, a loop is `invalid`), `inapplicable` (evidence + `reviewed`),
+  `owner_accepted` (`acceptance` naming a `done` owner action that an earlier `--record` saw
+  open with the same id, action and `accepts:` list — so `accepts` must be on the ask before it
+  is raised — that lists the item, and whose resolution cites the owner and a date; never free
+  text). An `owner_accepted` item's own check is not run: the owner accepted
+  the exclusion, not a result.
+  Outstanding: `open in_progress transferred deferred blocked_owner` (needs `owner_action`
+  naming an *open* owner action) — a transfer or deferral is never completion.
+- `check:` (`;`-separated, deterministic, relative paths against the manifest's folder):
+  `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo>` · `file <path>` · `same <path> ==
+  <path>`. Vacuous checks (rev = ref, one file on both sides) fail. A cleared item whose check
+  fails is a failed claim, not cleared. `complete` items of kind `mirror integration activation
+  delivery` need a check, or the whole field `check: none (<why none is possible>)` — a `none`
+  mixed with specs, or an empty spec list, never passes.
+- `grrp-owner-action`: `id action recommendation why_not_agent enables status` (open · done ·
+  declined, the last two need `resolution` citing the owner and a date; optional `accepts:` item
+  ids; ids unique). Same action text (case and spacing ignored) = one ask; `--record` marks it
+  raised so later runs list it as awaiting, never as new — except an open ask whose `accepts`
+  list changed, which is shown again in its new form.
+- `## Record` holds `grrp-record` blocks written only by `--record`: `at prev items item_pins
+  ledgers ledger_pins owner_actions obligations raised raised_ids ask_pins` and optional
+  `endpoint`.
+  `prev` is the digest of the previous record (`none` first) — an edited earlier record breaks
+  the chain (`invalid`). Removing a recorded id, changing a recorded item's kind/text/source/
+  covers, or pointing a recorded ledger id at another file is `invalid` — clear it with evidence
+  instead. `obligations` lists ledger deferrals/transfers open at record time; each must stay
+  carried by an item, which clears once the ledger itself shows the obligation resolved.
+- `--record` writes whenever the manifest parses, whatever the verdict: pin the endpoint before
+  execution, and an ask printed by an `invalid` run is still raised once. A failed write prints
+  `NOT COMPLETE (record not written)` and exits 3. `complete` needs a record whose latest
+  endpoint pin is the current endpoint and which lists every current id — re-record before the
+  claim.
+- Residual risk: the record lives in the manifest, so deleting the last record block or editing
+  a raised ask to `done` is not detectable in-band. Keep the manifest under version control and
+  cite the final record's digest in the closeout.
+- `grrp-metrics` (exactly one): `start end blocked_on_owner avoidable_continuations
+  relay_requests`; `end` (not before `start`, not more than a day in the future) must be recorded
+  before `complete`.
+- Verdict: `invalid` (3, also any crash) · `incomplete` (1) · `blocked` (2, only open owner
+  actions remain) · `complete` (0), printed as `100% COMPLETE — READY TO ARCHIVE`, anything else
+  `NOT COMPLETE`.
+
 ## Example
 ```grrp-finding
 id: F-003
