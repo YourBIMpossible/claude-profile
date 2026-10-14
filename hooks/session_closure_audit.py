@@ -405,12 +405,16 @@ def audit_worktree(
 
 def build_report(cfg: dict) -> str:
     deadline = time.monotonic() + OVERALL_GIT_BUDGET
-    repos = cfg.get("repos", [])
+    # An entry may carry "platform" (a sys.platform prefix: "win32", "linux", "darwin");
+    # entries for another platform are skipped, so one config serves every machine
+    # without a false "path not found" per session. "~" expands.
+    repos = [r for r in cfg.get("repos", [])
+             if not r.get("platform") or sys.platform.startswith(r["platform"])]
 
     valid_repos = []  # (name, path)
     missing_sections = []
     for r in repos:
-        name, path = r["name"], r["path"]
+        name, path = r["name"], os.path.expanduser(r["path"])
         if not os.path.isdir(path):
             missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
         else:

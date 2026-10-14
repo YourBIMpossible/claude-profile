@@ -118,17 +118,19 @@ class BootstrapPy(unittest.TestCase):
         self.assertFalse((self.claude / "CLAUDE.md").exists())
         self.assertFalse(self.hooks_dir.exists())
 
-    def test_real_skills_dir_is_moved_aside_and_synced_copied(self) -> None:
-        (self.claude / "skills" / "synced" / "abc").mkdir(parents=True)
-        (self.claude / "skills" / "synced" / "abc" / "SKILL.md").write_text("x", encoding="utf-8")
-        (self.claude / "skills" / "local-only" ).mkdir()
+    def test_real_skills_dir_is_moved_aside(self) -> None:
+        (self.claude / "skills" / "local-only").mkdir(parents=True)
+        (self.claude / "skills" / "local-only" / "SKILL.md").write_text("x", encoding="utf-8")
         self.run_bootstrap()
         backups = list(self.claude.glob("skills.pre-profile-backup-*"))
         self.assertEqual(len(backups), 1)
-        self.assertTrue((backups[0] / "local-only").is_dir())
+        self.assertTrue((backups[0] / "local-only" / "SKILL.md").is_file(), "backup is kept intact")
         self.assertTrue((self.claude / "skills").is_symlink())
-        self.assertTrue((backups[0] / "synced" / "abc" / "SKILL.md").is_file(), "backup is kept intact")
+        self.assertFalse((REPO / "skills" / "local-only").exists(), "skills are replaced, not merged")
 
+    def test_graphify_auto_refresh_is_pinned_off(self) -> None:
+        self.run_bootstrap()
+        self.assertEqual(self.settings()["env"]["GRAPHIFY_NO_AUTO_REFRESH"], "1")
 
 if __name__ == "__main__":
     unittest.main()

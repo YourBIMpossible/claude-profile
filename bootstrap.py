@@ -14,8 +14,8 @@ The POSIX port of bootstrap.ps1, same contract:
                            this working tree)
   ~/.claude/settings.json  merged with settings.template.json exactly as the
                            PowerShell version merges it (template hooks replace the
-                           ones it owns, additionalDirectories is a union, plugin and
-                           marketplace entries are added when missing, every other
+                           ones it owns, additionalDirectories is a union, plugin,
+                           marketplace and env entries are added when missing, every other
                            existing key is kept; an empty or unparseable file is
                            refused, a changed file is backed up first)
 
@@ -106,7 +106,7 @@ def merge_profile_settings(existing: dict | None, generated: dict) -> dict:
                     dirs.append(d)
             perm["additionalDirectories"] = dirs
             out[name] = perm
-        elif name in ("enabledPlugins", "extraKnownMarketplaces"):
+        elif name in ("enabledPlugins", "extraKnownMarketplaces", "env"):
             m = dict(current) if is_obj(current) else {}
             for k, v in value.items():
                 m.setdefault(k, v)
@@ -373,6 +373,9 @@ def main(argv: list[str]) -> int:
     except ValueError as exc:
         raise Refuse(f"generated settings.json is not valid JSON: {exc}")
     generated["hooks"] = adapt_hooks(generated.get("hooks", {}))
+    # The skills symlink means `graphify` (the graphifyy CLI) would rewrite this repo's
+    # pinned skills/graphify on every run; its own opt-out is this variable.
+    generated.setdefault("env", {}).setdefault("GRAPHIFY_NO_AUTO_REFRESH", "1")
 
     # Every hook the (adapted) template registers must exist in hooks/ or vendor/.
     registered = registered_hook_files(generated["hooks"], str(hooks_dir))
