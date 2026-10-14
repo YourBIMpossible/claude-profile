@@ -108,7 +108,9 @@ Scope honesty:
   (absent = active; `paused`/`closed` = inactive) decides what injects — no renames, no
   magic location. Each turn the hook re-reads from disk all ACTIVE stars in the closest
   walk-up directory holding one, and injects them + the three-doors routing rule, so the
-  plan cannot drift through a rolling context summary. It does not enforce — the matching
+  plan cannot drift through a rolling context summary. Fail-open sites (an unreadable
+  active star, an unexpected error) still exit 0 but write one `northstar_inject:` line to
+  stderr naming the file or exception type. It does not enforce — the matching
   enforcement is protect_paths_gate turning every Write/Edit on a live `NORTHSTAR*.md`
   into an owner approval prompt (Claude edits, the owner approves; `*.draft.md` is
   free). The prompt fires only in permission modes where it is reliable (`ASK_MODES`

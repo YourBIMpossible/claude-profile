@@ -147,7 +147,8 @@ class ProtocolScenarios(Base):
     def test_merged_and_pending_deploy_is_incomplete_not_complete(self) -> None:
         r = self.verdict(self.ledger(finding(
             "F-016", execution_state="integrated",
-            obligations="review=done:pr 12; integration=done:merged abc; deployment=pending; verification=pending")))
+            obligations="review=done:pr 12; integration=done:merged abc; deployment=pending; verification=pending; "
+            "cleanup=pending")))
         self.assertEqual(r["verdict"], "incomplete")
 
     def test_changed_consequences_require_fresh_action_approval(self) -> None:
@@ -173,7 +174,8 @@ class ProtocolScenarios(Base):
 
     def test_protected_progress_needs_owner_action_and_stays_protected(self) -> None:
         f = dict(classification="independent", lane="external", authority="protected", execution_state="integrated",
-                 evidence="copied by agent without approval", obligations="review=n/a:storage; integration=done:x")
+                 evidence="copied by agent without approval", obligations="review=n/a:storage; integration=done:x; "
+                 "deployment=n/a:storage; verification=n/a:storage; cleanup=n/a:nothing created")
         r = self.verdict(self.ledger(finding("F-032", **f)))
         self.assertEqual(r["verdict"], "invalid")
         self.assertIn("unauthorized action", " ".join(r["validation_errors"]))
@@ -334,7 +336,9 @@ class PilotRegressions(Base):
 
     def test_comma_in_obligation_evidence_is_kept(self) -> None:
         r = self.verdict(self.ledger(finding("F-056", execution_state="reviewed",
-                                             obligations="review=done:PR 3, line 4")))
+                                             obligations="review=done:PR 3, line 4; integration=n/a:review-only; "
+                                                         "deployment=n/a:review-only; verification=n/a:review-only; "
+                                                         "cleanup=n/a:nothing created")))
         self.assertEqual(r["verdict"], "complete")
 
     def test_brief_and_header_read_only_from_their_sections(self) -> None:
@@ -451,6 +455,62 @@ class ReviewToResolutionCorrections(Base):
             self.assertIn("skills/review-to-resolution/scripts/grrp.py", text, name)
 
 
+class SlopAudit20261012(Base):
+    """2026-10-12 slop audit SA-4 (unreadable input exit code) and SA-6a (metrics)."""
+
+    def test_non_utf8_ledger_gate_exits_invalid_not_incomplete(self) -> None:
+        p = self.tmp / "2026-10-05-bad.ledger.md"
+        p.write_bytes(b"grrp: v1\n\xff\xfe bad\n")
+        out = subprocess.run([sys.executable, str(SCRIPT), "gate", str(p), "--json", "--queue", str(self.queue)],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 3, out.stderr)
+        self.assertEqual(out.stdout, "")
+        self.assertIn("cannot read ledger", out.stderr)
+        self.assertNotIn("Traceback", out.stderr)
+        for cmd in (["status", str(p)], ["metrics", str(p), "--queue", str(self.queue)]):
+            self.assertEqual(grrp.main(cmd), 3, cmd)
+
+    def test_non_utf8_queue_is_an_unconfirmed_transfer_not_a_crash(self) -> None:
+        p = self.ledger(finding("F-060", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated module"),
+                        block("transfer", "id: T-60\nfindings: F-060\nreceiver: queue:CT-Q\nnext_action: fix\n"
+                                          "acceptance: test passes\nfollow_up: /next sync"))
+        self.queue.write_bytes(b"items:\n- id: CT-Q\n  status: ready \xff\n")
+        r = self.verdict(p)
+        self.assertEqual(r["verdict"], "complete")
+        self.assertFalse(r["transfers_ok"])
+        self.assertIn("queue store not readable", r["transfers_unacknowledged"][0])
+
+    def test_evidence_state_metric_counts_only_evidence_state_errors(self) -> None:
+        # The three non-evidence-state "without" messages the audit found overcounted.
+        crit = "id: AC-1\ntext: diff reviewed\nstatus: met\nevidence: "
+        p = self.ledger(finding("F-061", classification="enhancement", execution_state="implementing",
+                                requirement="n/a: extra"),
+                        block("child", "id: C-1\nobjective: o\nexclusions: e\nacceptance: a\nreserved: r\n"
+                                       "return_evidence: x\nowner: parent\nlocation: here\nspawned: C-2"),
+                        crit=crit)
+        errs = self.verdict(p)["validation_errors"]
+        self.assertTrue(any("met without evidence" in e for e in errs), errs)
+        self.assertTrue(any("without scope_approval" in e for e in errs), errs)
+        self.assertEqual(grrp.metrics(grrp.parse(p), self.queue)["evidence_state_errors"], 0)
+        q = self.ledger(finding("F-062", execution_state="reviewed", obligations=""), name="2026-10-05-e.ledger.md")
+        self.assertEqual(grrp.metrics(grrp.parse(q), self.queue)["evidence_state_errors"], 1)
+
+    def test_metrics_honours_queue_override(self) -> None:
+        p = self.ledger(finding("F-063", source="discovered", classification="independent", resolution="open",
+                                requirement="n/a: unrelated module"),
+                        block("transfer", "id: T-63\nfindings: F-063\nreceiver: queue:CT-M\nnext_action: fix\n"
+                                          "acceptance: test passes\nfollow_up: /next sync"))
+        self.queue.write_text(f"items:\n- id: CT-M\n  status: ready\n  evidence:\n  - ref: {p.name}\n",
+                              encoding="utf-8")
+        self.assertEqual(grrp.metrics(grrp.parse(p), self.queue)["failed_transfers"], 0)
+        self.assertEqual(grrp.metrics(grrp.parse(p), self.tmp / "no-queue.yaml")["failed_transfers"], 1)
+        out = subprocess.run([sys.executable, str(SCRIPT), "metrics", str(p), "--queue", str(self.queue)],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout)["failed_transfers"], 0)
+
+
 class Enrollment(unittest.TestCase):
     """Enrolled workflows must load GRRP state before discovery (tested entry mechanism)."""
 
@@ -469,6 +529,76 @@ class Enrollment(unittest.TestCase):
         head = (REPO / "skills" / "review-to-resolution" / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
         self.assertIn("name: review-to-resolution", head)
         self.assertIn("description:", head)
+
+
+class FindingContractSA5(Base):
+    """2026-10-12 slop audit SA-5 (option A): the documented finding contract is enforced, not defaulted."""
+
+    def errors(self, **kw: str) -> list[str]:
+        return self.verdict(self.ledger(finding("F-070", **kw)))["validation_errors"]
+
+    def test_omitted_required_keys_are_invalid(self) -> None:
+        for key in ("lane", "blocks", "evidence"):
+            with self.subTest(key=key):
+                p = self.ledger(finding("F-071", obligations=REVIEW_ONLY_OBL))
+                head, _, tail = p.read_text(encoding="utf-8").rpartition(f"\n{key}: ")  # the finding's key
+                p.write_text(head + "\nx_dropped: " + tail, encoding="utf-8")
+                r = self.verdict(p)
+                self.assertEqual(r["verdict"], "invalid")
+                self.assertTrue(any(e.startswith(f"F-071: required key '{key}' missing") for e in r["validation_errors"]))
+
+    def test_canonical_empty_values_are_valid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-072", resolution="open", classification="independent",
+                                             source="discovered", requirement="n/a: unrelated", blocks="none",
+                                             evidence="none", lane="external")))
+        self.assertEqual(r["validation_errors"], [])
+
+    def test_resolved_with_omitted_obligations_is_invalid(self) -> None:
+        r = self.verdict(self.ledger(finding("F-073", obligations="")))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertFalse(r["closeable"])
+        for name in ("review", "integration", "deployment", "verification", "cleanup"):
+            self.assertIn(f"F-073: resolved without '{name}' obligation (done:<evidence> or n/a:<reason>)",
+                          r["validation_errors"])
+
+    def test_lane_none_is_not_a_valid_lane(self) -> None:
+        self.assertIn("F-070: lane 'none' is not parent/external/a child id",
+                      self.errors(lane="none", obligations=REVIEW_ONLY_OBL))
+
+    def test_resolved_with_obligations_none_is_invalid(self) -> None:
+        errs = self.errors(obligations="none")
+        self.assertEqual(len([e for e in errs if "resolved without" in e]), 5, errs)
+
+    def test_unknown_obligation_does_not_stand_in_for_a_required_one(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("cleanup=n/a:nothing created", "teardown=done:x"))
+        self.assertIn("F-070: resolved without 'cleanup' obligation (done:<evidence> or n/a:<reason>)", errs)
+
+    def test_resolved_with_one_omitted_obligation_is_invalid(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("; cleanup=n/a:nothing created", ""))
+        self.assertEqual(errs, ["F-070: resolved without 'cleanup' obligation (done:<evidence> or n/a:<reason>)"])
+
+    def test_resolved_with_pending_obligation_is_incomplete(self) -> None:
+        r = self.verdict(self.ledger(finding("F-074", obligations=REVIEW_ONLY_OBL.replace(
+            "deployment=n/a:review-only run", "deployment=pending"))))
+        self.assertEqual(r["verdict"], "incomplete")
+        self.assertIn("F-074: deployment obligation pending", r["incomplete"])
+
+    def test_resolved_with_unjustified_na_is_invalid(self) -> None:
+        errs = self.errors(obligations=REVIEW_ONLY_OBL.replace("cleanup=n/a:nothing created", "cleanup=n/a"))
+        self.assertTrue(any(e.startswith("F-070: obligation cleanup=") and "needs evidence or reason" in e
+                            for e in errs), errs)
+
+    def test_resolved_with_full_documented_obligations_is_complete(self) -> None:
+        r = self.verdict(self.ledger(finding("F-075", obligations=REVIEW_ONLY_OBL)))
+        self.assertEqual(r["verdict"], "complete")
+        self.assertEqual(r["validation_errors"], [])
+
+    def test_open_finding_needs_no_obligations(self) -> None:
+        r = self.verdict(self.ledger(finding("F-076", resolution="open", classification="independent",
+                                             source="discovered", requirement="n/a: unrelated", obligations=""),
+                                     block("transfer", "id: T-76\nfindings: F-076\nreceiver: queue:CT-S\n"
+                                                       "next_action: fix\nacceptance: test\nfollow_up: /next sync")))
+        self.assertEqual(r["validation_errors"], [])
 
 
 if __name__ == "__main__":
