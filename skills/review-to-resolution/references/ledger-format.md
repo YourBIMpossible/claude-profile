@@ -96,6 +96,36 @@ Required: `target track outcome at by`. Optional: `id` (default: content digest 
 - Handoff: every gate `incomplete` line appears somewhere; a deferred, denied or failed track
   covers only that track's line, never the rest of its finding (e.g. "original finding still open").
 
+## Batch manifest (`grrp-batch: v1`)
+An audit **batch** = its scheduled runs plus all follow-through (repairs, PRs, deployment,
+activation, mirrors, behaviour checks, artifact cleanup). One `<date>-<slug>.batch.md`, created by
+`grrp.py batch-init --slug S` (a restarted session gets the same file back), checked by
+`grrp.py batch MANIFEST [--json] [--record]`. Separate from every ledger gate: a complete ledger,
+a merged PR or an active coordinator is one item, never the batch.
+- `## Endpoint`, written before execution — bullets `Runs`, `Follow-through`, `Authority`,
+  `Authority gaps` (`none` allowed), `Archive evidence`. Blank or `tbd` → `invalid`.
+- `grrp-ledger`: `id path` — each ledger's own gate must be `complete`; its deferrals,
+  unacknowledged transfers and transferred-but-open findings must each be carried by an item
+  (`covers: <ledger id>:<finding|transfer id>`), or the batch stays open.
+- `grrp-item`: `id kind text source owner action status evidence`, optional `check covers
+  replacement reviewed acceptance owner_action`. `kind`: criterion obligation owner_ask
+  left_flag artifact delivery integration activation behavior mirror alert decision instruction.
+  Cleared statuses: `complete` (evidence), `duplicate`/`superseded` (evidence + `replacement`),
+  `inapplicable` (evidence + `reviewed`), `owner_accepted` (`acceptance` citing the owner and a
+  date). Outstanding: `open in_progress transferred deferred blocked_owner` (needs
+  `owner_action`) — a transfer or deferral is never completion. Items are never deleted: once
+  `--record` has listed an id, removing it is `invalid`.
+- `check:` (`;`-separated, deterministic): `ledger <id> <verdict>` · `git-ancestor <rev> <ref>
+  <repo>` · `file <path>` · `same <path> == <path>`. A cleared item whose check fails is a failed
+  claim, not cleared.
+- `grrp-owner-action`: `id action recommendation why_not_agent enables status` (open · done ·
+  declined, the last two need `resolution` citing the owner and a date). Same action text (case
+  and spacing ignored) = one ask; `--record` marks it raised so later runs list it as awaiting.
+- `grrp-metrics` (exactly one): `start end blocked_on_owner avoidable_continuations
+  relay_requests`; `end` must be recorded before `complete`.
+- Verdict: `invalid` (3) · `incomplete` (1) · `blocked` (2, only owner actions remain) ·
+  `complete` (0), printed as `100% COMPLETE — READY TO ARCHIVE`, anything else `NOT COMPLETE`.
+
 ## Example
 ```grrp-finding
 id: F-003

@@ -35,7 +35,9 @@ keeps older results as history, refuses retries of a denied operation without a 
 owner approval, and leaves contradictory evidence as an explicit `conflict` — never
 pick a side by hand-editing the finding. Lanes that never had a contract (a later
 deploy or verification lane) report the same way: a receipt in the inbox, no owner relay. Child closes on its own criteria; parent closure is the
-gate's.
+gate's, and batch closure is `grrp.py batch`'s: a lane finishing (even the coordinator's own
+repair) clears only its items. Consume each receipt into the batch manifest too (item status +
+latest evidence); contact other sessions directly, never through the owner.
 
 ## Transfers
 Independent work → `/next` item (status `ready`, `source`/evidence referencing the
