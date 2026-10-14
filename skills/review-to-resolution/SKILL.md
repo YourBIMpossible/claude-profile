@@ -129,7 +129,8 @@ is archive-ready only when `grrp.py batch <manifest>` says `100% COMPLETE — RE
 (references/ledger-format.md, Batch manifest). Never say complete, done or ready to archive for a
 batch on a ledger verdict, a written report, an accepted transfer, a merged PR or an installed
 coordinator. Missing evidence fails the claim; deferred work stays outstanding until the owner
-explicitly accepts its exclusion. A worker session closing does not close the batch.
+explicitly accepts its exclusion (a `done` owner action the item names — never self-written). A
+worker session closing does not close the batch.
 
 ## 6. Checkpoint
 

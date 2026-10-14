@@ -90,7 +90,9 @@ class CompletePath(Base):
     def test_all_cleared_is_archive_ready(self) -> None:
         self.batch(item("B-1", "complete"), item("B-2", "superseded", replacement="B-1"),
                    item("B-3", "inapplicable", reviewed="independent reviewer 2026-10-14"),
-                   item("B-4", "owner_accepted", acceptance="owner accepted exclusion 2026-10-14"))
+                   item("B-4", "owner_accepted", acceptance="OA-9"),
+                   owner_action("OA-9", "accept exclusion of B-4", status="done",
+                                resolution="owner accepted in chat 2026-10-14"))
         r = self.check()
         self.assertEqual(r["verdict"], "complete", r)
         self.assertEqual(r["claim"], "100% COMPLETE — READY TO ARCHIVE")
@@ -103,7 +105,8 @@ class CoordinatorLaneIsNotTheBatch(Base):
     """(1) A complete coordinator-repair lane cannot imply a complete audit batch."""
 
     def test_complete_lane_and_complete_ledger_leave_batch_open(self) -> None:
-        self.batch(item("B-COORD", "complete", kind="activation", text="coordinator repair merged and active"),
+        self.batch(item("B-COORD", "complete", kind="activation", text="coordinator repair merged and active",
+                        check="ledger L1 complete"),
                    item("B-BEHAV", "open", kind="behavior"))
         r = self.check()
         self.assertEqual(r["ledgers"], {"L1": "complete"})
@@ -182,7 +185,7 @@ class SupersededDeployment(Base):
     """(4) Superseded deployment instructions do not trigger another deployment."""
 
     def test_superseded_instruction_is_cleared_not_actionable(self) -> None:
-        self.batch(item("B-DEPLOY", "complete", kind="delivery", text="deploy 8ccdeec0"),
+        self.batch(item("B-DEPLOY", "complete", kind="delivery", text="deploy 8ccdeec0", check="ledger L1 complete"),
                    item("B-T2", "superseded", kind="instruction", text="owner restarts the backend", replacement="B-DEPLOY"))
         r = self.check()
         self.assertEqual(r["verdict"], "complete")
@@ -223,7 +226,9 @@ class TransferredOrDeferredCannotDisappear(Base):
         self.batch(item("B-SIGNIN", "transferred", kind="behavior", covers="L1:F-001"))
         self.assertEqual(self.check()["verdict"], "incomplete")
         self.batch(item("B-SIGNIN", "owner_accepted", kind="behavior", covers="L1:F-001",
-                        acceptance="owner accepted exclusion of sign-in check 2026-10-14"))
+                        acceptance="OA-1"),
+                   owner_action("OA-1", "accept exclusion of the sign-in check", status="done",
+                                resolution="owner accepted in chat 2026-10-14"))
         self.assertEqual(self.check()["verdict"], "complete")
 
     def test_owner_accepted_needs_a_dated_owner_act(self) -> None:
@@ -323,6 +328,212 @@ class Validation(Base):
     def test_covers_must_name_a_listed_ledger(self) -> None:
         self.batch(item("B-1", "complete", covers="L9:F-001"))
         self.assertEqual(self.check()["verdict"], "invalid")
+
+    def errors(self) -> list[str]:
+        r = self.check()
+        self.assertEqual(r["verdict"], "invalid", r)
+        return r["validation_errors"]
+
+    def test_repeated_ledger_id_is_invalid_not_overwritten(self) -> None:
+        bad = self.tmp / "bad.ledger.md"
+        bad.write_text(BRIEF + block("criterion", OK_CRIT)
+                       + finding("F-001", execution_state="integrated", obligations=""), encoding="utf-8")
+        self.batch(block("ledger", f"id: L1\npath: {bad}"), item("B-1", "complete"))
+        self.assertTrue(any("grrp-ledger L1: id repeated" in e for e in self.errors()))
+
+    def test_two_ids_for_one_ledger_file_is_invalid(self) -> None:
+        self.batch(block("ledger", f"id: L2\npath: {self.ledger_path}"), item("B-1", "complete"))
+        self.assertTrue(any("same file as L1" in e for e in self.errors()))
+
+    def test_empty_inventory_is_invalid(self) -> None:
+        self.batch()
+        self.assertTrue(any("empty inventory" in e for e in self.errors()))
+        self.batch(item("B-1", "complete"), ledger=False)
+        self.assertTrue(any("no grrp-ledger" in e for e in self.errors()))
+
+    def test_unsafe_item_id_is_invalid(self) -> None:
+        for bad in ("B 1", "B-1,B-2"):
+            self.batch(item(bad, "open"), item("B-5", "blocked_owner", owner_action="OA-1"),
+                       owner_action("OA-1", "sign in"))
+            self.assertTrue(any("id must be" in e for e in self.errors()), bad)
+
+    def test_repeated_owner_action_id_is_invalid(self) -> None:
+        self.batch(item("B-1", "complete"), owner_action("OA-1", "sign in"),
+                   owner_action("OA-1", "sign in", status="done", resolution="owner 2026-10-13"))
+        self.assertTrue(any("owner action OA-1: id repeated" in e for e in self.errors()))
+
+    def test_replacement_must_resolve(self) -> None:
+        self.batch(item("B-1", "complete"), item("B-2", "superseded", replacement="NOPE-999"))
+        self.assertTrue(any("replacement" in e for e in self.errors()))
+        self.batch(item("B-1", "complete"), item("B-2", "superseded", replacement="L1:F-001"))
+        self.assertEqual(self.check()["verdict"], "complete")
+
+    def test_checked_kind_needs_a_check(self) -> None:
+        self.batch(item("B-M", "complete", kind="mirror"))
+        self.assertTrue(any("needs a check" in e for e in self.errors()))
+        self.batch(item("B-M", "complete", kind="mirror", check="none"))
+        self.assertTrue(any("needs a check" in e for e in self.errors()))
+        self.batch(item("B-M", "complete", kind="mirror", check="none (mirror lives on another machine)"))
+        self.assertEqual(self.check()["verdict"], "complete")
+
+    def test_relative_paths_resolve_against_the_manifest(self) -> None:
+        (self.tmp / "same.txt").write_text("x\n", encoding="utf-8")
+        (self.tmp / "same2.txt").write_text("x\n", encoding="utf-8")
+        self.batch(item("B-M", "complete", kind="mirror", check="same same.txt == same2.txt; file same.txt"))
+        text = self.path.read_text(encoding="utf-8").replace(f"path: {self.ledger_path}",
+                                                             f"path: {self.ledger_path.name}")
+        self.path.write_text(text, encoding="utf-8")
+        elsewhere = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, elsewhere, True)
+        with contextlib.chdir(elsewhere):
+            self.assertEqual(self.check()["verdict"], "complete")
+
+    def test_vacuous_checks_fail(self) -> None:
+        f = self.tmp / "same.txt"
+        f.write_text("x\n", encoding="utf-8")
+        for spec in (f"same {f} == {f}", f"git-ancestor HEAD HEAD {self.tmp}", f"git-ancestor --all HEAD {self.tmp}"):
+            self.batch(item("B-M", "complete", kind="mirror", check=spec))
+            self.assertEqual(self.check()["verdict"], "incomplete", spec)
+
+    def test_endpoint_none_is_only_for_authority_gaps(self) -> None:
+        for key in ("Runs", "Archive evidence"):
+            ep = "\n".join(f"- {key}: none" if ln.startswith(f"- {key}:") else ln for ln in ENDPOINT.splitlines()) + "\n"
+            self.batch(item("B-1", "complete"), endpoint=ep)
+            self.assertTrue(any(key in e for e in self.errors()), key)
+        ep = ENDPOINT.replace("- Authority gaps: owner sign-in for acceptance checks", "- Authority gaps: none")
+        self.batch(item("B-1", "complete"), endpoint=ep)
+        self.assertEqual(self.check()["verdict"], "complete")
+
+    def test_owner_accepted_needs_a_done_owner_action(self) -> None:
+        self.batch(item("B-1", "owner_accepted", acceptance="OA-1"), owner_action("OA-1", "accept exclusion"))
+        self.assertTrue(any("owner_accepted needs acceptance" in e for e in self.errors()))
+        self.batch(item("B-1", "owner_accepted", acceptance="owner accepted 2026-10-14"))
+        self.assertTrue(any("owner_accepted needs acceptance" in e for e in self.errors()))
+
+    def test_blocked_owner_on_a_closed_owner_action_is_invalid(self) -> None:
+        for st in ("done", "declined"):
+            self.batch(item("B-5", "blocked_owner", owner_action="OA-1"),
+                       owner_action("OA-1", "sign in", status=st, resolution="owner 2026-10-14"))
+            self.assertTrue(any("no longer open" in e for e in self.errors()), st)
+
+    def test_metrics_end_before_start_is_invalid(self) -> None:
+        self.batch(item("B-1", "complete"), metrics=METRICS_OPEN.replace("end: none", "end: 2000-01-01T00:00:00Z"))
+        self.assertTrue(any("earlier than start" in e for e in self.errors()))
+
+
+class NoCrash(Base):
+    """A crash would exit 1, which reads as "incomplete"; every failure is invalid (3)."""
+
+    def test_out_of_range_datetime_is_invalid(self) -> None:
+        for start in ("0001-01-01T00:00:00+05:00", "9999-12-31T23:00:00-05:00"):
+            self.batch(item("B-1", "complete"), metrics=METRICS_DONE.replace("2026-10-14T01:50:25Z", start))
+            self.assertEqual(self.run_cli("batch", str(self.path))[0], 3, start)
+
+    def test_nul_in_check_fails_the_claim(self) -> None:
+        self.batch(item("B-M", "complete", kind="mirror", check=f"git-ancestor a\x00 HEAD {self.tmp}"))
+        self.assertEqual(self.check()["verdict"], "incomplete")
+
+    def test_unexpected_error_exits_invalid(self) -> None:
+        self.batch(item("B-1", "complete"))
+        orig = grrp.batch_check
+
+        def boom(*_a: object, **_k: object) -> dict:
+            raise KeyError("boom")
+        grrp.batch_check = boom
+        self.addCleanup(setattr, grrp, "batch_check", orig)
+        self.assertEqual(self.run_cli("batch", str(self.path))[0], 3)
+
+
+class LedgerCoverage(Base):
+    """While a ledger still shows a deferral or open transfer, only an owner acceptance clears it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        TransferredOrDeferredCannotDisappear.ledger_with_deferral(self)  # type: ignore[arg-type]
+
+    DEFERRED = TransferredOrDeferredCannotDisappear.DEFERRED
+
+    def test_complete_item_cannot_clear_a_live_deferral(self) -> None:
+        self.batch(item("B-1", "complete", covers="L1:F-001"))
+        r = self.check()
+        self.assertEqual(r["verdict"], "incomplete")
+        self.assertTrue(any("still deferred" in x for x in r["failed_claims"]), r["failed_claims"])
+
+    def test_superseded_item_cannot_clear_a_live_deferral(self) -> None:
+        self.batch(item("B-0", "complete"), item("B-1", "superseded", covers="L1:F-001", replacement="B-0"))
+        self.assertEqual(self.check()["verdict"], "incomplete")
+
+
+class RecordedThingsCannotDisappear(Base):
+    def record(self) -> None:
+        rc, _ = self.run_cli("batch", str(self.path), "--record")
+        self.assertIn(rc, (0, 1, 2))
+
+    def test_deleting_a_recorded_ledger_is_invalid(self) -> None:
+        self.batch(item("B-1", "complete"))
+        self.record()
+        self.batch(item("B-1", "complete"), ledger=False)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertNotIn("grrp-record", text)  # batch() rewrote the file; restore the record by hand
+        self.path.write_text(text.replace("## Record\n", "## Record\n" + block("record", "at: x\nledgers: L1")),
+                             encoding="utf-8")
+        self.assertTrue(any("grrp-ledger L1 was recorded but is gone" in e
+                            for e in self.check()["validation_errors"]))
+
+    def test_deleting_a_recorded_owner_action_is_invalid(self) -> None:
+        self.batch(item("B-5", "blocked_owner", owner_action="OA-1"), owner_action("OA-1", "sign in"))
+        self.record()
+        text = self.path.read_text(encoding="utf-8")
+        self.assertIn("owner_actions: OA-1", text)
+        start = text.index("\n```grrp-owner-action\nid: OA-1")
+        end = text.index("```\n", start + 5) + 4
+        self.path.write_text(text[:start] + text[end:], encoding="utf-8")
+        self.assertTrue(any("owner action OA-1 was recorded but is gone" in e
+                            for e in self.check()["validation_errors"]))
+
+    def test_endpoint_is_pinned_by_record(self) -> None:
+        self.batch(item("B-1", "complete"))
+        self.record()
+        text = self.path.read_text(encoding="utf-8")
+        self.assertIn("endpoint: EP-", text)
+        changed = text.replace("- Runs: weekly full audit 2026-10-12;", "- Runs: weekly full audit only;")
+        self.path.write_text(changed, encoding="utf-8")
+        self.assertTrue(any("endpoint changed" in e for e in self.check()["validation_errors"]))
+        amended = changed.replace("- Archive evidence:", "- Amended: owner narrowed the runs 2026-10-14\n- Archive evidence:")
+        self.path.write_text(amended, encoding="utf-8")
+        self.assertEqual(self.check()["verdict"], "complete")
+        self.record()  # the amended endpoint is re-pinned
+        self.assertEqual(self.path.read_text(encoding="utf-8").count("endpoint: EP-"), 2)
+
+
+class RealRestart(Base):
+    """(7) Separate processes: the contract, inventory and raised asks survive a restart."""
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess:
+        script = HERE.parent / "scripts" / "grrp.py"
+        return subprocess.run([sys.executable, str(script), *args, "--queue", str(self.queue)],
+                              capture_output=True, text=True, encoding="utf-8")
+
+    def test_restart_keeps_contract_and_asks(self) -> None:
+        self.batch(item("B-1", "complete"), item("B-5", "blocked_owner", owner_action="OA-1"),
+                   owner_action("OA-1", "sign in and run the hub check"))
+        first = self.cli("batch", str(self.path), "--record")
+        self.assertEqual(first.returncode, 2, first.stderr)
+        self.assertIn("Owner actions, new (1)", first.stdout)
+        second = self.cli("batch", str(self.path), "--record")
+        self.assertEqual(second.returncode, 2, second.stderr)
+        self.assertNotIn("Owner actions, new", second.stdout)
+        self.assertIn("awaiting (already raised", second.stdout)
+        self.assertEqual(self.path.read_text(encoding="utf-8").count("```grrp-record"), 1)
+
+    def test_batch_init_matches_the_exact_slug(self) -> None:
+        d = self.tmp / "grrp"
+        d.mkdir()
+        (d / "2026-10-01-nightly-audit.batch.md").write_text("x", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(grrp.main(["batch-init", "--slug", "audit", "--dir", str(d)]), 0)
+        self.assertIn("created: ", buf.getvalue())  # not "existing: ...nightly-audit.batch.md"
 
 
 if __name__ == "__main__":

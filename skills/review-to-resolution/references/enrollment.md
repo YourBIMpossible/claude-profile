@@ -27,6 +27,8 @@ workflow's checks, lenses, severities, report paths, or approval gates.
    this run's ledger as a `grrp-ledger` and, before any execution, state the endpoint: runs and
    follow-through included, authority available for repair/publish/merge/activation, authority
    gaps (never infer permission for a protected operation), and the archive evidence required.
+   Then run `grrp.py batch --record <manifest>` once: it pins the endpoint and the inventory so a
+   restarted session cannot quietly change the contract or drop an obligation.
 
 ## Findings (one `grrp-finding` per report finding, kept or dismissed)
 | workflow result | assessment | classification · resolution |
