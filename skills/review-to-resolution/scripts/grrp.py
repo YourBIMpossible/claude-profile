@@ -484,7 +484,9 @@ def validate(led: Ledger, recon: Reconciled | None = None) -> list[str]:
             if b not in crit_ids:
                 errs.append(f"{_q(fid)}: blocks unknown criterion '{_q(b)}'")
         lane = f.get("lane")
-        if lane is not None and lane not in {"parent", "external"} and lane not in child_ids:
+        if lane is not None and not lane.strip():
+            errs.append(f"{_q(fid)}: 'lane' is blank (parent, external or a child id)")
+        elif lane is not None and lane not in {"parent", "external"} and lane not in child_ids:
             errs.append(f"{_q(fid)}: lane '{_q(lane)}' is not parent/external/a child id")
 
         assess, res = f.get("assessment"), f.get("resolution")
@@ -595,7 +597,9 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
             incomplete.append(f"{_q(fid)}: not assessed")
         blocks = _list(f.get("blocks"))
         if blocks and f.get("resolution") == "open":
-            why = "protected surface" if f.get("authority") == "protected" else f"lane {_q(f.get('lane', 'missing'))}"
+            lane = f.get("lane")
+            lane_label = "missing" if lane is None else ("blank" if not lane.strip() else _q(lane))
+            why = "protected surface" if f.get("authority") == "protected" else f"lane {lane_label}"
             blocked.append(f"{_q(fid)}: open, blocks {', '.join(_q(b) for b in blocks)} ({why})")
         if f.get("resolution") == "resolved":
             # deferred (owner + prerequisite recorded) is accounted for and does not hold the run open

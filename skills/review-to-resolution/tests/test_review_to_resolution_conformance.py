@@ -565,6 +565,17 @@ class FindingContractSA5(Base):
         self.assertIn("F-070: lane 'none' is not parent/external/a child id",
                       self.errors(lane="none", obligations=REVIEW_ONLY_OBL))
 
+    def test_blank_lane_is_named_blank_not_missing(self) -> None:
+        # A written-but-blank lane is distinct from an omitted one: both are invalid, and neither
+        # validation nor the gate's blocked reason may render it as an empty token ("lane ''", "(lane )").
+        r = self.verdict(self.ledger(finding("F-070", resolution="open", blocks="AC-1", lane="")))
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertIn("F-070: 'lane' is blank (parent, external or a child id)", r["validation_errors"])
+        self.assertIn("F-070: open, blocks AC-1 (lane blank)", r["blocked"])
+        p = self.ledger(finding("F-071", resolution="open", blocks="AC-1"))
+        p.write_text(p.read_text(encoding="utf-8").replace("\nlane: parent", "", 1), encoding="utf-8")
+        self.assertIn("F-071: open, blocks AC-1 (lane missing)", self.verdict(p)["blocked"])
+
     def test_resolved_with_obligations_none_is_invalid(self) -> None:
         errs = self.errors(obligations="none")
         self.assertEqual(len([e for e in errs if "resolved without" in e]), 5, errs)
