@@ -67,5 +67,17 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
   EP-7e766a2fddb3, 37 cleared / 72 outstanding (71 blocked_owner, B-086 in_progress), 0 validation
   errors, 0 failed claims; ledger gate L-WFA invalid until PR 212 merges (OA-01). Closeout
   F:/Claude-Tools/reports/2026-10-14__audit-batch-closeout.md; inventory ..._audit-batch-inventory.md.
-- Restart action: owner works the consolidated list (OA-01, 23, 31, 33, 04, 34 first); then set the
-  enabled items complete with evidence + check and run `grrp.py batch <manifest> --record`.
+- Phase 6 (revision 2, 2026-10-14T05:14Z, owner directives "NOT COMPLETE assessment" + "AWAY
+  EXECUTION"): PR 212 chain finished - independent review APPROVE of head 1bcb60c6, merged 3063437
+  under the owner's specific merge approval, merged L-WFA gate complete 0 errors, watchdog alert
+  LEDGER-INVALID acknowledged with justification (0 open alerts). B-004 done via Workspace PR 216
+  (head ea39d89, review APPROVE, merged 28d496d): deployment=done x5 + T-2 superseded. Cleared as
+  evidence-satisfied: B-001, B-003, B-004, B-075 (hook byte-identical, OA-22 done). OA-01 done;
+  OA-34 declined (owner: do not expand global instructions to clear B-109; SKILL.md rule is the
+  stated scope). OA-04/05/26/33 rewritten as preservation-first permission requests with exact
+  commands; OA-09/29/30 rewritten neutral (consequences, nothing accepted for the owner). Closeout
+  s5 split into 5A permission requests / 5B decisions. Now 41 cleared / 68 outstanding (67
+  blocked_owner + B-086), 34 OAs (31 open), 0 validation errors, no new record (nothing new raised).
+- Restart action: owner works 5A first (OA-23, 31, 33 two rulings, 04 preserve-then-ff) and rules
+  on 5B; then set the enabled items complete with evidence + check and run
+  `grrp.py batch <manifest> --record`. Gate still NOT COMPLETE.
