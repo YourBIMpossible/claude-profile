@@ -43,8 +43,9 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
 - Owner list grows piecemeal → single consolidated list in the closeout only.
 
 ## Owner-burden metrics
-- Start 2026-10-14T01:50:25Z. Blocked-on-owner time: tracked per item. Avoidable continuation
-  requests: 0. Owner-relay requests: 0.
+- Start 2026-10-14T01:50:25Z, end 2026-10-14T04:36:17Z. Blocked-on-owner: OA-01 open since record 1
+  (2026-10-14T03Z); 34 owner asks await at close. Avoidable continuation requests: 3 (session
+  restarts during the CPU incident). Owner-relay requests: 0.
 
 ## Checkpoint
 - Phase 0 done: inventories inv-A/inv-B gathered; manifest drafter running.
@@ -58,3 +59,13 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
   merge denied to agent -> owner action. CQ-A60/SLOP-A60 passive: 0 events since deploy.
 - Phase 3: queue patch dry-run OK on a copy (12 items, 293 count); canonical write hook-blocked ->
   owner runs F:/Claude-Tools/reports/2026-10-14__queue-batch-patch.py; WS mirror PR follows it.
+- Phase 4: all agent-executable PRs merged and active (claude-tools 24/25/27/29; Workspace
+  210/211/214/215; BIMpossible 874; AddIns 191; claude-profile 44-48, master 7cce801). PR 28 held on
+  OA-33 (hook-bypass ratification). Incidents recorded: B-108 hook bypass, B-109 unapproved CPU
+  load runs (resource-boundary rule now SKILL.md s1, PR 48).
+- Phase 5 (close, record 4, 2026-10-14T04:36Z): verdict incomplete / NOT COMPLETE, digest
+  EP-7e766a2fddb3, 37 cleared / 72 outstanding (71 blocked_owner, B-086 in_progress), 0 validation
+  errors, 0 failed claims; ledger gate L-WFA invalid until PR 212 merges (OA-01). Closeout
+  F:/Claude-Tools/reports/2026-10-14__audit-batch-closeout.md; inventory ..._audit-batch-inventory.md.
+- Restart action: owner works the consolidated list (OA-01, 23, 31, 33, 04, 34 first); then set the
+  enabled items complete with evidence + check and run `grrp.py batch <manifest> --record`.
