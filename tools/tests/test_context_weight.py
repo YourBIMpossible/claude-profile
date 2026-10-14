@@ -445,11 +445,50 @@ def test_memory_index_at_25kb_truncation_fails():
     assert r["exit_code"] == 2, cw.render_report(r)
 
 
-def test_memory_index_at_200_lines_truncation_fails():
+# Claude Code loads "the first 200 lines of MEMORY.md, or the first 25KB,
+# whichever comes first" (https://code.claude.com/docs/en/memory, verified
+# 2026-10-13). A 200-line index loads whole; line 201 is the first one lost.
+
+def _memory_line_scan(content: str) -> dict:
     with tempfile.TemporaryDirectory() as td:
         paths = build_estate(Path(td))
-        paths["global_memory_md"].write_text("- x\n" * cw.MEMORY_FAIL_LINES, encoding="utf-8")
-        r = cw.run_scan(**paths)
+        paths["global_memory_md"].write_bytes(content.encode("utf-8"))
+        return cw.run_scan(**paths)
+
+
+def _has_line_fail(r: dict) -> bool:
+    return any(tag == "FAIL-LINES" for _, _, tag in r["per_skill_issues"])
+
+
+def _memory_detail(r: dict) -> str:
+    return next(s.detail for s in r["sources"] if s.key == "global_memory_bytes")
+
+
+def test_memory_index_line_boundary():
+    assert cw.MEMORY_FAIL_LINES == 200
+    cases = {
+        # name: (content, truncated by Claude Code?)
+        "199 lines, trailing newline": ("- x\n" * 199, False),
+        "200 lines, trailing newline": ("- x\n" * 200, False),
+        "200 lines, no trailing newline": ("- x\n" * 199 + "- x", False),
+        "200 lines, CRLF": ("- x\r\n" * 200, False),
+        "201 lines, trailing newline": ("- x\n" * 201, True),
+        "201 lines, no trailing newline": ("- x\n" * 200 + "- x", True),
+    }
+    for name, (content, truncated) in cases.items():
+        r = _memory_line_scan(content)
+        assert _has_line_fail(r) is truncated, f"{name}\n{cw.render_report(r)}"
+        assert (r["exit_code"] == 2) is truncated, f"{name}\n{cw.render_report(r)}"
+
+
+def test_memory_index_line_count_detail_matches_editor_count():
+    assert _memory_detail(_memory_line_scan("- x\n" * 200)) == "200 lines"
+    assert _memory_detail(_memory_line_scan("- x\n" * 199 + "- x")) == "200 lines"
+    assert _memory_detail(_memory_line_scan("")) == "0 lines"
+
+
+def test_memory_index_past_200_lines_truncation_fails():
+    r = _memory_line_scan("- x\n" * (cw.MEMORY_FAIL_LINES + 1))
     assert r["exit_code"] == 2, cw.render_report(r)
 
 

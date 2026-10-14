@@ -111,7 +111,10 @@ PLUGIN_DESC_TOTAL_WARN = 6_000  # enabled-plugin skill descriptions, combined
 CLAUDEMD_WARN = 20_000          # per CLAUDE.md aggregate (wrapper+profile, or a project file)
 MEMORY_WARN_BYTES = 20_000
 MEMORY_FAIL_BYTES = 25_000
-MEMORY_FAIL_LINES = 200
+# Claude Code loads "the first 200 lines of MEMORY.md, or the first 25KB,
+# whichever comes first" (https://code.claude.com/docs/en/memory, verified
+# 2026-10-13): a 200-line index loads whole, so only line 201+ is lost.
+MEMORY_FAIL_LINES = 200         # max lines that load; FAIL when count > this
 
 # Plugins expected enabled. Anything enabled but not listed => WARN (new
 # context source appeared without an audit). Update deliberately when
@@ -193,6 +196,15 @@ def _read_bytes(path: Path) -> tuple:
         return None, f"could not read {path} ({e})"
 
 
+def _line_count(text: str) -> int:
+    """Lines as an editor numbers them: a trailing newline ends the last line
+    rather than opening an empty one, "" is 0 lines, and CRLF counts once
+    (split on LF only)."""
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
 def _read_text_and_lines(path: Path) -> tuple:
     """-> (text | None, byte_count | None, line_count | None, error | None).
     Same MISSING-vs-UNMEASURED distinction as _read_bytes()."""
@@ -203,7 +215,7 @@ def _read_text_and_lines(path: Path) -> tuple:
     try:
         raw = path.read_bytes()
         text = raw.decode("utf-8", errors="replace")
-        return text, len(raw), text.count("\n") + 1, None
+        return text, len(raw), _line_count(text), None
     except OSError as e:
         return None, None, None, f"could not read {path} ({e})"
 
@@ -446,7 +458,7 @@ def run_scan(*,
             ceiling_kind="MEMORY.md bytes",
         )
         sources.append(s)
-        if nlines >= MEMORY_FAIL_LINES:
+        if nlines > MEMORY_FAIL_LINES:
             # Line-count ceiling is independent of the byte ceiling; surfaced
             # as its own fail note rather than folded into byte-based state.
             s.reason = (s.reason or "")
