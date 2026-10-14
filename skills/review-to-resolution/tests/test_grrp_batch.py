@@ -95,9 +95,10 @@ class Base(unittest.TestCase):
         return self.check()
 
     def raise_then_accept(self, iid: str, oid: str, *others: str, **kw: str) -> None:
-        """The honest acceptance path: the ask is raised while open, then the owner resolves it."""
-        self.batch(item(iid, "blocked_owner", owner_action=oid, **kw), owner_action(oid, f"accept exclusion of {iid}"),
-                   *others)
+        """The honest acceptance path: the ask, naming what it accepts, is raised while open; then the
+        owner resolves it."""
+        self.batch(item(iid, "blocked_owner", owner_action=oid, **kw),
+                   owner_action(oid, f"accept exclusion of {iid}", accepts=iid), *others)
         self.record()
         self.batch(item(iid, "owner_accepted", acceptance=oid, **kw),
                    owner_action(oid, f"accept exclusion of {iid}", status="done", accepts=iid,
@@ -714,6 +715,49 @@ class RecordIsTheContract(Base):
     def test_future_end_is_invalid(self) -> None:  # m4
         self.batch(item("B-1", "complete"), metrics=METRICS_OPEN.replace("end: none", "end: 2099-01-01T00:00:00Z"))
         self.assertTrue(any("in the future" in e for e in self.check()["validation_errors"]))
+
+    def test_accepts_added_after_the_ask_does_not_accept(self) -> None:  # NEW-1 case 1
+        self.deferral()
+        self.batch(item("B-DEF", "blocked_owner", covers="L1:F-001", owner_action="OA-1"),
+                   owner_action("OA-1", "sign in and run the hub check"))
+        self.record()
+        self.batch(item("B-DEF", "owner_accepted", covers="L1:F-001", acceptance="OA-1"),
+                   owner_action("OA-1", "sign in and run the hub check", status="done", accepts="B-DEF",
+                                resolution="owner ran it 2026-10-14"), keep_record=True)
+        self.record()
+        r = self.check()
+        self.assertNotEqual(r["verdict"], "complete")
+        self.assertTrue(any("never raised with this action and accepts" in e for e in r["validation_errors"]))
+
+    def test_same_text_under_another_id_does_not_accept(self) -> None:  # NEW-1 case 2
+        self.deferral()
+        self.batch(item("B-DEF", "blocked_owner", covers="L1:F-001", owner_action="OA-1"),
+                   owner_action("OA-1", "sign in and run the hub check", accepts="B-DEF"))
+        self.record()
+        self.batch(item("B-DEF", "owner_accepted", covers="L1:F-001", acceptance="OA-Z"),
+                   owner_action("OA-1", "sign in and run the hub check", status="done", accepts="B-DEF",
+                                resolution="owner ran it 2026-10-14"),
+                   owner_action("OA-Z", "Sign in and  run the hub check", status="done", accepts="B-DEF",
+                                resolution="owner ran it 2026-10-14"), keep_record=True)
+        self.record()
+        self.assertTrue(any("never raised with this action and accepts" in e
+                            for e in self.check()["validation_errors"]))
+
+    def test_widened_accepts_on_an_open_ask_is_asked_again(self) -> None:  # NEW-1
+        self.batch(item("B-1", "blocked_owner", owner_action="OA-1"), item("B-2", "blocked_owner", owner_action="OA-1"),
+                   owner_action("OA-1", "accept the exclusions", accepts="B-1"))
+        self.record()
+        self.batch(item("B-1", "blocked_owner", owner_action="OA-1"), item("B-2", "blocked_owner", owner_action="OA-1"),
+                   owner_action("OA-1", "accept the exclusions", accepts="B-1, B-2"), keep_record=True)
+        self.assertEqual([a["id"] for a in self.check()["owner_actions_new"]], ["OA-1"])
+
+    def test_none_with_semicolon_runs_its_specs(self) -> None:  # review 3 minor
+        self.batch(item("B-M", "complete", kind="mirror", check="none (a); file nope.txt (b)"))
+        self.assertNotEqual(self.recorded_check()["verdict"], "complete")
+
+    def test_second_endpoint_heading_is_invalid(self) -> None:  # review 3 minor
+        self.batch(item("B-1", "complete"), endpoint=ENDPOINT + "\n## Endpoint\n- Runs: other\n")
+        self.assertTrue(any("appears more than once" in e for e in self.check()["validation_errors"]))
 
 
 if __name__ == "__main__":

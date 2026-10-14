@@ -1198,6 +1198,12 @@ def _item_pin(it: dict[str, str]) -> str:
     return _sha12("\n".join(f"{k}: {' '.join((it.get(k) or '').split())}" for k in ("kind", "text", "source", "covers")))
 
 
+def _ask_pin(o: dict[str, str]) -> str:
+    """What the owner is asked: the action (as fingerprinted) and the items it would accept."""
+    return _sha12(owner_action_fingerprint(o.get("action", "")) + "\naccepts: "
+                  + ",".join(sorted(_list(o.get("accepts")))))
+
+
 def _path_pin(p: Path) -> str:
     return _sha12(os.path.normcase(str(p.resolve())))
 
@@ -1233,7 +1239,7 @@ def _covers(item: dict[str, str]) -> list[tuple[str, str]]:
 
 
 AMENDED_RE = re.compile(r"^- Amended:[ \t]*(.*?)[ \t]*\(from (EP-[0-9a-f]{12})\)[ \t]*$", re.M)
-CHECK_NONE_RE = re.compile(r"none \(.*\S.*\)", re.I)
+CHECK_NONE_RE = re.compile(r"none \([^;]*[^;\s][^;]*\)", re.I)  # no ';': a none never hides a spec
 CLOCK_SKEW = _dt.timedelta(days=1)
 
 
@@ -1254,6 +1260,9 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
     pairs = ENDPOINT_RE.findall(ep_section)
     endpoint = {k: v.strip() for k, v in pairs}
     endpoint_ok = True
+    if len(re.findall(r"^## Endpoint[ \t]*$", plain, re.M)) > 1:
+        errors.append("endpoint: '## Endpoint' appears more than once")
+        endpoint_ok = False
     for k in sorted({k for k, _ in pairs if [p[0] for p in pairs].count(k) > 1}):
         errors.append(f"endpoint: '{k}' stated more than once")
         endpoint_ok = False
@@ -1349,19 +1358,23 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
     oas = {o.get("id", ""): o for o in oa_blocks}
     raised = {x for r in records for x in _list(r.get("raised"))}
     raised_ids = {x for r in records for x in _list(r.get("raised_ids"))}
+    ask_pins = {x for r in records for x in _list(r.get("ask_pins"))}
 
     def acceptance_error(iid: str, oid: str) -> str | None:
-        """owner_accepted stands only on an owner action that was raised while open (so the owner
-        was actually asked), is done with a dated owner resolution, and names this item in accepts."""
-        o = oas.get(oid.strip())
+        """owner_accepted stands only on an owner action that was recorded while open with this
+        same id, action and accepts list (so the owner was asked exactly this), is done with a
+        dated owner resolution, and names this item in accepts."""
+        oid = oid.strip()
+        o = oas.get(oid)
         if not o:
             return "acceptance names no grrp-owner-action"
         if o.get("status") != "done" or _no_owner_action(o.get("resolution")):
             return "its owner action is not done with a resolution citing the owner and a date"
-        if oid.strip() not in raised_ids and owner_action_fingerprint(o.get("action", "")) not in raised:
-            return "its owner action was never raised (record it while open, before it is resolved)"
         if iid not in _list(o.get("accepts")):
             return "its owner action does not list this item in accepts"
+        if f"{oid}@{_ask_pin(o)}" not in ask_pins:
+            return ("its owner action was never raised with this action and accepts list "
+                    "(record it while open, accepts included, before it is resolved)")
         return None
 
     def replacement_error(iid: str) -> str | None:
@@ -1491,6 +1504,7 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
     duplicate_asks: list[str] = []
     new_asks: list[dict] = []
     awaiting: list[dict] = []
+    open_ask_pins: list[str] = []
     for oid, o in oas.items():
         if not SAFE_ID_RE.fullmatch(oid):
             errors.append("grrp-owner-action: id must be 1-64 of [A-Za-z0-9._-]")
@@ -1514,7 +1528,12 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         entry = {"id": oid, "fingerprint": fp, "action": _txt(o.get("action")),
                  "recommendation": _txt(o.get("recommendation")), "why_not_agent": _txt(o.get("why_not_agent")),
                  "enables": _txt(o.get("enables"))}
-        (awaiting if fp in raised or oid in raised_ids else new_asks).append(entry)
+        entry["ask_pin"] = f"{oid}@{_ask_pin(o)}"
+        # An ask that carries an accepts list is shown once in exactly that form, so the owner
+        # sees what they would be accepting; a reworded repeat without one stays awaiting.
+        unseen_scope = bool(_list(o.get("accepts"))) and entry["ask_pin"] not in ask_pins
+        (awaiting if (fp in raised or oid in raised_ids) and not unseen_scope else new_asks).append(entry)
+        open_ask_pins.append(entry["ask_pin"])
 
     # The claim stands only on a recorded contract: the endpoint and every id pinned.
     record_open: list[str] = []
@@ -1546,6 +1565,7 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
         "obligations": sorted(x for x in open_refs_now - seen_rec["obligations"] if SAFE_ID_RE.fullmatch(x.partition(":")[2])),
         "raised": sorted({a["fingerprint"] for a in new_asks}),
         "raised_ids": sorted({a["id"] for a in new_asks}),
+        "ask_pins": sorted(set(open_ask_pins) - ask_pins),
     }
     to_record["item_pins"] = [f"{x}@{_item_pin(by_id[x])}" for x in to_record["items"]]
     to_record["ledger_pins"] = [f"{x}@{ledger_pin_now[x]}" for x in to_record["ledgers"]]
@@ -1633,7 +1653,8 @@ def cmd_batch_init(a: argparse.Namespace) -> int:
     return 0
 
 
-RECORD_FIELDS = ["items", "item_pins", "ledgers", "ledger_pins", "owner_actions", "obligations", "raised", "raised_ids"]
+RECORD_FIELDS = ["items", "item_pins", "ledgers", "ledger_pins", "owner_actions", "obligations", "raised", "raised_ids",
+                 "ask_pins"]
 
 
 def _record_payload(r: dict, now: str) -> str:

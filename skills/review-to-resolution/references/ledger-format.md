@@ -121,9 +121,10 @@ a merged PR or an active coordinator is one item, never the batch.
   `duplicate`/`superseded` (evidence + `replacement` naming another listed item id or
   `<ledger id>:<ref>` where the ref is a finding, transfer or criterion id in that ledger;
   chains are followed, a loop is `invalid`), `inapplicable` (evidence + `reviewed`),
-  `owner_accepted` (`acceptance` naming a `done` owner action that was raised while open — by an
-  earlier `--record` — lists the item in `accepts:`, and whose resolution cites the owner and a
-  date; never free text). An `owner_accepted` item's own check is not run: the owner accepted
+  `owner_accepted` (`acceptance` naming a `done` owner action that an earlier `--record` saw
+  open with the same id, action and `accepts:` list — so `accepts` must be on the ask before it
+  is raised — that lists the item, and whose resolution cites the owner and a date; never free
+  text). An `owner_accepted` item's own check is not run: the owner accepted
   the exclusion, not a result.
   Outstanding: `open in_progress transferred deferred blocked_owner` (needs `owner_action`
   naming an *open* owner action) — a transfer or deferral is never completion.
@@ -136,9 +137,11 @@ a merged PR or an active coordinator is one item, never the batch.
 - `grrp-owner-action`: `id action recommendation why_not_agent enables status` (open · done ·
   declined, the last two need `resolution` citing the owner and a date; optional `accepts:` item
   ids; ids unique). Same action text (case and spacing ignored) = one ask; `--record` marks it
-  raised so later runs list it as awaiting, never as new.
+  raised so later runs list it as awaiting, never as new — except an open ask whose `accepts`
+  list changed, which is shown again in its new form.
 - `## Record` holds `grrp-record` blocks written only by `--record`: `at prev items item_pins
-  ledgers ledger_pins owner_actions obligations raised raised_ids` and optional `endpoint`.
+  ledgers ledger_pins owner_actions obligations raised raised_ids ask_pins` and optional
+  `endpoint`.
   `prev` is the digest of the previous record (`none` first) — an edited earlier record breaks
   the chain (`invalid`). Removing a recorded id, changing a recorded item's kind/text/source/
   covers, or pointing a recorded ledger id at another file is `invalid` — clear it with evidence
