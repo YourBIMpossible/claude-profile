@@ -109,9 +109,14 @@ DESC_FAIL = 900
 DESC_TOTAL_WARN = 10_000        # personal skill descriptions, combined
 PLUGIN_DESC_TOTAL_WARN = 6_000  # enabled-plugin skill descriptions, combined
 CLAUDEMD_WARN = 20_000          # per CLAUDE.md aggregate (wrapper+profile, or a project file)
+# Claude Code loads "the first 200 lines of MEMORY.md, or the first 25KB,
+# whichever comes first" (https://code.claude.com/docs/en/memory, verified
+# 2026-10-13). Both limits are what still loads, so FAIL only when a count
+# exceeds them: line 201+ or byte 25_001+ is lost. "25KB" is read as 25_000
+# bytes, the conservative reading (25_600 if Claude Code means KiB).
 MEMORY_WARN_BYTES = 20_000
-MEMORY_FAIL_BYTES = 25_000
-MEMORY_FAIL_LINES = 200
+MEMORY_FAIL_BYTES = 25_000      # max bytes that load; FAIL when size > this
+MEMORY_FAIL_LINES = 200         # max lines that load; FAIL when count > this
 
 # Plugins expected enabled. Anything enabled but not listed => WARN (new
 # context source appeared without an audit). Update deliberately when
@@ -168,6 +173,9 @@ class Source:
     warn_at: Optional[int] = None
     fail_at: Optional[int] = None
     ceiling_kind: Optional[str] = None  # label for what warn_at/fail_at mean
+    # False: FAIL at n >= fail_at (default). True: fail_at is the largest
+    # value that still fits (MEMORY.md load limits), so FAIL only at n > it.
+    fail_when_over: bool = False
 
     @property
     def ceiling(self) -> Optional[int]:
@@ -193,6 +201,15 @@ def _read_bytes(path: Path) -> tuple:
         return None, f"could not read {path} ({e})"
 
 
+def _line_count(text: str) -> int:
+    """LF-separated line count: a trailing LF ends the last line rather than
+    opening an empty one, "" is 0 lines, CRLF counts once, and a lone CR is
+    not a line break."""
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
 def _read_text_and_lines(path: Path) -> tuple:
     """-> (text | None, byte_count | None, line_count | None, error | None).
     Same MISSING-vs-UNMEASURED distinction as _read_bytes()."""
@@ -203,7 +220,7 @@ def _read_text_and_lines(path: Path) -> tuple:
     try:
         raw = path.read_bytes()
         text = raw.decode("utf-8", errors="replace")
-        return text, len(raw), text.count("\n") + 1, None
+        return text, len(raw), _line_count(text), None
     except OSError as e:
         return None, None, None, f"could not read {path} ({e})"
 
@@ -303,10 +320,14 @@ def _git_sha(repo_dir: Path) -> Optional[str]:
 # near-limit / warn / fail evaluation for one source
 # =========================================================================
 
-def _evaluate_ceiling(n: int, warn_at: Optional[int], fail_at: Optional[int]) -> Optional[str]:
-    """-> 'FAIL' | 'WARN' | 'NEAR-LIMIT' | None."""
+def _evaluate_ceiling(n: int, warn_at: Optional[int], fail_at: Optional[int],
+                      fail_when_over: bool = False) -> Optional[str]:
+    """-> 'FAIL' | 'WARN' | 'NEAR-LIMIT' | None.
+
+    fail_when_over=True treats fail_at as the largest allowed value (FAIL
+    only when n > fail_at); the default fails at n >= fail_at."""
     ceiling = fail_at if fail_at is not None else warn_at
-    if fail_at is not None and n >= fail_at:
+    if fail_at is not None and (n > fail_at if fail_when_over else n >= fail_at):
         return "FAIL"
     if warn_at is not None and n >= warn_at:
         return "WARN"
@@ -443,10 +464,10 @@ def run_scan(*,
             scenarios=scenarios, required=True,
             detail=f"{nlines} lines",
             warn_at=MEMORY_WARN_BYTES, fail_at=MEMORY_FAIL_BYTES,
-            ceiling_kind="MEMORY.md bytes",
+            ceiling_kind="MEMORY.md bytes", fail_when_over=True,
         )
         sources.append(s)
-        if nlines >= MEMORY_FAIL_LINES:
+        if nlines > MEMORY_FAIL_LINES:
             # Line-count ceiling is independent of the byte ceiling; surfaced
             # as its own fail note rather than folded into byte-based state.
             s.reason = (s.reason or "")
@@ -575,7 +596,7 @@ def run_scan(*,
     per_skill_fail = any(k in ("FAIL", "FAIL-LINES") for _, _, k in per_skill_issues)
     per_skill_warn = any(k == "WARN" for _, _, k in per_skill_issues)
     source_ceiling_verdicts = [
-        _evaluate_ceiling(s.bytes, s.warn_at, s.fail_at)
+        _evaluate_ceiling(s.bytes, s.warn_at, s.fail_at, s.fail_when_over)
         for s in sources if s.state == "MEASURED" and (s.warn_at or s.fail_at)
     ]
     any_source_fail = any(v == "FAIL" for v in source_ceiling_verdicts)
@@ -775,7 +796,7 @@ def render_report(result: dict) -> str:
         scen_str = ",".join(s.scenarios) if s.scenarios else "-"
         ceil_str = ""
         if s.ceiling:
-            v = _evaluate_ceiling(s.bytes, s.warn_at, s.fail_at)
+            v = _evaluate_ceiling(s.bytes, s.warn_at, s.fail_at, s.fail_when_over)
             pct = s.bytes / s.ceiling * 100
             ceil_str = f" | {pct:.0f}% of {s.ceiling}B {s.ceiling_kind or 'ceiling'}"
             if v:
