@@ -437,12 +437,30 @@ def test_skill_descriptions_returns_unmeasured_for_a_missing_dir():
 
 # ------------------------------------ Claude Code MEMORY.md truncation still fails
 
-def test_memory_index_at_25kb_truncation_fails():
+def test_memory_index_past_25kb_truncation_fails():
     with tempfile.TemporaryDirectory() as td:
         paths = build_estate(Path(td))
-        paths["bimpossible_memory_md"].write_text("x" * cw.MEMORY_FAIL_BYTES, encoding="utf-8")
+        paths["bimpossible_memory_md"].write_text("x" * (cw.MEMORY_FAIL_BYTES + 1), encoding="utf-8")
         r = cw.run_scan(**paths)
     assert r["exit_code"] == 2, cw.render_report(r)
+
+
+def test_memory_index_byte_boundary():
+    # 25_000 is the conservative reading of the docs' "25KB"; a file of
+    # exactly that size loads whole, so only 25_001+ bytes fail.
+    assert cw.MEMORY_FAIL_BYTES == 25_000
+    for nbytes, truncated in ((24_999, False), (25_000, False), (25_001, True)):
+        with tempfile.TemporaryDirectory() as td:
+            paths = build_estate(Path(td))
+            paths["bimpossible_memory_md"].write_bytes(b"x" * nbytes)
+            r = cw.run_scan(**paths)
+        assert (r["exit_code"] == 2) is truncated, f"{nbytes}B\n{cw.render_report(r)}"
+
+
+def test_non_memory_ceilings_still_fail_at_the_limit():
+    assert cw._evaluate_ceiling(100, 50, 100) == "FAIL"
+    assert cw._evaluate_ceiling(100, 50, 100, fail_when_over=True) == "WARN"
+    assert cw._evaluate_ceiling(101, 50, 100, fail_when_over=True) == "FAIL"
 
 
 # Claude Code loads "the first 200 lines of MEMORY.md, or the first 25KB,
