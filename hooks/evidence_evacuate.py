@@ -60,8 +60,15 @@ import time
 from pathlib import Path
 from typing import Callable
 
-DEFAULT_ARCHIVE = "F:/Evidence-Archive/EC-LIVE"
-DEFAULT_EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
+# House locations per platform (Platform map in CLAUDE.md); EVIDENCE_LIVE_ARCHIVE and
+# EVIDENCE_EVACUATOR override them.
+if os.name == "nt":
+    DEFAULT_ARCHIVE = "F:/Evidence-Archive/EC-LIVE"
+    DEFAULT_EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
+else:
+    DEFAULT_ARCHIVE = str(Path.home() / "Evidence-Archive" / "EC-LIVE")
+    DEFAULT_EVACUATOR = str(Path.home() / "workspace" / "claude-tools" / "evidence-archive"
+                            / "evacuate_worktree.py")
 PACKETS_REL = Path(".evidence-compiler") / "packets"
 PACKET_ID_IN_NAME = re.compile(r"(ep_[0-9a-f]{8,64})\.json$")
 TOTAL_BUDGET_S = 25.0      # hook timeout in settings is 30 s

@@ -62,7 +62,12 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-CTXDEX_DIR = Path("F:/Claude-Tools/ctxdex")
+# Where the Claude-Tools checkout keeps ctxdex. CTXDEX_DIR overrides; otherwise the
+# house location per platform (F:\Claude-Tools on Windows, ~/workspace/claude-tools
+# on Linux/macOS - see the Platform map in CLAUDE.md).
+CTXDEX_DIR = Path(os.environ.get("CTXDEX_DIR") or (
+    "F:/Claude-Tools/ctxdex" if os.name == "nt"
+    else Path.home() / "workspace" / "claude-tools" / "ctxdex"))
 MIN_BYTES = 100 * 1024
 LOG_PATH = Path(__file__).with_name("ctxdex_autoindex.log")
 

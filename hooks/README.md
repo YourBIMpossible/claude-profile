@@ -11,6 +11,8 @@ must never silently change code that runs on every prompt or tool call
 review). Content (skills text, CLAUDE.md) may live behind the junction;
 **executable code must not**.
 
+On Linux/macOS, `bootstrap.py` replaces `bootstrap.ps1` with the same C1 contract: it pins the same files (plus `*.sh`), rewrites `python` → `python3`, swaps `session-start-pull.ps1` for `session-start-pull.sh`, and drops `Show-AuditAlerts.ps1` (Windows audit-watchdog only). `ctxdex_autoindex.py`, `graphify_hint.py` and `evidence_evacuate.py` pick their platform's house paths (Platform map in `CLAUDE.md`); `CTXDEX_DIR`, `GRAPHIFY_WRAPPER`, `EVIDENCE_LIVE_ARCHIVE` and `EVIDENCE_EVACUATOR` override them.
+
 Install procedure:
 1. Source of truth lives here (`hooks/*.py`, `*.ps1`), reviewed via the normal
    PR flow.
@@ -39,6 +41,7 @@ are exempt: they live entirely inside settings.json.
 | Source | Event | Class | Installed copy |
 |---|---|---|---|
 | `session-start-pull.ps1` | SessionStart | convenience | `~/.claude/hooks/` (pinned; `$repoRoot` hardcoded) |
+| `session-start-pull.sh` | SessionStart (Linux/macOS; `bootstrap.py` registers it in place of the `.ps1`) | convenience | `~/.claude/hooks/` (pinned; `REPO_ROOT` hardcoded; same log vocabulary, flock(1) instead of named mutexes) |
 | `ctxdex_autoindex.py` | PostToolUse Bash | convenience | `~/.claude/hooks/` |
 | `decay_reminder.py` | UserPromptSubmit | **advisory** reminder (C2) | `~/.claude/hooks/` |
 | `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; live `NORTHSTAR*.md` edits raise an owner approval prompt, `*.draft.md` free) | `~/.claude/hooks/` |

@@ -25,8 +25,9 @@ import types
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "evidence_evacuate.py")
-EVACUATOR = os.environ.get("EVIDENCE_TEST_EVACUATOR",
-                           "F:/Claude-Tools/evidence-archive/evacuate_worktree.py")
+EVACUATOR = os.environ.get("EVIDENCE_TEST_EVACUATOR") or (
+    "F:/Claude-Tools/evidence-archive/evacuate_worktree.py" if os.name == "nt"
+    else str(Path.home() / "workspace" / "claude-tools" / "evidence-archive" / "evacuate_worktree.py"))
 
 results = []
 

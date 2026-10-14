@@ -59,7 +59,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-WRAPPER = r"F:\Claude-Profile\skills\graphify\scripts\query_reranked.py"
+# The reranked-query wrapper in the claude-profile checkout. GRAPHIFY_WRAPPER
+# overrides; otherwise the house location per platform (Platform map in CLAUDE.md).
+WRAPPER = os.environ.get("GRAPHIFY_WRAPPER") or (
+    r"F:\Claude-Profile\skills\graphify\scripts\query_reranked.py" if os.name == "nt"
+    else str(Path.home() / "workspace" / "claude-profile" / "skills" / "graphify"
+             / "scripts" / "query_reranked.py"))
+PYTHON_CMD = "python" if os.name == "nt" else "python3"
 
 # Subagent types that cannot run shell commands gain nothing from the hint.
 NO_SHELL_AGENTS = {"claude-code-guide", "statusline-setup"}
@@ -176,7 +182,7 @@ def query_command(graph: str) -> str:
     acceptance run: the first query failed that way, the retry succeeded).
     The wrapper takes --graph, so it runs correctly from any cwd.
     """
-    return f'python "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
+    return f'{PYTHON_CMD} "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
 
 
 def build_hint(r: dict, *, subagent: bool) -> str:

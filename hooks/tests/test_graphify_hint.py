@@ -146,7 +146,7 @@ class HookIO(unittest.TestCase):
         # backslashes were eaten and the first query failed; the retry worked.
         _, out = run_hook({"hook_event_name": "SessionStart", "cwd": str(self.web)})
         cmd_line = next(l.strip() for l in self.ctx(out, "SessionStart").splitlines()
-                        if l.strip().startswith("python "))
+                        if l.strip().startswith(hint.PYTHON_CMD + " "))
         self.assertNotIn("\\", cmd_line)
         self.assertNotIn("cd ", cmd_line)
         self.assertIn("no `cd`", self.ctx(out, "SessionStart"))

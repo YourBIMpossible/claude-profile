@@ -49,6 +49,19 @@ hold a lock on `~/.claude/skills`. Re-running bootstrap is safe if that happens.
    Verify with `/context` (CLAUDE.md and skills should show as loaded) and
    `/plugin list`.
 
+### Linux / macOS
+
+1. Clone to a path with no spaces, by house convention `~/workspace/claude-profile`
+   (the hooks' default paths assume it, with `~/workspace/claude-tools` beside it):
+   `git clone https://github.com/YourBIMpossible/claude-profile.git ~/workspace/claude-profile`
+2. `python3 ~/workspace/claude-profile/bootstrap.py`
+   Same contract as `bootstrap.ps1` (backups, merge, pinned hooks, refusals), with the
+   template adapted for POSIX: `python` → `python3`, `session-start-pull.sh` in place
+   of the `.ps1`, `Show-AuditAlerts.ps1` dropped, and no Claude Desktop config (the
+   app is not available on Linux). Needs `git`, `python3` (3.11+) and `flock` (util-linux).
+3. Restart Claude Code; verify with `/context` and `/plugin list`.
+   Test the installer without touching the machine: `python3 hooks/tests/test_bootstrap_py.py`.
+
 ### ZIP fallback (GitHub not reachable right now)
 
 1. Extract the latest ZIP snapshot (from Google Drive or however it was handed to

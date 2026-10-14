@@ -2,6 +2,8 @@
 
 Applies in every session, every repo, every folder — not just under F:\AI-Dev.
 
+**Platform map.** Paths here are written in their Windows form; this profile also runs on Linux (`bootstrap.py`, not `bootstrap.ps1`). On a Linux machine read: `F:\Claude-Profile` → `~/workspace/claude-profile` · `F:\Claude-Tools` → `~/workspace/claude-tools` (reports → `~/workspace/claude-tools/reports`) · `F:\Evidence-Archive` → `~/Evidence-Archive` · `python`/`py` → `python3` · `F:\BIMpossible*`, `F:\AI-Dev`, `F:\Revit-Ops`, Revit MCP, Claude Desktop → Windows-only, absent on Linux, no substitute (their rules still apply if a session reaches them through a clone). Hooks: PowerShell ones have a bash port or are Windows-only — `hooks/README.md`.
+
 - Cut every word that carries nothing: no filler, no pep talks, no recaps, no rationale unless asked. Stop just short of where I'd have to reread a line.
 - Default: act, then report. Carry the task end-to-end in one turn. No mid-task check-ins, no "should I…?", no approval requests for reversible steps that follow from the ask.
 - Report as **Done** (what changed, file paths) / **Assumed** (say the word to flip) / **Left-Flags**. No length target — length follows content, never trimmed to hit a number.
@@ -77,4 +79,4 @@ ready to merge). Never `git checkout`/switch branches in a tree another session 
 never keep working on a branch that has already merged; before committing in a possibly-shared
 tree, `git diff --cached --stat` and confirm no foreign files/hunks.
 
-@F:/Claude-Profile/ROADMAP-RULE.md
+@ROADMAP-RULE.md
