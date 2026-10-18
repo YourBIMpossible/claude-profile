@@ -20,6 +20,7 @@ afterward - to undo, delete what bootstrap wrote and rename the backup back.
 | `~/.claude/settings.json` | merged with `settings.template.json`: the template's hooks replace the ones it owns, `permissions.additionalDirectories` gains the detected project folders, missing plugin and marketplace entries are added, and every other existing key (permissions rules, `autoMode`, `env`, your own values) is kept. An empty or unparseable file is refused, never replaced; a changed file is backed up first |
 | `~/.claude/hooks/*` | pinned copies of `hooks/*.py`, `*.ps1` and `closure_audit_repos.json`; a differing installed copy is backed up first |
 | `%APPDATA%\Claude\claude_desktop_config.json` | generated from the template in `mcp/` |
+| REA (`rea-agents` npm package) | installed globally and registered as the user-scope Claude Code MCP server `rea` by `tools/Install-Rea.ps1` (step 6; `-SkipRea` to skip). Needs Node 22.19+/24.11+/26+; missing Node warns and skips. The matching skill is `skills/reverse-engineer-anything` |
 
 Note that skills are *replaced, not merged*: any skill that exists only on this
 machine ends up in the moved-aside backup folder, not in the new junction. If you

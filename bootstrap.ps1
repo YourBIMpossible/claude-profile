@@ -3,7 +3,9 @@
 param(
     # Install hook sources even when they have uncommitted changes. Off by default:
     # the pinned copies under ~/.claude/hooks must be reviewed (committed) code (C1).
-    [switch]$AllowUncommittedHooks
+    [switch]$AllowUncommittedHooks,
+    # Skip the REA (rea-agents) install / Claude Code MCP registration (step 6).
+    [switch]$SkipRea
 )
 
 $ErrorActionPreference = 'Stop'
@@ -642,6 +644,15 @@ if (-not $mcpExists) {
     Write-Host "Updated mcpServers in claude_desktop_config.json (preserved $mcpExistingKeyCount top-level keys)"
 } else {
     Write-Host "claude_desktop_config.json already correct - left untouched"
+}
+
+# 6. REA (Reverse Engineer Anything) - npm package + user-scope Claude Code MCP
+# registration. Network-touching and optional: a missing Node.js warns and skips
+# rather than failing the run. The skill ships in skills/ via the junction above.
+if ($SkipRea) {
+    Write-Host "Skipped REA install (-SkipRea)"
+} else {
+    & (Join-Path $repoRoot 'tools\Install-Rea.ps1')
 }
 
 Write-Host ""
