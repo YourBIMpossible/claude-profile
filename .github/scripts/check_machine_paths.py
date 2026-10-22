@@ -128,7 +128,7 @@ def scan_line(line: str) -> list[tuple[str, str]]:
     hits = []
     for rid, rx, _ in RULES:
         for m in rx.finditer(line):
-            # A regex class escape such as \d:\d is not a drive letter.
+            # A regex class escape (a backslash, then d/w/s/b) before a colon is not a drive letter.
             if (rid == "drive-path" and m.start() > 0 and line[m.start() - 1] == "\\"
                     and line[m.start()] in REGEX_CLASS_LETTERS):
                 continue
@@ -199,9 +199,9 @@ def check(root: Path, allow_path: Path) -> int:
 # Fixtures are written with markers so that this file holds no literal machine path
 # (it must pass this guard, and any stricter boundary check, without exceptions):
 # <D> = a drive letter and colon, <M> = an MSYS drive root, <H> = the POSIX home root,
-# <U> = a UNC prefix, <C> = the Claude Code state directory name.
+# <U> = a UNC prefix, <C> = the Claude Code state directory name, <CL> = a colon.
 _MARKERS = {"<D>": "C" + ":", "<d>": "f" + ":", "<M>": "/" + "c", "<H>": "/" + "home",
-            "<UH>": "/" + "Users", "<U>": "\\" + "\\", "<C>": "." + "claude"}
+            "<UH>": "/" + "Users", "<U>": "\\" + "\\", "<C>": "." + "claude", "<CL>": ":"}
 
 
 def _expand(line: str) -> str:
@@ -230,7 +230,7 @@ SELF_TEST = [
     (r"<U>server\share\x", ["unc-path"]),
     (r"printf 'a\n'", []),
     ("{repos}/claude-tools/reports", []),
-    (r"regex T\d\d:\d\d:\d\dZ and \w:\s", []),
+    (r"regex T\d\d<CL>\d\d<CL>\d\dZ and \w<CL>\s", []),
     (r"extended \\?\<D>\x", ["drive-path"]),
 ]
 
