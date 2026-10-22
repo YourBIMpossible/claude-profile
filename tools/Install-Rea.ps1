@@ -81,12 +81,23 @@ if ($installed -and -not $Update) {
     }
 }
 
+function Get-McpServerInfo {
+    # 'claude mcp get' writes to stderr when the server is absent. Under Windows PowerShell 5.1
+    # with ErrorActionPreference=Stop, redirected native stderr becomes a terminating
+    # NativeCommandError, so relax it for this call only and report the exit code explicitly.
+    param([string]$Name)
+    $ErrorActionPreference = 'Continue'
+    $text = & claude mcp get $Name 2>&1 | ForEach-Object { "$_" } | Out-String
+    return [pscustomobject]@{ Text = $text; ExitCode = $LASTEXITCODE }
+}
+
 # 3. Claude Code user-scope MCP registration
 if (-not $claude) { return }
 $entryForward = $reaEntry -replace '\\', '/'
 $expectedArgs = "$entryForward --mcp"
-$current = & claude mcp get $serverName 2>&1 | Out-String
-$registered = $LASTEXITCODE -eq 0 -and $current -match 'Scope:\s*User'
+$info = Get-McpServerInfo $serverName
+$current = $info.Text
+$registered = $info.ExitCode -eq 0 -and $current -match 'Scope:\s*User'
 $matchesExpected = $registered -and ($current -match [regex]::Escape($entryForward)) -and ($current -match 'Command:\s*node')
 
 if ($matchesExpected) {
@@ -101,7 +112,7 @@ Write-Step "claude mcp add --scope user $serverName -- node $expectedArgs"
 if ($DryRun) { return }
 & claude mcp add --scope user $serverName -- node $entryForward --mcp
 if ($LASTEXITCODE -ne 0) { throw "claude mcp add failed (exit $LASTEXITCODE)" }
-$verify = & claude mcp get $serverName 2>&1 | Out-String
+$verify = (Get-McpServerInfo $serverName).Text
 if ($verify -notmatch 'Connected') {
     Write-Warning "[rea] Registered, but 'claude mcp get $serverName' does not report Connected:`n$verify"
 } else {
