@@ -1,0 +1,21 @@
+[
+  {
+    "path": "hooks/Show-AuditAlerts.ps1",
+    "match": "Ack-AuditAlert\\.ps1",
+    "reason": "Byte-identical pin of an upstream BIMpossible-Workspace file (sha256 in hooks/README.md); the path is only the text of the acknowledge command it prints. Fix upstream, then re-pin."
+  },
+  {
+    "path": "hooks/tests/*.py",
+    "match": "X:[\\\\/]",
+    "reason": "Synthetic Windows-form fixture paths on the placeholder drive X: for path-handling tests (gate patterns, worktree classification, closure audit); no real location."
+  },
+  {
+    "path": "skills/graphify/scripts/test_query_reranked.py",
+    "match": "/r/backend",
+    "reason": "Synthetic resolved-graph fixture on the placeholder drive X:."
+  },
+  {
+    "path": "skills/ui-ux-pro-max/data/stacks/*.csv",
+    "reason": "Third-party UI guidance data whose examples cite hardcoded absolute paths as the anti-pattern to avoid."
+  }
+]
