@@ -1,7 +1,7 @@
 """Tests for tools/context_weight.py (schema v2, scenario-aware).
 
 Every case builds a throwaway estate under tempfile and passes it in — the
-real ~/.claude, F:\\Claude-Profile and F:\\BIMpossible are never touched.
+real ~/.claude, the profile clone and the BIMpossible checkout are never touched.
 
 Carries forward the v1 regression this tool exists to prevent (2026-08-31
 slop audit, MEDIUM-1; b640675): a missing/unreadable required input must

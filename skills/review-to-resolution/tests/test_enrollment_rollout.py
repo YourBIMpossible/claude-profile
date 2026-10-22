@@ -27,11 +27,15 @@ sys.path.insert(0, str(SCRIPT.parent))
 import grrp  # noqa: E402
 from test_review_to_resolution_conformance import BRIEF, REVIEW_ONLY_OBL, block, finding  # noqa: E402
 
+sys.path.insert(0, str(HERE.parents[2] / "tools"))
+import machine_config  # noqa: E402
+
+REPOS = Path(machine_config.load()["repos_root"])
 ROOTS = {
     "PROFILE": str(HERE.parents[2]),
-    "BIMPOSSIBLE": r"F:\BIMpossible",
-    "ADDINS": r"F:\BIMpossible-AddIns",
-    "WORKSPACE": r"F:\BIMpossible-Workspace",
+    "BIMPOSSIBLE": str(REPOS / "BIMpossible"),
+    "ADDINS": str(REPOS / "BIMpossible-AddIns"),
+    "WORKSPACE": str(REPOS / "BIMpossible-Workspace"),
     "TASKS": str(Path.home() / ".claude" / "scheduled-tasks"),
 }
 
@@ -108,7 +112,8 @@ class EnrolledWorkflows(unittest.TestCase):
 
     def test_weekly_audit_ledger_stays_inside_its_roots(self) -> None:
         text = self.read("bimpossible-weekly-full-audit")
-        self.assertIn(r'--dir "F:\BIMpossible-Workspace\02_Reference\Audit and Scan Info\grrp"', text)
+        # The task names the Workspace's own ledger folder (its drive prefix is that machine's).
+        self.assertRegex(text, r'--dir "[^"]*BIMpossible-Workspace[\\/]02_Reference[\\/]Audit and Scan Info[\\/]grrp"')
 
     def test_slop_audit_weekly_reports_ledger_verdicts(self) -> None:
         root = Path(os.environ.get("GRRP_ROOT_TASKS", ROOTS["TASKS"]))

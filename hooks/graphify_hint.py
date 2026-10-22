@@ -40,12 +40,13 @@ SCOPE HONESTY
   ADVISORY. It informs tool choice; it cannot make the model use graphify,
   and it does not check graph freshness beyond printing the build date.
 
-PINNED-COPY RULES (hooks/README.md, C1)
-  Installed as a copied file under ~/.claude/hooks. It must not import code
-  from the skills junction, so the resolver below is a verbatim-behaviour
-  copy of resolve_graph.resolve(); hooks/tests/test_graphify_hint.py runs
-  both over the same fixtures and fails if they ever disagree. WRAPPER is a
-  hardcoded path the MODEL runs (not code this hook executes).
+SELF-CONTAINED (hooks/README.md, C1)
+  Runs from the profile clone and imports nothing from skills/, so the
+  resolver below is a verbatim-behaviour copy of resolve_graph.resolve();
+  hooks/tests/test_graphify_hint.py runs both over the same fixtures and
+  fails if they ever disagree. WRAPPER is derived from this file's location
+  (the same clone's skills/); it is a path the MODEL runs, not code this
+  hook executes.
 
   Never fails a session: any error -> exit 0, no output (the error type goes
   to the diagnostic log). Opt-out: GRAPHIFY_HINT=0.
@@ -59,7 +60,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-WRAPPER = r"F:\Claude-Profile\skills\graphify\scripts\query_reranked.py"
+WRAPPER = str(Path(__file__).resolve().parents[1] / "skills" / "graphify" / "scripts" / "query_reranked.py")
+PYTHON_CMD = "python" if os.name == "nt" else "python3"
 
 # Subagent types that cannot run shell commands gain nothing from the hint.
 NO_SHELL_AGENTS = {"claude-code-guide", "statusline-setup"}
@@ -176,7 +178,7 @@ def query_command(graph: str) -> str:
     acceptance run: the first query failed that way, the retry succeeded).
     The wrapper takes --graph, so it runs correctly from any cwd.
     """
-    return f'python "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
+    return f'{PYTHON_CMD} "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
 
 
 def build_hint(r: dict, *, subagent: bool) -> str:

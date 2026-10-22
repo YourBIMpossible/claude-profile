@@ -25,7 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import query_reranked as qr  # noqa: E402
 
-BIMPOSSIBLE_BACKEND = Path(r"F:\BIMpossible\backend")
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))  # the profile clone's tools/
+import machine_config  # noqa: E402
+
+BIMPOSSIBLE_BACKEND = Path(machine_config.load()["repos_root"]) / "BIMpossible" / "backend"
 
 
 class TestTokenize(unittest.TestCase):
@@ -256,8 +259,8 @@ class TestGraphResolution(unittest.TestCase):
             self.assertIsNone(args.graph)
 
     def test_resolved_graph_fills_missing_arg(self):
-        found = qr.resolve_graph.ResolvedGraph("G:/r/backend/graphify-out/graph.json",
-                                               "G:/r/backend", "repo-subdir", "G:/r/backend")
+        found = qr.resolve_graph.ResolvedGraph("X:/r/backend/graphify-out/graph.json",
+                                               "X:/r/backend", "repo-subdir", "X:/r/backend")
         with tempfile.TemporaryDirectory() as td:
             args = self._args()
             with mock.patch.object(qr.resolve_graph, "resolve", return_value=found):

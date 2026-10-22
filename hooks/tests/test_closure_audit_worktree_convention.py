@@ -31,7 +31,7 @@ def check(name, cond, detail=""):
 def run_checks() -> list:
     """Exercise the worktree-convention warning. Returns the (name, ok, detail) result tuples."""
     results.clear()
-    REPO_ROOT = "F:/BIMpossible"
+    REPO_ROOT = "X:/fixture/BIMpossible"
 
     # ---------------------------------------------------------------------------
     # 1. classify_worktree_location — direct unit coverage of the four scenarios
@@ -44,29 +44,29 @@ def run_checks() -> list:
 
     check(
         "canonical primary checkout, backslash form -> None",
-        sca.classify_worktree_location("F:\\BIMpossible", REPO_ROOT) is None,
+        sca.classify_worktree_location("X:\\fixture\\BIMpossible", REPO_ROOT) is None,
     )
 
     check(
         "canonical .claude/worktrees/<lane> -> None (no warning)",
         sca.classify_worktree_location(
-            "F:/BIMpossible/.claude/worktrees/some-lane-abcdef", REPO_ROOT
+            "X:/fixture/BIMpossible/.claude/worktrees/some-lane-abcdef", REPO_ROOT
         ) is None,
     )
 
     check(
         "canonical .claude/worktrees root itself -> None",
-        sca.classify_worktree_location("F:/BIMpossible/.claude/worktrees", REPO_ROOT) is None,
+        sca.classify_worktree_location("X:/fixture/BIMpossible/.claude/worktrees", REPO_ROOT) is None,
     )
 
     _orig_temp = os.environ.get("TEMP")
     _orig_tmp = os.environ.get("TMP")
     try:
-        os.environ["TEMP"] = "C:\\Users\\Zeria\\AppData\\Local\\Temp"
-        os.environ["TMP"] = "C:\\Users\\Zeria\\AppData\\Local\\Temp"
+        os.environ["TEMP"] = "X:\\fixture\\Temp"
+        os.environ["TMP"] = "X:\\fixture\\Temp"
 
         temp_result = sca.classify_worktree_location(
-            "C:/Users/Zeria/AppData/Local/Temp/main-check", REPO_ROOT
+            "X:/fixture/Temp/main-check", REPO_ROOT
         )
         check(
             "%TEMP% detached verification worktree -> flagged, under_temp=True",
@@ -75,7 +75,7 @@ def run_checks() -> list:
         )
 
         external_result = sca.classify_worktree_location(
-            "D:/scratch/some-other-checkout", REPO_ROOT
+            "X:/scratch/some-other-checkout", REPO_ROOT
         )
         check(
             "arbitrary external-path worktree -> flagged, under_temp=False",
@@ -86,7 +86,7 @@ def run_checks() -> list:
         # Lookalike path that merely starts with the repo root string but isn't
         # actually inside it (e.g. a sibling dir "BIMpossible2") must not be
         # treated as canonical.
-        lookalike_result = sca.classify_worktree_location("F:/BIMpossible2", REPO_ROOT)
+        lookalike_result = sca.classify_worktree_location("X:/fixture/BIMpossible2", REPO_ROOT)
         check(
             "sibling dir with repo-root-prefixed name is NOT canonical",
             lookalike_result is not None,
@@ -121,7 +121,7 @@ def run_checks() -> list:
 
     lane_findings = sca.audit_worktree(
         "BIMpossible",
-        {"path": "F:/BIMpossible/.claude/worktrees/some-lane-abcdef",
+        {"path": "X:/fixture/BIMpossible/.claude/worktrees/some-lane-abcdef",
          "branch": "claude/some-lane-abcdef", "detached": False},
         CFG,
         st={**CLEAN_STATUS, "branch": "claude/some-lane-abcdef", "upstream": "origin/claude/some-lane-abcdef"},
@@ -129,12 +129,12 @@ def run_checks() -> list:
     )
     check("canonical lane worktree, clean status -> zero findings", lane_findings == [], repr(lane_findings))
 
-    os.environ["TEMP"] = "C:\\Users\\Zeria\\AppData\\Local\\Temp"
-    os.environ["TMP"] = "C:\\Users\\Zeria\\AppData\\Local\\Temp"
+    os.environ["TEMP"] = "X:\\fixture\\Temp"
+    os.environ["TMP"] = "X:\\fixture\\Temp"
     try:
         temp_findings = sca.audit_worktree(
             "BIMpossible",
-            {"path": "C:/Users/Zeria/AppData/Local/Temp/main-check", "branch": None, "detached": True},
+            {"path": "X:/fixture/Temp/main-check", "branch": None, "detached": True},
             CFG,
             st={**CLEAN_STATUS, "branch": None, "detached": True, "upstream": None},
             truncated=False, repo_root=REPO_ROOT,
@@ -151,7 +151,7 @@ def run_checks() -> list:
         if convention_findings:
             f = convention_findings[0]
             check("WARNING never escalated to ATTENTION REQUIRED", f["severity"] == "WARNING")
-            check("finding names the full path", "C:/Users/Zeria/AppData/Local/Temp/main-check" in f["text"])
+            check("finding names the full path", "X:/fixture/Temp/main-check" in f["text"])
             check("finding reports detached HEAD state", "detached HEAD" in f["text"])
             check("finding notes %TEMP%", "%TEMP%" in f["text"])
             check(
@@ -166,7 +166,7 @@ def run_checks() -> list:
 
         external_findings = sca.audit_worktree(
             "BIMpossible",
-            {"path": "D:/scratch/some-other-checkout", "branch": "wip", "detached": False},
+            {"path": "X:/scratch/some-other-checkout", "branch": "wip", "detached": False},
             CFG,
             st={**CLEAN_STATUS, "branch": "wip", "upstream": None},
             truncated=False, repo_root=REPO_ROOT,
@@ -199,12 +199,12 @@ def run_checks() -> list:
     #    git status needed) — must not be silently skipped by the truncation path
     # ---------------------------------------------------------------------------
 
-    os.environ["TEMP"] = "C:\\Users\\Zeria\\AppData\\Local\\Temp"
-    os.environ["TMP"] = "C:\\Users\\Zeria\\AppData\\Local\\Temp"
+    os.environ["TEMP"] = "X:\\fixture\\Temp"
+    os.environ["TMP"] = "X:\\fixture\\Temp"
     try:
         truncated_findings = sca.audit_worktree(
             "BIMpossible",
-            {"path": "C:/Users/Zeria/AppData/Local/Temp/t6-rebase", "branch": "claude/t6-reason-tag", "detached": False},
+            {"path": "X:/fixture/Temp/t6-rebase", "branch": "claude/t6-reason-tag", "detached": False},
             CFG, st=None, truncated=True, repo_root=REPO_ROOT,
         )
         check(

@@ -44,6 +44,40 @@ from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = HOOKS_DIR / "closure_audit_repos.json"
+sys.path.insert(0, str(HOOKS_DIR.parent / "tools"))
+try:
+    import machine_config  # roots for {repos}/{tools}/{profile}/{reports} in the config
+except Exception:  # fail open: an unusable helper must not take the audit down
+    machine_config = None
+
+
+def reports_dir() -> str:
+    """Where transient output belongs on this machine (the machine config's reports_dir)."""
+    try:
+        return str(machine_config.load().get("reports_dir") or "") or "the reports folder"
+    except Exception:
+        return "the reports folder"
+
+
+def resolve_repos(cfg: dict) -> list:
+    """(name, path, required) for the config entries that apply to this machine.
+
+    An entry's path may use the machine roots ({repos}, {tools}, {profile}) and '~';
+    an entry naming a root this machine has not set is skipped. Optional 'platform'
+    (a sys.platform prefix: win32 / linux / darwin) scopes an entry to one OS. A
+    missing repo is reported only when the entry says "required": true - one shared
+    config serves every machine, and most machines hold only some of the repos."""
+    out = []
+    for r in cfg.get("repos", []):
+        if r.get("platform") and not sys.platform.startswith(r["platform"]):
+            continue
+        path = r["path"]
+        try:
+            path = machine_config.expand(path) if machine_config else os.path.expanduser(path)
+        except Exception:
+            continue
+        out.append((r["name"], path, bool(r.get("required"))))
+    return out
 GIT_TIMEOUT = 8  # seconds, per git call — this hook must never hang a session
 OVERALL_GIT_BUDGET = 10.0  # seconds, wall-clock ceiling for ALL git calls combined.
 # The outer harness (settings.json hook "timeout": 15) kills this whole process
@@ -373,7 +407,7 @@ def audit_worktree(
                 "text": f"{path} — untracked design/decision doc: {p}",
                 "action": (
                     "Commit and push if it governs future work; if it is transient output, "
-                    r"move it to F:\Claude-Tools\reports; or rename to *.draft.md if not ready."
+                    f"move it to {reports_dir()}; or rename to *.draft.md if not ready."
                 ),
             })
             file_level_attention = True
@@ -405,16 +439,13 @@ def audit_worktree(
 
 def build_report(cfg: dict) -> str:
     deadline = time.monotonic() + OVERALL_GIT_BUDGET
-    repos = cfg.get("repos", [])
-
     valid_repos = []  # (name, path)
     missing_sections = []
-    for r in repos:
-        name, path = r["name"], r["path"]
-        if not os.path.isdir(path):
-            missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
-        else:
+    for name, path, required in resolve_repos(cfg):
+        if os.path.isdir(path):
             valid_repos.append((name, path))
+        elif required:
+            missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
 
     # Stage 1: `git worktree list` for every valid repo, concurrently.
     wt_lists = _run_concurrently(

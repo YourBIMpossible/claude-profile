@@ -60,14 +60,33 @@ import time
 from pathlib import Path
 from typing import Callable
 
-DEFAULT_ARCHIVE = "F:/Evidence-Archive/EC-LIVE"
-DEFAULT_EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
+
+
+def _default_paths() -> tuple[str, str]:
+    """(archive, evacuator) from the machine config (tools/machine_config.py):
+    <evidence_archive>/EC-LIVE and <tools_root>/evidence-archive/evacuate_worktree.py,
+    each falling back to its folder under <repos_root>. EVIDENCE_LIVE_ARCHIVE and
+    EVIDENCE_EVACUATOR override them."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+        import machine_config
+        cfg = machine_config.load()
+    except Exception:
+        cfg = {}
+    repos = Path(cfg.get("repos_root") or Path.home())
+    archive = Path(cfg.get("evidence_archive") or repos / "Evidence-Archive") / "EC-LIVE"
+    tools = Path(cfg.get("tools_root") or repos / "claude-tools")
+    return archive.as_posix(), (tools / "evidence-archive" / "evacuate_worktree.py").as_posix()
+
+
+DEFAULT_ARCHIVE, DEFAULT_EVACUATOR = _default_paths()
 PACKETS_REL = Path(".evidence-compiler") / "packets"
 PACKET_ID_IN_NAME = re.compile(r"(ep_[0-9a-f]{8,64})\.json$")
 TOTAL_BUDGET_S = 25.0      # hook timeout in settings is 30 s
 MIN_CALL_S = 2.0           # below this an evacuator call is deferred, not started
+# Runtime state stays under ~/.claude/hooks, never in the clone the hook runs from.
 LOG_PATH = Path(os.environ.get("EVIDENCE_EVACUATE_LOG")
-                or Path(__file__).with_name("evidence_evacuate.log"))
+                or Path.home() / ".claude" / "hooks" / "evidence_evacuate.log")
 # SessionEnd failures are appended here, one file each, and shown by the next
 # Stop: a systemMessage printed while a session is closing may never be displayed.
 PENDING_DIR = LOG_PATH.with_name(LOG_PATH.stem + ".pending")
@@ -78,6 +97,7 @@ STALE_TMP_S = 60.0         # an unrenamed .tmp older than this is an interrupted
 def log(msg: str) -> None:
     try:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_PATH, "a", encoding="utf-8") as fh:
             fh.write(f"{stamp} {msg}\n")
     except OSError:
@@ -256,7 +276,7 @@ def write_pending(message: str) -> None:
     name = f"{time.time_ns()}-{os.getpid()}-{secrets.token_hex(4)}"
     tmp = PENDING_DIR / (name + ".tmp")
     try:
-        PENDING_DIR.mkdir(exist_ok=True)
+        PENDING_DIR.mkdir(parents=True, exist_ok=True)
         tmp.write_text(message, encoding="utf-8")
         os.replace(tmp, PENDING_DIR / (name + PENDING_SUFFIX))
     except OSError as exc:
