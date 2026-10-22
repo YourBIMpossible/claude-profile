@@ -15,7 +15,7 @@
   },
   {
     "path": "skills/graphify/scripts/test_query_reranked.py",
-    "match": "/r/backend",
+    "match": "r/backend",
     "reason": "Synthetic resolved-graph fixture on the placeholder drive X:."
   },
   {

@@ -7,7 +7,7 @@
 
 ## Context
 
-Committed files named machine paths (`F:\Claude-Tools`, `C:\src\...`, a user profile folder): about
+Committed files named machine paths (a drive-letter Claude-Tools folder, a src folder on another drive, a user profile folder): about
 90 files across CLAUDE.md, skills, hooks, tests and notes. Each machine with a different layout
 carried local "repath" commits that conflicted on every pull, bootstrap crashed on a machine
 without an F: drive (`Join-Path` on a missing drive), 47 tests failed on such a machine, and a Linux
