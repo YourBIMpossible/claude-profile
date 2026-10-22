@@ -349,7 +349,7 @@ def git(cwd: Path, *args: str, env: dict | None = None, git_dir: Path | None = N
 def instruction_text(case: Case) -> str:
     """The real profile CLAUDE.md at this checkout, with the literal legacy path swapped for a fixture one."""
     text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-    text = text.replace("F:\\AI-Dev", "legacy-aidev")
+    text = text.replace("{repos}\\AI-Dev", "legacy-aidev")
     if case.claude_md_extra:
         text += f"\n\n# Repo rules (this repository)\n\n{case.claude_md_extra}\n"
     return text

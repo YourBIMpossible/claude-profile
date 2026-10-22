@@ -109,7 +109,7 @@ lock-ordering changes").
 - `contracts` / `prior_reports_glob` absent → fallbacks in their sections above.
 - `read_only_default: true`, `allow_autofix: false`.
 
-## Template — BIMpossible (`F:\BIMpossible`)
+## Template — BIMpossible (`{repos}\BIMpossible`)
 
 ```yaml
 version: 1

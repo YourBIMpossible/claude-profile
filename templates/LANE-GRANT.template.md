@@ -8,7 +8,7 @@
 -->
 
 ## Task
-<!-- Exactly one of the two. Example: CP-SLOP1012-LOW-BATCH (F:\Claude-Tools\state\queue.yaml) -->
+<!-- Exactly one of the two. Example: CP-SLOP1012-LOW-BATCH ({tools}\state\queue.yaml) -->
 - Queue ID / task:
 - OR selection authority (granted / not granted): ___ — criteria: ___
 

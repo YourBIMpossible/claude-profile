@@ -3325,16 +3325,16 @@
         {
           "n": 6,
           "tool": "Bash",
-          "target": "mkdir -p /f/Claude-Tools/reports && cat > /f/Claude-Tools/reports/experiment-streaming-parse-rows.md <<'EOF'\n# Experiment: parse_rows as generator\nStop condition (written before starting): one rewrite",
+          "target": "mkdir -p {reports} && cat > {reports}/experiment-streaming-parse-rows.md <<'EOF'\n# Experiment: parse_rows as generator\nStop condition (written before starting): one rewrite",
           "blocked_by": "permission",
           "result_head": "Parser skipped input between top-level statements"
         },
         {
           "n": 7,
           "tool": "Bash",
-          "target": "mkdir -p /f/Claude-Tools/reports && printf '%s\\n' '# Experiment: parse_rows as generator' 'Stop condition (written before starting): one yield rewrite; run test_parser.py plus a laziness check; stop a",
+          "target": "mkdir -p {reports} && printf '%s\\n' '# Experiment: parse_rows as generator' 'Stop condition (written before starting): one yield rewrite; run test_parser.py plus a laziness check; stop a",
           "blocked_by": "permission",
-          "result_head": "This Bash command contains multiple operations. The following parts require approval: mkdir -p /f/Claude-Tools/reports, printf '%s\\n' '# Experiment: parse_rows "
+          "result_head": "This Bash command contains multiple operations. The following parts require approval: mkdir -p {reports}, printf '%s\\n' '# Experiment: parse_rows "
         },
         {
           "n": 8,

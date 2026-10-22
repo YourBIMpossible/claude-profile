@@ -3,7 +3,7 @@
   "set_version": 1,
   "budget": 2000,
   "rerank": false,
-  "repo": "F:\\AI-Dev\\Add-Ins",
+  "repo": "{repos}\\AI-Dev\\Add-Ins",
   "graph_nodes": 6634,
   "graph_built_at_commit": "5160510dfcd50f16570b62d63866efb59403fdb0",
   "overall": {

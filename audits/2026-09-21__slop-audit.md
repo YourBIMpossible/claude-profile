@@ -1,4 +1,4 @@
-# Slop audit — F:\Claude-Profile — 2026-09-21
+# Slop audit — {profile} — 2026-09-21
 
 **Window:** incremental, commits since the prior report (`audits/2026-09-13__slop-audit.md`, commit `0352b9d`) → HEAD `08a3bbf`.
 **Checks:** silent-catch census · counter-integrity · tested-but-dead. Read-only; findings only, no fixes.

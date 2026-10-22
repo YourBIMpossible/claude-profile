@@ -1,6 +1,6 @@
 # Audit — BIMpossible\CLAUDE.md
 
-Date: 2026-08-06 · Auditor: Claude (harness-tuning session) · Target: `F:\AI-Dev\BIMpossible\CLAUDE.md`
+Date: 2026-08-06 · Auditor: Claude (harness-tuning session) · Target: `{repos}\AI-Dev\BIMpossible\CLAUDE.md`
 Size: 227 lines / 18.2 KB · Read-only audit — **no edits made to the BIMpossible repo.**
 
 ## Verdict
@@ -49,7 +49,7 @@ or unsafe work?* If yes → standing order, keep. If it merely informs → move 
 - **Worktree rule appears three times**: here (174–179), in `claude-profile\CLAUDE.md` (global house
   rule), and in `BIMpossible_Workspace\WORKFLOW.md` (canonical). Keep the canonical + the global
   one; the repo copy can shrink to the branch-naming specifics that are genuinely BIMpossible-only.
-- **Working style appears twice**: `F:\AI-Dev\system\WORKING-STYLE.md` (2026-05-30, referenced by
+- **Working style appears twice**: `{repos}\AI-Dev\system\WORKING-STYLE.md` (2026-05-30, referenced by
   both BIMpossible and AI-Server) now overlaps the global "How to work with me" section. Not
   contradictory, but two homes for one policy is how drift starts. Recommend folding WORKING-STYLE
   into the global section and deleting both pointers.

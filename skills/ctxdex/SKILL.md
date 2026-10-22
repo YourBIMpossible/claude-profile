@@ -5,9 +5,9 @@ description: "Local FTS5 index for durable recall over large content already see
 
 # ctxdex — local knowledge index
 
-A ~350-line SQLite FTS5 CLI at `F:\Claude-Tools\ctxdex\ctxdex.py`. Fully local — no network except URLs you explicitly index.
+A ~350-line SQLite FTS5 CLI at `{tools}\ctxdex\ctxdex.py`. Fully local — no network except URLs you explicitly index.
 
-**Dependency pin (for the auto-capture hook):** ctxdex is its own git repo at `F:\Claude-Tools\ctxdex` (local-only, no remote). The hook was built and verified against commit `402c0e6` ("Initial commit", 2026-08-07); current pin is `dd0173b`, which adds the manual-ingestion secret gate (hook suite re-verified against it). Required support features: `index --path` override (synthetic `bash://` URIs) and `purge --source`/`--older-than` compose (scoped retention). Check with `git -C F:\Claude-Tools\ctxdex log --oneline -1`. If ctxdex is absent or lacks `cmd_index`, the hook fails open silently in-session and writes a clear `preflight:` diagnostic to `ctxdex_autoindex.log`.
+**Dependency pin (for the auto-capture hook):** ctxdex is its own git repo at `{tools}\ctxdex` (local-only, no remote). The hook was built and verified against commit `402c0e6` ("Initial commit", 2026-08-07); current pin is `dd0173b`, which adds the manual-ingestion secret gate (hook suite re-verified against it). Required support features: `index --path` override (synthetic `bash://` URIs) and `purge --source`/`--older-than` compose (scoped retention). Check with `git -C {tools}\ctxdex log --oneline -1`. If ctxdex is absent or lacks `cmd_index`, the hook fails open silently in-session and writes a clear `preflight:` diagnostic to `ctxdex_autoindex.log`.
 
 Solves one problem: content you paid tokens to see **once** (a fetched doc page, a 300KB log, a CSV export, a reference directory) is otherwise truncated away or must be re-read whole. Index it, then pull back ranked 1500-char snippets on demand.
 
@@ -29,24 +29,24 @@ Rule of thumb: ctxdex is for **your** content that would otherwise be re-read or
 Run from anywhere; `--project` defaults to the current folder name, giving each repo its own DB.
 
 ```bash
-python F:/Claude-Tools/ctxdex/ctxdex.py index <path-or-url> --source LABEL
+python {tools}/ctxdex/ctxdex.py index <path-or-url> --source LABEL
 ```
 Indexes a file, a directory (recursive, text extensions only, skips .git/node_modules/venv/bin/obj/dist/build), or a URL (HTML stripped to text). Chunks on markdown headings, 4KB max per chunk.
 
 ```bash
-python F:/Claude-Tools/ctxdex/ctxdex.py search "<query>" [--source LABEL] [--limit N]
+python {tools}/ctxdex/ctxdex.py search "<query>" [--source LABEL] [--limit N]
 ```
 Returns `--limit` results (default **2**) as 1500-char snippets. Ranking: porter-stemmed BM25 + trigram index merged by Reciprocal Rank Fusion, then chunks matching **all** query terms are boosted above partial matches.
 
 ```bash
-python F:/Claude-Tools/ctxdex/ctxdex.py stats     # chunk counts, DB size, per-source breakdown
-python F:/Claude-Tools/ctxdex/ctxdex.py sources   # list source labels
-python F:/Claude-Tools/ctxdex/ctxdex.py purge --source LABEL   # or --older-than DAYS (default 14) / --all
+python {tools}/ctxdex/ctxdex.py stats     # chunk counts, DB size, per-source breakdown
+python {tools}/ctxdex/ctxdex.py sources   # list source labels
+python {tools}/ctxdex/ctxdex.py purge --source LABEL   # or --older-than DAYS (default 14) / --all
 ```
 
 ## Auto-capture (Bash output)
 
-A PostToolUse hook (`F:\Claude-Profile\hooks\ctxdex_autoindex.py`), registered in `~/.claude/settings.json` scoped to `Bash` only, auto-indexes large Bash output as a side effect — no `index` call needed.
+A PostToolUse hook (`{profile}\hooks\ctxdex_autoindex.py`), registered in `~/.claude/settings.json` scoped to `Bash` only, auto-indexes large Bash output as a side effect — no `index` call needed.
 
 - **Threshold:** output ≥100 KiB → indexed under `source=bash-output`, `path` set to a synthetic `bash://<timestamp>` URI.
 - **Opt-out:** set `CTXDEX_AUTO_INDEX=0` to disable.

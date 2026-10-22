@@ -1,6 +1,6 @@
 # Audit — Add-Ins\CLAUDE.md
 
-Date: 2026-08-07 · Auditor: Claude (harness-tuning session) · Target: `F:\AI-Dev\Add-Ins\CLAUDE.md`
+Date: 2026-08-07 · Auditor: Claude (harness-tuning session) · Target: `{repos}\AI-Dev\Add-Ins\CLAUDE.md`
 Size: 179 lines / 14.6 KB · Read-only audit — **no edits made to the Add-Ins repo.**
 Method matches the BIMpossible audit (2026-08-06): every section tested against *would a session that
 violates this line produce broken or unsafe work?*
@@ -23,7 +23,7 @@ Ranked by cost-if-ignored, not by line count:
 |---|---|---|
 | 1 | `docs/ui-workflow-stack-handoff.md` **is not reachable from `main`** | It is the "full stack + scope boundaries" reference for the 5-step UI workflow. **Corrected 2026-08-07 during execution:** my first pass searched the filesystem only and concluded "never committed." It *was* committed — `3bb29cf`, on the branch `wip/main-preexisting-2026-07-26`, which is pushed to origin but never merged. So the fix is a branch-qualified pointer (`git show wip/main-preexisting-2026-07-26:docs/ui-workflow-stack-handoff.md`), not a dead-link removal, and nothing needs promoting out of `_scratch`. |
 | 2 | Project-structure tree (142–153) contradicts the ship-set section (14–44) | Line 149 says `Deploy-Local.ps1 — build + xcopy deploy for BIMpossible.RevitLink`. Lines 19–21 say the default builds and deploys all seven and "there is no RevitLink-only default any more." I read the script: `$SHIP_SET` at line 32 lists every discipline and `-RevitLinkOnly` (line 39) is an opt-in switch. **The ship-set section is right; the tree is stale.** A session reading top-to-bottom hits the correct version first and the wrong one last. |
-| 3 | Same tree says `BIMpossible.RevitLink/ (git init pending)`; line 50 says "git per-project" | Neither is true. `F:\AI-Dev\Add-Ins` is one git repo on `main` with four live worktrees under `.claude\worktrees\`. Line 84 of this same file already states the correct rule ("One canonical home"). |
+| 3 | Same tree says `BIMpossible.RevitLink/ (git init pending)`; line 50 says "git per-project" | Neither is true. `{repos}\AI-Dev\Add-Ins` is one git repo on `main` with four live worktrees under `.claude\worktrees\`. Line 84 of this same file already states the correct rule ("One canonical home"). |
 | 4 | "Current state: 45 occurrences across 21 files" (77) is not reproducible | See the count section below. |
 | 5 | Superpowers gating (107–110) is dead | Verbatim the section I deleted from BIMpossible in PR #295. `superpowers`, `pr-review-toolkit`, and `plugin-dev` are absent from `~/.claude/plugins/installed_plugins.json`. |
 

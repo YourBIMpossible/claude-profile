@@ -12,10 +12,10 @@ The owner uses the word "routine" for BOTH mechanisms. Do not let the word decid
 
 | If the job needs… | Use | Tool namespace |
 |---|---|---|
-| a local path (`F:\...`, `C:\...`), the owner's live working tree, local Revit/desktop, "**on my PC**", "shows up here", or matches an existing weekly task | **LOCAL scheduled-task** | `mcp__scheduled-tasks__*` |
+| a local path (`{repos}\...`, any drive-letter path), the owner's live working tree, local Revit/desktop, "**on my PC**", "shows up here", or matches an existing weekly task | **LOCAL scheduled-task** | `mcp__scheduled-tasks__*` |
 | ONLY a GitHub repo (fresh clone is fine), no local files, explicitly "in the cloud / claude.ai" | **CLOUD routine** | `/schedule` skill → `RemoteTrigger` |
 
-**Default to LOCAL.** Cloud runs in an isolated Linux container: **no F: drive, no C: drive, no local working tree, no desktop Revit.** A cloud routine pointed at `F:\anything` will fail every time and stop — this is the exact mistake to never repeat. Only go cloud when the owner is explicit AND the target is reachable as a GitHub URL.
+**Default to LOCAL.** Cloud runs in an isolated Linux container: **no local drives, no local working tree, no desktop Revit.** A cloud routine pointed at `{repos}\anything` will fail every time and stop — this is the exact mistake to never repeat. Only go cloud when the owner is explicit AND the target is reachable as a GitHub URL.
 
 If genuinely ambiguous after applying the table, ask ONE question: *"On your PC (local, sees F:\\) or in the cloud (GitHub-only)?"* — nothing else.
 
@@ -31,7 +31,7 @@ Steps:
    - `cronExpression` = recurring, evaluated in **LOCAL time** (not UTC). e.g. `0 9 * * 1` = 9am Mon local.
    - Pick at most one; omit both for manual-only ("Run now").
    - `taskId` kebab-case; `title` in the owner's words; `description` one line.
-   - `prompt` MUST be self-contained: name the absolute repo path (quote paths with spaces, e.g. `F:\Evidence Compiler`), the exact command/skill to run, read-only vs write, and the "if path unreachable, say so and stop" guard for read-only drills.
+   - `prompt` MUST be self-contained: name the absolute repo path (quote paths with spaces, e.g. `{repos}\Evidence Compiler`), the exact command/skill to run, read-only vs write, and the "if path unreachable, say so and stop" guard for read-only drills.
 4. Report: task id, resolved local fire time, "appears in your Scheduled/session list."
 5. To run immediately instead of waiting: `mcp__scheduled-tasks__run_scheduled_task`.
 6. Manage/inspect: `list_scheduled_tasks`, `list_task_runs`, `update_scheduled_task`, `delete_scheduled_task`.
@@ -48,7 +48,7 @@ Invoke the bundled `/schedule` skill (it drives `RemoteTrigger`). Requirements:
 ## Anti-patterns (do not repeat)
 
 - ❌ Mapping the word "routine" → `/schedule` cloud. The owner says "routine" for local jobs too.
-- ❌ Cloud routine with an `F:\...` prompt. It cannot see the drive; it will stop with "not reachable."
+- ❌ Cloud routine with an `{repos}\...` prompt. It cannot see the drive; it will stop with "not reachable."
 - ❌ Claiming this session can't see `F:\` repos. It can — this session runs on the PC. Verify with a quick `ls` before ever saying otherwise.
 - ❌ Computing `fireAt`/cron from remembered time. Always re-fetch `date` first.
 

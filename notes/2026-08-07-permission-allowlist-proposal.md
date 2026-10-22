@@ -12,7 +12,7 @@ lineage, with mutation assessment:
 | Blocked command | Read-only? | Allowlist candidate? |
 |---|---|---|
 | `gh pr view 5` | Yes — GitHub API GET, renders PR | **Yes** |
-| `python F:/AI-Dev/.tools/ctxdex/ctxdex.py stats` | **No** — creates DB file if absent (see caveat) | No — withdrawn per owner ruling |
+| `python {repos}/AI-Dev/.tools/ctxdex/ctxdex.py stats` | **No** — creates DB file if absent (see caveat) | No — withdrawn per owner ruling |
 | `gh pr merge 6 --squash --delete-branch` | **No** — merges + deletes branches | No — correct scrutiny |
 | `git rebase --skip; git status --short \| head; git log --oneline -8` | **No** — rebase mutates history | No — correct scrutiny (compound contained a mutator) |
 
@@ -23,8 +23,8 @@ the right flow.
 
 ## Resolved executables and argument shapes
 
-- **gh** — `C:\Program Files\GitHub CLI\gh` (v2.93.0). `gh pr view [<number|url|branch>] [--json ...] [--comments] [--web]` performs API reads only; `--web` opens a browser (annoying, not mutating). No flag of `pr view` mutates state.
-- **ctxdex** — `py F:\AI-Dev\.tools\ctxdex\ctxdex.py stats [--project NAME]`, Python 3.14 via the `py` launcher. Working dir irrelevant (`--project` defaults to CWD folder name, used only as a DB filename key).
+- **gh** — `%ProgramFiles%\GitHub CLI\gh` (v2.93.0). `gh pr view [<number|url|branch>] [--json ...] [--comments] [--web]` performs API reads only; `--web` opens a browser (annoying, not mutating). No flag of `pr view` mutates state.
+- **ctxdex** — `py {repos}\AI-Dev\.tools\ctxdex\ctxdex.py stats [--project NAME]`, Python 3.14 via the `py` launcher. Working dir irrelevant (`--project` defaults to CWD folder name, used only as a DB filename key).
 
 **Caveat:** `ctxdex stats` calls `sqlite3.connect()`, which **creates an empty
 `data/<project>.db` if absent** — a (harmless, empty-schema) filesystem write.

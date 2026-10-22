@@ -24,7 +24,7 @@ Two generations of the same spec live in this folder:
 
 ## The plan
 
-### Phase 1 — Install as a skill: `F:\Claude-Profile\skills\csuite\`
+### Phase 1 — Install as a skill: `{profile}\skills\csuite\`
 
 ```
 csuite/
@@ -53,7 +53,7 @@ csuite/
 
 ### Phase 3 — Decision memory (lightweight, no telemetry build)
 
-- Create `F:\AI-Dev\BIMpossible_Workspace\decisions\` (cross-repo home, next to WORKFLOW.md).
+- Create `{repos}\AI-Dev\BIMpossible_Workspace\decisions\` (cross-repo home, next to WORKFLOW.md).
 - One file per decision: `TASK-YYYY-NNN.yaml` using the minimum decision record from `decision-memory-and-telemetry.md`.
 - Defer: AI provenance records, outcome telemetry, feedback routing automation. Those belong to the runtime build. The `revisit_trigger` field is the manual stand-in — `/next` can surface overdue revisits later if wanted.
 

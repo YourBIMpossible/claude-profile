@@ -14,7 +14,7 @@ Only three things cost tokens in EVERY session, regardless of use:
 | Item | Size | ~Tokens | Trend since 08-06 |
 |---|---|---|---|
 | Skill **descriptions** (16 personal skills) | 8,769 chars | ~2,200 | +~2,550 chars (new skills) |
-| CLAUDE.md (global 4,916 + F:\AI-Dev 1,751) | 6,667 chars | ~1,700 | ↓ (condense landed) |
+| CLAUDE.md (global 4,916 + {repos}\AI-Dev 1,751) | 6,667 chars | ~1,700 | ↓ (condense landed) |
 | MEMORY.md index | 10,084 chars (56 files) | ~2,500 | growing |
 | **Total standing** | ~25.5 KB | **~6,400** | |
 

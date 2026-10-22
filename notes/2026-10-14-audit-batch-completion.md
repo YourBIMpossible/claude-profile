@@ -4,7 +4,7 @@ Authority: owner chat "GRANT — complete the entire 2026-10-12 audit batch and 
 plus pasted "DURABLE REQUIREMENT — owner-archive-ready audit completion" (2026-10-13 local / 2026-10-14Z).
 Session: "Audit Coordinator [860301]". Batch start: 2026-10-14T01:50:25Z.
 Lane (durable requirement): `claude/grrp-batch-completion`, worktree
-`F:\Claude-Profile\.claude\worktrees\grrp-batch-completion`, from origin/master 8541337.
+`{profile}\.claude\worktrees\grrp-batch-completion`, from origin/master 8541337.
 
 ## Batch endpoint (stated before execution)
 - Scheduled runs: bimpossible-weekly-full-audit 2026-10-12, slop-audit-weekly 2026-10-12.
@@ -17,7 +17,7 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
   denied operations (SEC-A60 `docker compose exec backend pytest`, 10-12 `[Production Deploy]`),
   force-push, admin bypass, foreign branch/worktree deletion, protection edits, owner sign-in.
 - Authority gaps known at start: owner sign-in (SEC-A61, CQ-B62); SEC-A60 denied exec; foreign
-  Stage A commits on F:\Claude-Profile master (owner: Stage A delivery session).
+  Stage A commits on {profile} master (owner: Stage A delivery session).
 - Archive-ready evidence: every inventory item cleared (complete+evidence / duplicate-superseded+
   replacement / inapplicable+reviewed explanation / owner-accepted after recommendation); ledger
   gate valid; queue + mirrors validated; changes merged AND active; behavior verified; alerts
@@ -28,8 +28,8 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
 |---|---|---|---|
 | 0 | Inventory | one deduped checklist (source, evidence, action, owner) in reports | inv-A/inv-B scratch → reports/2026-10-14__audit-batch-inventory.md |
 | 1 | Durable requirement | `grrp.py batch` + docs + 7 regression tests; reviewed; PR merged; active (`where --expect`) | worktree grrp-batch-completion |
-| 2 | Ledger / PR #212 | real ledger gate not `invalid`; PR #212 merged; watchdog alert cause resolved → ack | F:\BIMpossible-Workspace PR #212 |
-| 3 | Queue + mirrors | canonical queue validates; Workspace mirror published | F:\Claude-Tools\state\queue.yaml |
+| 2 | Ledger / PR #212 | real ledger gate not `invalid`; PR #212 merged; watchdog alert cause resolved → ack | {repos}\BIMpossible-Workspace PR #212 |
+| 3 | Queue + mirrors | canonical queue validates; Workspace mirror published | {tools}\state\queue.yaml |
 | 4 | Remaining follow-through | NL-filter, Graphify, context/plugin decisions, behavior checks, worktrees each cleared or owner-listed | inventory rows |
 | 5 | Archive gate | batch manifest check run against this batch; closeout written | grrp.py batch <manifest> |
 
@@ -54,11 +54,11 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
   raised+accepts owner acceptance, bound amendments, record-before-complete): 465 tests pass
   (bootstrap file needs PSModulePath unset when launched from pwsh). PR/merge/activation pending.
 - Phase 0 manifest: drafter done (104 items, 25 OAs, 6 ledgers; plain check incomplete, no
-  validation errors); v3 adaptation + placement in F:\Claude-Tools\reports\grrp pending.
+  validation errors); v3 adaptation + placement in {reports}\grrp pending.
 - Phase 2: deploy 8ccdeec0 verified intact (backend created 2026-10-13T21:12:47Z); PR #212 OPEN/CLEAN,
   merge denied to agent -> owner action. CQ-A60/SLOP-A60 passive: 0 events since deploy.
 - Phase 3: queue patch dry-run OK on a copy (12 items, 293 count); canonical write hook-blocked ->
-  owner runs F:/Claude-Tools/reports/2026-10-14__queue-batch-patch.py; WS mirror PR follows it.
+  owner runs {reports}/2026-10-14__queue-batch-patch.py; WS mirror PR follows it.
 - Phase 4: all agent-executable PRs merged and active (claude-tools 24/25/27/29; Workspace
   210/211/214/215; BIMpossible 874; AddIns 191; claude-profile 44-48, master 7cce801). PR 28 held on
   OA-33 (hook-bypass ratification). Incidents recorded: B-108 hook bypass, B-109 unapproved CPU
@@ -66,7 +66,7 @@ Lane (durable requirement): `claude/grrp-batch-completion`, worktree
 - Phase 5 (close, record 4, 2026-10-14T04:36Z): verdict incomplete / NOT COMPLETE, digest
   EP-7e766a2fddb3, 37 cleared / 72 outstanding (71 blocked_owner, B-086 in_progress), 0 validation
   errors, 0 failed claims; ledger gate L-WFA invalid until PR 212 merges (OA-01). Closeout
-  F:/Claude-Tools/reports/2026-10-14__audit-batch-closeout.md; inventory ..._audit-batch-inventory.md.
+  {reports}/2026-10-14__audit-batch-closeout.md; inventory ..._audit-batch-inventory.md.
 - Phase 6 (revision 2, 2026-10-14T05:14Z, owner directives "NOT COMPLETE assessment" + "AWAY
   EXECUTION"): PR 212 chain finished - independent review APPROVE of head 1bcb60c6, merged 3063437
   under the owner's specific merge approval, merged L-WFA gate complete 0 errors, watchdog alert

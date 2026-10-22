@@ -4,8 +4,8 @@
 **Window:** `219b2a2..a3e15da` (commits after the 2026-10-05 report; HEAD `a3e15da`, merge of PR #35).
 **Code in window:** `skills/review-to-resolution/scripts/grrp.py` (new, 507), `hooks/graphify_hint.py` (+191), `hooks/Show-AuditAlerts.ps1` (new, 87), `hooks/northstar_inject.py`, `hooks/decay_reminder.py`, `hooks/session_closure_audit.py` (prompt/action strings only), `tools/context_weight.py` (+57), and tests: `hooks/tests/test_bootstrap_install.py`, `test_closure_audit_artifact_guidance.py` (new), `test_decay_reminder.py`, `test_graphify_hint.py`, `test_northstar_inject.py`, `skills/review-to-resolution/tests/test_enrollment_rollout.py` (new), `test_review_to_resolution_conformance.py` (new), `tools/tests/test_context_weight.py`. `graphify_hint.py`, `decay_reminder.py` and `Show-AuditAlerts.ps1` were not in the brief's list but changed in the window, so they are covered too.
 
-**Scope note — vendor:** `vendor/evidence-capture/*` and `vendor/evidence-footprints/*` were not audited in depth (audited separately at `F:\Claude-Tools`).
-**Drift note:** all 30 vendored files differ from the `F:\Claude-Tools` HEAD (`8a21f0a`) *blobs*, but only in line endings. They are identical once CR is stripped, and byte-identical to the clean `F:\Claude-Tools` working tree. `vendor/README.md` documents this: the pin is `8a21f0a`, and `vendor/**` is `-text` so CRLF working-tree bytes are stored. The installed `~/.claude/hooks/evidence-capture` and `evidence-footprints` are byte-identical to `vendor/`. **No drift that matters.**
+**Scope note — vendor:** `vendor/evidence-capture/*` and `vendor/evidence-footprints/*` were not audited in depth (audited separately at `{tools}`).
+**Drift note:** all 30 vendored files differ from the `{tools}` HEAD (`8a21f0a`) *blobs*, but only in line endings. They are identical once CR is stripped, and byte-identical to the clean `{tools}` working tree. `vendor/README.md` documents this: the pin is `8a21f0a`, and `vendor/**` is `-text` so CRLF working-tree bytes are stored. The installed `~/.claude/hooks/evidence-capture` and `evidence-footprints` are byte-identical to `vendor/`. **No drift that matters.**
 
 **Result:** 0 CRITICAL · 0 HIGH · 1 MEDIUM · 5 LOW.
 
@@ -63,7 +63,7 @@ This is not a false pass against the code's own rules (obligations are listed as
   - `graphify_hint`: every path sets `skipped`/`emitted`/`error` in its JSONL record. The live log shows the fallback working: 587 UserPromptSubmit suppressions, 46 emits, 27 of them on `FileNotFoundError`, which is logged and injected.
 - **Tested-but-dead:** clean.
   - Every changed hook test loads or executes the repo file under `hooks/`. The installed `~/.claude/hooks` copies of `graphify_hint`, `northstar_inject`, `decay_reminder`, `session_closure_audit` and `Show-AuditAlerts.ps1` are SHA-256-identical to HEAD, and all are registered in the live `settings.json` (graphify_hint on SessionStart, SubagentStart and UserPromptSubmit).
-  - The grrp tests import or execute `skills/review-to-resolution/scripts/grrp.py`. Production callers (`/review-all`, `/close`, `review-to-resolution`) invoke `~/.claude/skills/.../grrp.py`, and `~/.claude/skills` is a junction to `F:\Claude-Profile\skills`, so it is the same file.
+  - The grrp tests import or execute `skills/review-to-resolution/scripts/grrp.py`. Production callers (`/review-all`, `/close`, `review-to-resolution`) invoke `~/.claude/skills/.../grrp.py`, and `~/.claude/skills` is a junction to `{profile}\skills`, so it is the same file.
   - `test_bootstrap_install.py`'s new vendor tests assert byte-identity of the installed units and run the installed `capture.py dry`.
 - **Not run:** `test_bootstrap_install.py`, which needs a full sandbox bootstrap under PowerShell; it was reviewed statically only. `Show-AuditAlerts.ps1` was reviewed statically only.
 
