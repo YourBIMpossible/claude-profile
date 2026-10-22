@@ -12,14 +12,21 @@ import time
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "ctxdex_autoindex.py")
-CTXDEX = "F:/Claude-Tools/ctxdex/ctxdex.py"
+PROFILE = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROFILE / "tools"))
+import machine_config  # noqa: E402
+
+# The real ctxdex in this machine's claude-tools clone (CTXDEX_DIR overrides, as for the hook).
+import os  # noqa: E402
+CTXDEX_DIR = Path(os.environ.get("CTXDEX_DIR") or Path(machine_config.load().get("tools_root") or "missing-claude-tools") / "ctxdex")
+CTXDEX = (CTXDEX_DIR / "ctxdex.py").as_posix()
 PROJECT = "ctxdex-hook-selftest"
 # Isolated synthetic scratch root under the OS temp dir — the self-test writes
 # fixture files at f"{CWD}-*.txt", so this MUST be a writable, throwaway location
-# outside any real tree (previously F:/AI-Dev/_scratch, which both created an
+# outside any real tree (previously {repos}/AI-Dev/_scratch, which both created an
 # operative dependency on the retired AI-Dev root and littered that archive).
 CWD = str(Path(tempfile.gettempdir()) / "ctxdex-hook-selftest")
-DB_PATH = Path(f"F:/Claude-Tools/ctxdex/data/{PROJECT}.db")
+DB_PATH = CTXDEX_DIR / "data" / f"{PROJECT}.db"
 
 results = []
 
@@ -188,14 +195,14 @@ def run_checks() -> list:
     check("7a non-Bash tool_name exits 0", p.returncode == 0)
     check("7b non-Bash tool_name never indexed", len(rows) == 0, f"rows={rows}")
 
-    self_index_payload = dict(base_payload, tool_input={"command": "python F:/Claude-Tools/ctxdex/ctxdex.py search \"foo\""})
+    self_index_payload = dict(base_payload, tool_input={"command": f"python {CTXDEX} search \"foo\""})
     p = run_hook(self_index_payload)
     rows = db_rows("bash-output")
     check("7c command invoking ctxdex itself is skipped (no recursive self-index)", len(rows) == 0, f"rows={rows}")
     clean_db()
 
     # backslash path + bare-name-at-start variants must also trip the guard
-    self_index_bs_payload = dict(base_payload, tool_input={"command": r"python F:\Claude-Tools\ctxdex\ctxdex.py stats"})
+    self_index_bs_payload = dict(base_payload, tool_input={"command": "python " + CTXDEX.replace("/", "\\") + " stats"})
     p = run_hook(self_index_bs_payload)
     rows = db_rows("bash-output")
     check("7d backslash-path ctxdex.py invocation is skipped", len(rows) == 0, f"rows={rows}")
@@ -224,13 +231,13 @@ def run_checks() -> list:
     check("7g prose mention of 'ctxdex' (not an invocation) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
     clean_db()
 
-    mention_grep_payload = dict(base_payload, tool_input={"command": "grep -r ctxdex F:/Claude-Profile"})
+    mention_grep_payload = dict(base_payload, tool_input={"command": f"grep -r ctxdex {PROFILE.as_posix()}"})
     p = run_hook(mention_grep_payload)
     rows = db_rows("bash-output")
     check("7h grepping FOR 'ctxdex' (not invoking it) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
     clean_db()
 
-    mention_read_own_source_payload = dict(base_payload, tool_input={"command": "cat F:/Claude-Profile/hooks/ctxdex_autoindex.py"})
+    mention_read_own_source_payload = dict(base_payload, tool_input={"command": f"cat {PROFILE.as_posix()}/hooks/ctxdex_autoindex.py"})
     p = run_hook(mention_read_own_source_payload)
     rows = db_rows("bash-output")
     check("7i reading this hook's own source (ctxdex_autoindex.py, not ctxdex.py) is NOT suppressed", len(rows) >= 1, f"rows={rows}")

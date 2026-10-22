@@ -46,8 +46,8 @@
 ### Task 1: Populate CLAUDE.md and skills/
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\CLAUDE.md`
-- Create: `F:\AI-Dev\claude-profile\skills\*` (copies of all folders under `C:\Users\Zeria\.claude\skills`)
+- Create: `{repos}\AI-Dev\claude-profile\CLAUDE.md`
+- Create: `{repos}\AI-Dev\claude-profile\skills\*` (copies of all folders under `~\.claude\skills`)
 
 **Interfaces:**
 - Produces: the canonical `CLAUDE.md` content and skill set that `bootstrap.ps1` (Task 5) references via `$repoRoot\CLAUDE.md` and `$repoRoot\skills`.
@@ -56,7 +56,7 @@
 
 ```markdown
 # next
-- **next** (`~/.claude/skills/next/SKILL.md`) - "where is this at / what do I do now". Cross-repo portfolio board + ranked, evidence-verified production queue from the durable item store at `F:\AI-Dev\.tools\state`. Ranks by critical path (transitive `unblocks` cone). Modes: bare = board · `<target>` = drill · `<target> sync` = reconcile · `<target> init` = first derivation · `all deep` = re-derive from scratch. Trigger: `/next [target] [sync|init|deep]`
+- **next** (`~/.claude/skills/next/SKILL.md`) - "where is this at / what do I do now". Cross-repo portfolio board + ranked, evidence-verified production queue from the durable item store at `{repos}\AI-Dev\.tools\state`. Ranks by critical path (transitive `unblocks` cone). Modes: bare = board · `<target>` = drill · `<target> sync` = reconcile · `<target> init` = first derivation · `all deep` = re-derive from scratch. Trigger: `/next [target] [sync|init|deep]`
 When the user types `/next`, invoke the Skill tool with `skill: "next"` before doing anything else.
 Auto-trigger: also invoke it unprompted when the user asks where a project stands, what to work on next, what's blocking production, or what's left to finish — even if the skill isn't named. It is READ-ONLY on project repos: it never fixes, commits, pushes, hunts defects, or edits the owner-maintained PHASE-STATUS/WAVE-STATUS ledgers. Code-correctness questions route to `/audit` or `/revit-functionality-audit`; UX questions to `/revit-tool-review`.
 
@@ -70,7 +70,7 @@ When the user types `/revit-viewport-standardization`, invoke the Skill tool wit
 Auto-trigger: also invoke it unprompted whenever a task involves aligning, standardizing, or repairing Revit viewports, sector/sheet-set plan views, grid bubbles, annotation crops, or viewport titles through mcp-server-for-revit — even if the skill isn't named.
 
 # revit-functionality-audit
-- **revit-functionality-audit** (`~/.claude/skills/revit-functionality-audit/SKILL.md`) - code-correctness audit for the Revit ADD-INS repo (F:\AI-Dev\Add-Ins) — the Add-Ins counterpart of /audit (which covers only the BIMpossible web repo). Incremental since the last report in audits/ by default; "complete" = full. Build both TFMs first; findings are hypotheses until verified; hunts "reports success, quietly did nothing". Trigger: `/revit-functionality-audit [complete]`
+- **revit-functionality-audit** (`~/.claude/skills/revit-functionality-audit/SKILL.md`) - code-correctness audit for the Revit ADD-INS repo ({repos}\AI-Dev\Add-Ins) — the Add-Ins counterpart of /audit (which covers only the BIMpossible web repo). Incremental since the last report in audits/ by default; "complete" = full. Build both TFMs first; findings are hypotheses until verified; hunts "reports success, quietly did nothing". Trigger: `/revit-functionality-audit [complete]`
 When the user types `/revit-functionality-audit`, invoke the Skill tool with `skill: "revit-functionality-audit"` before doing anything else.
 Auto-trigger: also invoke it unprompted when the user asks to audit the Add-Ins code/behavior/correctness (not UX). UX/usability requests go to revit-tool-review instead; that skill routes its CODE findings here.
 
@@ -88,8 +88,8 @@ tasks under ~30 minutes: skip the planning chain and execute directly.
 Two Claude sessions must NEVER share one physical git checkout. Each concurrent session gets
 its own worktree INSIDE the repo: `git worktree add .claude\worktrees\<lane> -b <branch> origin/main`
 (run from the repo root). Sibling folders (`../<repo>-<lane>`) are RETIRED 2026-07-24 — they
-sprawled into 9+ mystery folders under F:\AI-Dev; canonical rules incl. "every pushed branch
-gets a PR (draft ok)" live in F:\AI-Dev\BIMpossible_Workspace\WORKFLOW.md. A shared working tree
+sprawled into 9+ mystery folders under {repos}\AI-Dev; canonical rules incl. "every pushed branch
+gets a PR (draft ok)" live in {repos}\AI-Dev\BIMpossible_Workspace\WORKFLOW.md. A shared working tree
 makes sessions' uncommitted edits intermingle in the same files (proven 2026-07-02 on
 BIMpossible — required `git add -p` hunk surgery to unmix, plus care to not sweep another
 session's WIP into your commit). Rules: never `git checkout`/switch branches in a tree another
@@ -100,8 +100,8 @@ in a possibly-shared tree, `git diff --cached --stat` and confirm no foreign fil
 - [ ] **Step 2: Copy the current skills folders into the repo**
 
 ```powershell
-$src = "C:\Users\Zeria\.claude\skills"
-$dst = "F:\AI-Dev\claude-profile\skills"
+$src = "~\.claude\skills"
+$dst = "{repos}\AI-Dev\claude-profile\skills"
 New-Item -ItemType Directory -Path $dst -Force | Out-Null
 Copy-Item -Path (Join-Path $src '*') -Destination $dst -Recurse -Force
 ```
@@ -110,16 +110,16 @@ Copy-Item -Path (Join-Path $src '*') -Destination $dst -Recurse -Force
 
 Run:
 ```powershell
-(Get-ChildItem "F:\AI-Dev\claude-profile\skills" -Directory).Count
-Test-Path "F:\AI-Dev\claude-profile\skills\graphify\SKILL.md"
-Select-String -Path "F:\AI-Dev\claude-profile\CLAUDE.md" -Pattern "^# next$" -Quiet
+(Get-ChildItem "{repos}\AI-Dev\claude-profile\skills" -Directory).Count
+Test-Path "{repos}\AI-Dev\claude-profile\skills\graphify\SKILL.md"
+Select-String -Path "{repos}\AI-Dev\claude-profile\CLAUDE.md" -Pattern "^# next$" -Quiet
 ```
 Expected: `19`, then `True`, then `True`.
 
 - [ ] **Step 4: Commit**
 
 ```powershell
-Set-Location "F:\AI-Dev\claude-profile"
+Set-Location "{repos}\AI-Dev\claude-profile"
 git add CLAUDE.md skills
 git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Populate CLAUDE.md and skills from current live config"
 ```
@@ -129,7 +129,7 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Populate
 ### Task 2: settings.template.json
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\settings.template.json`
+- Create: `{repos}\AI-Dev\claude-profile\settings.template.json`
 
 **Interfaces:**
 - Produces: two literal tokens that Task 5 (`bootstrap.ps1`) replaces by exact substring match: `"__ADDITIONAL_DIRECTORIES__"` (quoted, sits inside the `additionalDirectories` array) and `"__HOOK_SCRIPT_PATH__"` (quoted, sits inside the hook `args` array). Both tokens must appear exactly once, with their surrounding quotes, for the substring replacement in Task 5 to work.
@@ -208,7 +208,7 @@ Note: `model` carries over the current live value (`claude-sonnet-4-6`) unchange
 - [ ] **Step 2: Verify — template is valid JSON and contains both tokens exactly once**
 
 ```powershell
-$raw = Get-Content -Raw "F:\AI-Dev\claude-profile\settings.template.json"
+$raw = Get-Content -Raw "{repos}\AI-Dev\claude-profile\settings.template.json"
 $null = $raw | ConvertFrom-Json
 ([regex]::Matches($raw, '"__ADDITIONAL_DIRECTORIES__"')).Count
 ([regex]::Matches($raw, '"__HOOK_SCRIPT_PATH__"')).Count
@@ -227,7 +227,7 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add sett
 ### Task 3: mcp/claude_desktop_config.template.json
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\mcp\claude_desktop_config.template.json`
+- Create: `{repos}\AI-Dev\claude-profile\mcp\claude_desktop_config.template.json`
 
 **Interfaces:**
 - Produces: one literal, unquoted token `__REVIT_MCP_ENTRY__` placed directly after the closing `}` of the `mcp-server-for-revit` entry (no comma in the template — the replacement supplies its own leading comma when present, or an empty string when absent, so the result is valid JSON either way).
@@ -248,11 +248,11 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add sett
 - [ ] **Step 2: Verify — template is valid JSON (empty token) and stays valid with a sample substitution**
 
 ```powershell
-$raw = Get-Content -Raw "F:\AI-Dev\claude-profile\mcp\claude_desktop_config.template.json"
+$raw = Get-Content -Raw "{repos}\AI-Dev\claude-profile\mcp\claude_desktop_config.template.json"
 $null = ($raw.Replace('__REVIT_MCP_ENTRY__', '')) | ConvertFrom-Json
 $sample = ',
     "autodesk-revit-2027": {
-      "command": "C:/Program Files/Autodesk/Revit 2027 MCP Server Read-Tools Technical Preview/Autodesk.RevitMcpServer.Stdio.exe",
+      "command": "%ProgramFiles%/Autodesk/Revit 2027 MCP Server Read-Tools Technical Preview/Autodesk.RevitMcpServer.Stdio.exe",
       "args": []
     }'
 $null = ($raw.Replace('__REVIT_MCP_ENTRY__', $sample)) | ConvertFrom-Json
@@ -271,8 +271,8 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add Clau
 ### Task 4: .gitignore and README.md
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\.gitignore`
-- Create: `F:\AI-Dev\claude-profile\README.md`
+- Create: `{repos}\AI-Dev\claude-profile\.gitignore`
+- Create: `{repos}\AI-Dev\claude-profile\README.md`
 
 **Interfaces:**
 - None — these are standalone, referenced only by humans and git itself.
@@ -298,7 +298,7 @@ Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claud
 
 ### Normal path (GitHub reachable)
 
-1. Clone this repo anywhere. A workspace root like `F:\AI-Dev\claude-profile` if you
+1. Clone this repo anywhere. A workspace root like `{repos}\AI-Dev\claude-profile` if you
    have one, otherwise `%USERPROFILE%\claude-profile` works just as well.
 2. Run bootstrap from inside the clone:
    `powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1`
@@ -341,8 +341,8 @@ Revit's MCP server installed.
 - [ ] **Step 3: Verify**
 
 ```powershell
-Test-Path "F:\AI-Dev\claude-profile\.gitignore"
-Test-Path "F:\AI-Dev\claude-profile\README.md"
+Test-Path "{repos}\AI-Dev\claude-profile\.gitignore"
+Test-Path "{repos}\AI-Dev\claude-profile\README.md"
 ```
 Expected: `True`, `True`.
 
@@ -358,7 +358,7 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add .git
 ### Task 5: bootstrap.ps1
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\bootstrap.ps1`
+- Create: `{repos}\AI-Dev\claude-profile\bootstrap.ps1`
 
 **Interfaces:**
 - Consumes: `settings.template.json` and `mcp/claude_desktop_config.template.json` (Tasks 2-3), their exact token names.
@@ -427,12 +427,12 @@ if (-not (Test-Path -LiteralPath $skillsPath)) {
 }
 
 # 3. Detect Revit
-$revitExePath = 'C:\Program Files\Autodesk\Revit 2027 MCP Server Read-Tools Technical Preview\Autodesk.RevitMcpServer.Stdio.exe'
+$revitExePath = '%ProgramFiles%\Autodesk\Revit 2027 MCP Server Read-Tools Technical Preview\Autodesk.RevitMcpServer.Stdio.exe'
 $hasRevit = Test-Path -LiteralPath $revitExePath
 Write-Host "Revit MCP server detected: $hasRevit"
 
 # 4. Detect workspace root and known project directories
-$candidateRoots = @('F:\AI-Dev', (Join-Path $env:USERPROFILE 'AI-Dev'))
+$candidateRoots = @('{repos}\AI-Dev', (Join-Path $env:USERPROFILE 'AI-Dev'))
 $workspaceRoot = $candidateRoots | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 $additionalDirs = @()
 if ($workspaceRoot) {
@@ -513,7 +513,7 @@ Write-Host "Verify with: /context (check CLAUDE.md and skills load) and /plugins
 This is the safe way to test bootstrap logic without touching the real `~/.claude/` on this machine yet:
 
 ```powershell
-$testHome = "F:\AI-Dev\claude-profile\.dry-run-test"
+$testHome = "{repos}\AI-Dev\claude-profile\.dry-run-test"
 Remove-Item -Recurse -Force $testHome -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $testHome | Out-Null
 
@@ -522,7 +522,7 @@ $oldAppData = $env:APPDATA
 $env:USERPROFILE = $testHome
 $env:APPDATA = (Join-Path $testHome 'AppData\Roaming')
 try {
-    powershell -NoProfile -ExecutionPolicy Bypass -File "F:\AI-Dev\claude-profile\bootstrap.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "{repos}\AI-Dev\claude-profile\bootstrap.ps1"
 } finally {
     $env:USERPROFILE = $oldUserProfile
     $env:APPDATA = $oldAppData
@@ -534,12 +534,12 @@ Get-Content "$testHome\.claude\CLAUDE.md" -Raw
 $null = (Get-Content -Raw "$testHome\.claude\settings.json") | ConvertFrom-Json
 $null = (Get-Content -Raw "$testHome\AppData\Roaming\Claude\claude_desktop_config.json") | ConvertFrom-Json
 ```
-Expected: `True`; the stub line starting with `@F:/AI-Dev/claude-profile/CLAUDE.md`; `Junction`; no error from either `ConvertFrom-Json` call. Overriding `$env:APPDATA` alongside `$env:USERPROFILE` matters — `claude_desktop_config.json` is written under `$env:APPDATA`, which does not follow `$env:USERPROFILE` automatically. Without this, "dry run" would silently write to the real Desktop app config on this machine.
+Expected: `True`; the stub line starting with `@{repos}/AI-Dev/claude-profile/CLAUDE.md`; `Junction`; no error from either `ConvertFrom-Json` call. Overriding `$env:APPDATA` alongside `$env:USERPROFILE` matters — `claude_desktop_config.json` is written under `$env:APPDATA`, which does not follow `$env:USERPROFILE` automatically. Without this, "dry run" would silently write to the real Desktop app config on this machine.
 
 - [ ] **Step 3: Clean up the dry-run directory**
 
 ```powershell
-Remove-Item -Recurse -Force "F:\AI-Dev\claude-profile\.dry-run-test"
+Remove-Item -Recurse -Force "{repos}\AI-Dev\claude-profile\.dry-run-test"
 ```
 
 - [ ] **Step 4: Commit**
@@ -554,7 +554,7 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add boot
 ### Task 6: hooks/session-start-pull.ps1
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\hooks\session-start-pull.ps1`
+- Create: `{repos}\AI-Dev\claude-profile\hooks\session-start-pull.ps1`
 
 **Interfaces:**
 - Consumes: nothing from other scripts — it locates its own repo root via `Split-Path -Parent $PSScriptRoot`.
@@ -600,19 +600,19 @@ exit 0
 - [ ] **Step 2: Verify — run it directly and confirm it always exits 0**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "F:\AI-Dev\claude-profile\hooks\session-start-pull.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "{repos}\AI-Dev\claude-profile\hooks\session-start-pull.ps1"
 $LASTEXITCODE
-Get-Content "F:\AI-Dev\claude-profile\hooks\last-run.log" -Tail 1
+Get-Content "{repos}\AI-Dev\claude-profile\hooks\last-run.log" -Tail 1
 ```
 Expected: `0`, then a log line ending in `pull ok: ...` (since GitHub isn't configured as a remote yet at this point in the plan, this may instead read `pull failed (exit 1): ...` or `pull threw: ...` mentioning no upstream configured — either way, the key check is the exit code is `0` and a log line was written).
 
 - [ ] **Step 3: Verify — simulate an unreachable remote and confirm it still exits 0**
 
 ```powershell
-Set-Location "F:\AI-Dev\claude-profile"
+Set-Location "{repos}\AI-Dev\claude-profile"
 git remote add test-offline-check https://192.0.2.1/nonexistent.git
 git -c remote.pushDefault=test-offline-check fetch test-offline-check 2>&1 | Out-Null
-powershell -NoProfile -ExecutionPolicy Bypass -File "F:\AI-Dev\claude-profile\hooks\session-start-pull.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "{repos}\AI-Dev\claude-profile\hooks\session-start-pull.ps1"
 $LASTEXITCODE
 git remote remove test-offline-check
 ```
@@ -630,7 +630,7 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add Sess
 ### Task 7: export-zip.ps1
 
 **Files:**
-- Create: `F:\AI-Dev\claude-profile\export-zip.ps1`
+- Create: `{repos}\AI-Dev\claude-profile\export-zip.ps1`
 
 **Interfaces:**
 - Produces: a `claude-profile-<timestamp>.zip` file, default location `%USERPROFILE%\Desktop`, containing the full repo working tree including `.git/`.
@@ -668,11 +668,11 @@ Write-Host "This ZIP includes .git/ - extracting it produces a working clone wit
 - [ ] **Step 2: Verify — produce a zip to a throwaway location and confirm .git/ is inside**
 
 ```powershell
-$testOut = "F:\AI-Dev\claude-profile\.dry-run-zip-test"
+$testOut = "{repos}\AI-Dev\claude-profile\.dry-run-zip-test"
 Remove-Item -Recurse -Force $testOut -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $testOut | Out-Null
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "F:\AI-Dev\claude-profile\export-zip.ps1" -OutputDirectory $testOut
+powershell -NoProfile -ExecutionPolicy Bypass -File "{repos}\AI-Dev\claude-profile\export-zip.ps1" -OutputDirectory $testOut
 
 $zip = Get-ChildItem $testOut -Filter "claude-profile-*.zip" | Select-Object -First 1
 $extractPath = Join-Path $testOut 'extracted'
@@ -686,7 +686,7 @@ Expected: `True`, `True`, `True`.
 - [ ] **Step 3: Clean up**
 
 ```powershell
-Remove-Item -Recurse -Force "F:\AI-Dev\claude-profile\.dry-run-zip-test"
+Remove-Item -Recurse -Force "{repos}\AI-Dev\claude-profile\.dry-run-zip-test"
 ```
 
 - [ ] **Step 4: Commit**
@@ -707,7 +707,7 @@ git -c user.name="Zeriah" -c user.email="zeriah.t@gmail.com" commit -m "Add expo
 - [ ] **Step 1: Confirm the repo is self-consistent — every template token has a corresponding replacement in bootstrap.ps1**
 
 ```powershell
-$bootstrap = Get-Content -Raw "F:\AI-Dev\claude-profile\bootstrap.ps1"
+$bootstrap = Get-Content -Raw "{repos}\AI-Dev\claude-profile\bootstrap.ps1"
 $bootstrap.Contains('__ADDITIONAL_DIRECTORIES__')
 $bootstrap.Contains('__HOOK_SCRIPT_PATH__')
 $bootstrap.Contains('__REVIT_MCP_ENTRY__')
@@ -717,7 +717,7 @@ Expected: `True`, `True`, `True`.
 - [ ] **Step 2: Confirm nothing on the excluded list is tracked in the repo**
 
 ```powershell
-Set-Location "F:\AI-Dev\claude-profile"
+Set-Location "{repos}\AI-Dev\claude-profile"
 git ls-files | Select-String -Pattern '\.credentials\.json$|^\.claude\.json$|(^|/)cache/|(^|/)debug/|(^|/)telemetry/|(^|/)sessions/|(^|/)shell-snapshots/|(^|/)session-env/|(^|/)backups/'
 ```
 Expected: no output (no matches) — confirms none of the Global Constraints' excluded paths were ever committed. This is a cheap defense-in-depth check on top of the fact that every task above used targeted `git add <specific files>`, never a broad `git add -A` or `git add .`.
@@ -725,11 +725,11 @@ Expected: no output (no matches) — confirms none of the Global Constraints' ex
 - [ ] **Step 3: Full dry run — clone-equivalent to a throwaway folder, bootstrap it, verify generated files, without touching real `~/.claude/`**
 
 ```powershell
-$testHome = "F:\AI-Dev\claude-profile\.e2e-test-home"
-$testRepo = "F:\AI-Dev\claude-profile\.e2e-test-repo"
+$testHome = "{repos}\AI-Dev\claude-profile\.e2e-test-home"
+$testRepo = "{repos}\AI-Dev\claude-profile\.e2e-test-repo"
 Remove-Item -Recurse -Force $testHome, $testRepo -ErrorAction SilentlyContinue
 
-git clone "F:\AI-Dev\claude-profile" $testRepo
+git clone "{repos}\AI-Dev\claude-profile" $testRepo
 
 New-Item -ItemType Directory -Path $testHome | Out-Null
 $oldUserProfile = $env:USERPROFILE
@@ -762,11 +762,11 @@ Expected: at least one log line, script exits without throwing.
 - [ ] **Step 5: Clean up all throwaway state**
 
 ```powershell
-Remove-Item -Recurse -Force "F:\AI-Dev\claude-profile\.e2e-test-home"
-Remove-Item -Recurse -Force "F:\AI-Dev\claude-profile\.e2e-test-repo"
+Remove-Item -Recurse -Force "{repos}\AI-Dev\claude-profile\.e2e-test-home"
+Remove-Item -Recurse -Force "{repos}\AI-Dev\claude-profile\.e2e-test-repo"
 ```
 
 - [ ] **Step 6: Report status — explicitly stop here**
 
-Do not run `bootstrap.ps1` against the real `C:\Users\Zeria\.claude\` on this machine as part of this plan. That is a deliberate, separate, later action the user takes once ready — per the spec's testing philosophy ("dry-run first... before touching the real `~/.claude/`") and because this session is itself running under the current live config. Summarize what was built and verified, and that flipping Home Base to it live, pushing the repo to GitHub, and testing on a second physical machine remain explicit next steps outside this plan.
+Do not run `bootstrap.ps1` against the real `~\.claude\` on this machine as part of this plan. That is a deliberate, separate, later action the user takes once ready — per the spec's testing philosophy ("dry-run first... before touching the real `~/.claude/`") and because this session is itself running under the current live config. Summarize what was built and verified, and that flipping Home Base to it live, pushing the repo to GitHub, and testing on a second physical machine remain explicit next steps outside this plan.
 

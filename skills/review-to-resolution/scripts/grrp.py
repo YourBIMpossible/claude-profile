@@ -38,9 +38,23 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_DIR = Path(os.environ.get("GRRP_LEDGER_DIR", r"F:\Claude-Tools\reports\grrp"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))  # the profile clone's tools/
+import machine_config  # noqa: E402
 
-DEFAULT_QUEUE = Path(os.environ.get("GRRP_QUEUE", r"F:\Claude-Tools\state\queue.yaml"))
+
+def _machine_path(key: str, *parts: str) -> Path:
+    """<machine config key>/<parts> (tools/machine_config.py); a placeholder that does not
+    exist when the key is unset, so a missing root surfaces as a missing path."""
+    try:
+        base = machine_config.load().get(key) or ""
+    except machine_config.ConfigError:
+        base = ""
+    return Path(base, *parts) if base else Path(machine_config.config_path().parent, f"unset-{key}", *parts)
+
+
+DEFAULT_DIR = Path(os.environ.get("GRRP_LEDGER_DIR") or _machine_path("reports_dir", "grrp"))
+
+DEFAULT_QUEUE = Path(os.environ.get("GRRP_QUEUE") or _machine_path("tools_root", "state", "queue.yaml"))
 # /next statuses meaning the queue has taken responsibility (parked/dropped = refused).
 QUEUE_ACCEPTING = {"ready", "blocked_dep", "blocked_external", "blocked_owner", "in_flight", "landed", "live"}
 

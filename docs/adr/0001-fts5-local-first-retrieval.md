@@ -16,7 +16,7 @@ push is toward embeddings, vector DBs, and hosted memory services.
 ## Decision
 
 Retrieval is a single-file, stdlib-only SQLite FTS5 CLI (`ctxdex`, its own local
-git repo at `F:\AI-Dev\.tools\ctxdex`): porter + trigram indexes merged by RRF,
+git repo at `{repos}\AI-Dev\.tools\ctxdex`): porter + trigram indexes merged by RRF,
 all-terms boost, per-project DBs. Fully local — nothing leaves the machine.
 Embeddings, vector stores, graph memory, and hosted services are deferred until
 FTS retrieval demonstrates a specific, recorded failure (missed-query log first;

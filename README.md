@@ -3,97 +3,102 @@
 Canonical source of truth for Claude Code configuration across machines.
 GitHub is authoritative. ZIP and Google Drive are transfer-only fallbacks.
 Full design and rationale: docs/superpowers/specs/2026-07-27-multi-machine-claude-profile-design.md
+(machine-agnostic layout: docs/adr/0005-hooks-run-from-the-clone.md).
+
+**Machine-agnostic.** Clone it into any folder on any drive, on Windows, Linux or macOS. No
+committed file names a machine path; CI (`.github/workflows/machine-paths.yml`) fails a PR
+that adds one. Paths come from three places only:
+
+| Source | Gives | Used for |
+|---|---|---|
+| the clone's own location | `{profile}` | hooks, skills, the CLAUDE.md stub |
+| the home folder | `~`, `~/.claude` | settings, logs, the machine config |
+| `~/.claude/profile-machine.json` (local, never committed) | `{repos}`, `{tools}`, `{reports}`, `{mailbox}`, the Python name, extra session folders | anything that cannot be derived |
+
+Bootstrap writes the machine config with auto-detected defaults: `{repos}` is the folder
+that holds a claude-tools clone (beside this clone, else `~/src`, `~/workspace`, `~/repos`,
+`~`), `{tools}` that clone, `{reports}` its `reports/`. `{mailbox}` (the Claude Collab mailbox)
+is user-defined and may stay empty; the CLAUDE.md routing rule for it applies only when set.
+Edit the file, or re-run bootstrap with flags, to change a value. `python tools/machine_config.py`
+prints the resolved roots; every session also gets them from the session-start hook.
 
 ## Before you install (read this once)
 
-**Prerequisites**: Claude Code installed and signed in; Git installed; GitHub
-credentials configured on this machine (for the clone path below).
+**Prerequisites**: Claude Code installed and signed in; Git; Python 3.9+ (`python` on
+Windows, `python3` elsewhere); GitHub credentials for the clone (`gh auth login`).
 
 **Bootstrap replaces these live files.** It backs each up first, as
-`<original-name>.pre-profile-backup-<timestamp>`, and never touches the backups
-afterward - to undo, delete what bootstrap wrote and rename the backup back.
+`<original-name>.pre-profile-backup-<timestamp>`, and never deletes anything - to undo,
+delete what bootstrap wrote and rename the backup back.
 
 | Replaced | Becomes |
 |---|---|
-| `~/.claude/CLAUDE.md` | one-line pointer at this repo |
-| `~/.claude/skills` | moved aside, replaced by a junction into this repo |
-| `~/.claude/settings.json` | merged with `settings.template.json`: the template's hooks replace the ones it owns, `permissions.additionalDirectories` gains the detected project folders, missing plugin and marketplace entries are added, and every other existing key (permissions rules, `autoMode`, `env`, your own values) is kept. An empty or unparseable file is refused, never replaced; a changed file is backed up first |
-| `~/.claude/hooks/*` | pinned copies of `hooks/*.py`, `*.ps1` and `closure_audit_repos.json`; a differing installed copy is backed up first |
-| `%APPDATA%\Claude\claude_desktop_config.json` | generated from the template in `mcp/` |
-| REA (`rea-agents` npm package) | installed globally and registered as the user-scope Claude Code MCP server `rea` by `tools/Install-Rea.ps1` (step 6; `-SkipRea` to skip). Needs Node 22.19+/24.11+/26+; missing Node warns and skips. The matching skill is `skills/reverse-engineer-anything` |
+| `~/.claude/profile-machine.json` | the machine config above (stored values are kept on re-runs; flags override) |
+| `~/.claude/CLAUDE.md` | one-line pointer at this clone's CLAUDE.md |
+| `~/.claude/skills` | moved aside, replaced by a junction (Windows) / symlink into this clone |
+| `~/.claude/settings.json` | merged with `settings.template.json`: hooks are registered to run from this clone (the template's hooks replace the ones it owns, including copies earlier bootstraps pinned under `~/.claude/hooks`), `permissions.additionalDirectories` gains the configured folders, missing plugin, marketplace and `env` entries are added, and every other existing key is kept. An empty or unparseable file is refused, never replaced |
+| Claude Desktop config (Windows: `%APPDATA%\Claude\claude_desktop_config.json`) | only its `mcpServers` value is replaced from `mcp/`; every other byte is kept |
+| REA (`rea-agents` npm package, Windows via `bootstrap.ps1`) | installed globally and registered as the user-scope MCP server `rea` by `tools/Install-Rea.ps1` (`-SkipRea` to skip). Needs Node 22.19+/24.11+/26+ |
 
-Note that skills are *replaced, not merged*: any skill that exists only on this
-machine ends up in the moved-aside backup folder, not in the new junction. If you
-want to keep it, commit it to this repo first.
+Skills are *replaced, not merged*: a skill that exists only on this machine ends up in the
+moved-aside backup folder. Commit it to this repo first if you want to keep it.
 
-**Close Claude Code and Claude Desktop before running bootstrap** - a running
-instance can rewrite `~/.claude/settings.json` after bootstrap generates it, or
-hold a lock on `~/.claude/skills`. Re-running bootstrap is safe if that happens.
+Close Claude Code and Claude Desktop before running bootstrap; re-running it is safe.
 
 ## Install on a new machine
 
-### Normal path (GitHub reachable)
+1. Clone to any folder **without spaces in its path** (see "Why no spaces" below):
+   `git clone https://github.com/YourBIMpossible/claude-profile.git <folder>/claude-profile`
+   Putting it beside your other clones (and claude-tools) lets bootstrap detect `{repos}`.
+2. Check the plan, then install - from inside the clone:
+   - Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DryRun`, then without `-DryRun`
+   - Linux / macOS: `python3 bootstrap.py --dry-run`, then without `--dry-run`
 
-1. Clone this repo to a path with **no spaces in it** - `F:\Claude-Profile`,
-   `C:\claude-profile`, or similar. `%USERPROFILE%\claude-profile` is fine too, but
-   only if your Windows username has no space in it (`C:\Users\First Last\...`
-   does not work). See "Why no spaces" below; bootstrap refuses rather than
-   configure a machine that would silently misbehave.
-   `git clone https://github.com/YourBIMpossible/claude-profile.git C:\claude-profile`
+   Options (both entry points): `--repos-root` / `-ReposRoot`, `--tools-root` / `-ToolsRoot`,
+   `--collab-mailbox` / `-CollabMailbox` (empty = not used; asked interactively when unset),
+   `--no-collab-mailbox`, `--yes` (never prompt).
+3. Restart Claude Code (and Claude Desktop on Windows). Verify with `/context` (CLAUDE.md
+   and skills load) and `/plugin list`; the first session shows "Machine roots for this profile".
 
-   (Private repo - the machine needs to be signed in to GitHub as an account
-   with access. `gh auth login` is the easiest way.)
-2. Run bootstrap from inside the clone:
-   `powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1`
-3. Restart **Claude Code** (picks up CLAUDE.md, skills, settings) and **Claude
-   Desktop** (picks up the MCP config - it is the only consumer of that file).
-   Verify with `/context` (CLAUDE.md and skills should show as loaded) and
-   `/plugin list`.
+The installer is needed only for: a new machine, a moved clone, a changed root, or a
+repaired skills link / CLAUDE.md stub. A machine bootstrapped before the machine-agnostic
+layout runs it **once** to move its hooks from `~/.claude/hooks` copies to the clone.
 
 ### ZIP fallback (GitHub not reachable right now)
 
-1. Extract the latest ZIP snapshot (from Google Drive or however it was handed to
-   you) to the same kind of location as above.
-2. Run bootstrap exactly as in the normal path above - it behaves identically
-   either way, there is no separate "zip mode".
-3. As soon as this machine has network and git credentials, run `git pull` inside
-   the extracted copy once to catch up with GitHub. The ZIP includes `.git/`, so
-   the remote comes with it - provided the repo it was exported from had an
-   `origin` (export-zip warns loudly if it did not, in which case the ZIP is a
-   one-time file transfer and you should re-clone from GitHub when you can).
+Extract the latest ZIP snapshot to a folder without spaces and run bootstrap exactly as
+above. As soon as the machine has network and git credentials, `git pull` once inside the
+extracted copy (the ZIP includes `.git/`; export-zip warns when it had no `origin`).
 
 ## Keeping a machine current (pulling)
 
-A SessionStart hook attempts a silent `git pull --ff-only` in this repo when a
-session starts, resumes, or is cleared. It never blocks session start and fails
-quietly if offline - a best-effort refresh, not a guarantee of freshness. Check
-`hooks/last-run.log` to see what it actually did, or run `git pull` here yourself
-any time to force a refresh.
+Merging to the default branch is the rollout. At every session start
+`hooks/session_start.py` (registered first on SessionStart, any clone location):
+1. runs `git pull --ff-only` in this clone - the first of several concurrent sessions pulls,
+   the rest log `pull skipped (in flight)`; offline or non-fast-forward just logs and goes on;
+2. re-applies the settings merge, so a changed `settings.template.json` reaches
+   `~/.claude/settings.json` without bootstrap (the previous file is kept as
+   `settings.json.pre-profile-sync`). Changed hook code runs at once; a changed registration
+   applies from the next session, because Claude Code reads registrations at session start;
+3. prints the machine roots, plus a warning when this clone is not on its default branch or
+   has uncommitted hook/tool changes (hooks run from it - do feature work in a worktree).
 
-A SessionStart pull may update the profile after instructions have already been
-captured. After policy updates, verify the policy version loaded by the session;
-reading the updated file on disk alone does not prove it was loaded at startup.
+Record: `~/.claude/hooks/last-run.log`. Opt-outs: `CLAUDE_PROFILE_PULL=0`, `CLAUDE_PROFILE_SYNC=0`.
 
 ## Changing your setup (pushing)
 
-This repo is the source of truth, so changes belong here and get committed and
-pushed - not made locally on one machine.
+This repo is the source of truth: change it here, commit, push, merge.
 
-- **Skills**: `~/.claude/skills` is a junction into this repo, so editing a skill
-  (including through Claude Code itself) edits the repo's working copy directly.
-  Commit and push it.
-- **Instructions**: edit this repo's `CLAUDE.md`. Do not edit
-  `~/.claude/CLAUDE.md` - it is a generated one-line pointer and bootstrap
-  rewrites it.
-- **Settings**: edit `settings.template.json` here, then re-run `bootstrap.ps1`.
-  The template's hooks are authoritative; its other values are defaults that only
-  fill keys a machine does not have yet, so a change made in-app (e.g. via
-  `/config`) is kept, and a changed template default does not override it.
-  MCP servers come from `mcp/claude_desktop_config.template.json`, whose
-  `mcpServers` block replaces the installed one.
-
-Then on your other machines, the SessionStart hook (or a manual `git pull`)
-picks it up.
+- **Skills**: `~/.claude/skills` links into this clone, so a skill edit is a working-tree
+  edit here. Commit and push it.
+- **Instructions**: edit this repo's `CLAUDE.md` (never `~/.claude/CLAUDE.md`, a generated
+  pointer). Name paths by root (`{reports}`, `{repos}\X`), never by drive.
+- **Hooks and settings**: edit `hooks/` or `settings.template.json`. The template's hooks are
+  authoritative; its other values are defaults that only fill keys a machine does not have,
+  so an in-app change (e.g. `/config`) is kept. MCP servers come from
+  `mcp/claude_desktop_config.template.json`.
+- **Machine-specific values** belong in `~/.claude/profile-machine.json`, never in the repo.
+  Run `python .github/scripts/check_machine_paths.py` before pushing (CI runs it too).
 
 ## Publishing a new ZIP snapshot
 
@@ -117,7 +122,7 @@ Claude Code's `@` import fails *silently* when the path contains a space - the
 file is simply never loaded, with no error or warning, and there is no quoting
 or escaping syntax that works (anthropics/claude-code#56927, closed as not
 planned). A machine in that state looks fully configured while none of your
-instructions apply. `bootstrap.ps1` checks for this and refuses up front rather
+instructions apply. `bootstrap.py` checks for this and refuses up front rather
 than leave you with a silently broken setup.
 
 Only the CLAUDE.md import is affected - the skills junction and the generated

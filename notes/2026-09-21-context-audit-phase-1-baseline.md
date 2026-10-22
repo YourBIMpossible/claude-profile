@@ -15,7 +15,7 @@ v1 reported one flattened total and derived MEMORY.md "by subtraction"
 1. **MEMORY.md is now measured directly**, per project, never derived.
 2. **Two independent scenario totals** — `global_session` (loads in every
    session, everywhere) and `bimpossible_session` (global_session + what
-   additionally loads inside `F:\BIMpossible`) — so BIMpossible's own
+   additionally loads inside `{repos}\BIMpossible`) — so BIMpossible's own
    CLAUDE.md/MEMORY.md are no longer charged to every session.
 3. **A full coverage inventory**, not just "15 personal skills measured,
    everything else invisible." Every source is one of MEASURED / UNMEASURED
@@ -32,7 +32,7 @@ per scenario.
 
 - `global_session` — every session, everywhere.
 - `bimpossible_session` — global_session plus BIMpossible's own CLAUDE.md
-  and MEMORY.md, which load only inside `F:\BIMpossible`.
+  and MEMORY.md, which load only inside `{repos}\BIMpossible`.
 
 ## 3. Source inventory
 
@@ -43,7 +43,7 @@ not-applicable.
 |---|---|---|---|
 | global memory index (Claude-Profile MEMORY.md) | 15,272 (97 lines) | 61% of 25,000 | global_session (corrected §12; originally listed as "both") |
 | BIMpossible project memory index | 14,827 (59 lines) | 59% of 25,000 | bimpossible_session |
-| project CLAUDE.md (F:\BIMpossible\CLAUDE.md) | 12,202 | 61% of 20,000 | bimpossible_session |
+| project CLAUDE.md ({repos}\BIMpossible\CLAUDE.md) | 12,202 | 61% of 20,000 | bimpossible_session |
 | global CLAUDE.md (wrapper 763B + profile 8,399B) | 9,162 | 46% of 20,000 | both |
 | personal skill descriptions (15 skills) | 4,558 | 46% of 10,000 | both |
 | enabled-plugin skill descriptions (1 skill / 6 plugins) | 338 | 6% of 6,000 | both |
@@ -62,7 +62,7 @@ run.
 | `global_session` | 29,330 B (~7,332 tok) | 52% | **CLEAN** |
 | `bimpossible_session` | 41,087 B (~10,271 tok) | 73% | **CLEAN** (exceeds the 32,000B design target — informational only, not a gate) |
 
-A session working inside `F:\BIMpossible` does not start over any real
+A session working inside `{repos}\BIMpossible` does not start over any real
 budget line: it exceeds only the informational 32KB design target (73% of
 the 56KB hard ceiling, well under the 45KB warning line). The original
 101%/FAIL reading in this section — kept below in §12 as superseded, not
@@ -164,7 +164,7 @@ Per the task's explicit boundary, the following were located and read for
 context but are unmodified and out of scope for this or any Phase-1 work:
 
 - **Canonical global autonomy policy and stop-gate list** —
-  `F:\Claude-Profile\CLAUDE.md`'s "Stop only for: …" block (irreversible
+  `{profile}\CLAUDE.md`'s "Stop only for: …" block (irreversible
   actions, anything leaving the machine, guarded files, another session's
   live work, scope creep, mission-lock changes).
 - **Authorization/approval boundaries** — the harness system prompt's
@@ -178,10 +178,10 @@ context but are unmodified and out of scope for this or any Phase-1 work:
   PreToolUse hook on Write|Edit.
 - **Tenant/hub isolation** — not evaluated in this pass; no scope in the
   measured estate touches it.
-- **Active user preferences / unresolved decisions** — the `F:\AI-Dev`
+- **Active user preferences / unresolved decisions** — the `{repos}\AI-Dev`
   deferred-legacy silent-by-default gate; the file-link-delivery rule
   fixed 2026-09-21 (repo CLAUDE.md + memory; the live hook copy at
-  `C:\Users\Zeria\.claude\hooks\decay_reminder.py` still needs the same
+  `~\.claude\hooks\decay_reminder.py` still needs the same
   fix applied directly — flagged separately, not part of Phase 1); any
   north-star `status:` lifecycle lines (none present in this repo).
 
@@ -199,8 +199,8 @@ document — it starts from a separate, explicit go-ahead.
 
 Before any Phase 2 memory cleanup could be justified by §4's original
 FAIL reading, this pass checked the one assumption that reading rested
-on: that `F:\Claude-Profile\MEMORY.md` actually loads into a Claude Code
-session rooted at `F:\BIMpossible`. It does not begin, and did not
+on: that `{profile}\MEMORY.md` actually loads into a Claude Code
+session rooted at `{repos}\BIMpossible`. It does not begin, and did not
 perform, Phase 2 remediation itself.
 
 **Verdict: disproven.** Claude-Profile's MEMORY.md does not load into a
@@ -212,11 +212,11 @@ loading were found, and the memory system's actual scoping mechanism was
 positively identified:
 
 1. **No config names the file as global/user memory.**
-   `C:\Users\Zeria\.claude\CLAUDE.md` (the always-loaded wrapper) contains
-   exactly one `@`-import — `@F:/Claude-Profile/CLAUDE.md` — and no
+   `~\.claude\CLAUDE.md` (the always-loaded wrapper) contains
+   exactly one `@`-import — `@{profile}/CLAUDE.md` — and no
    reference to any `MEMORY.md` path anywhere in its text.
-   `F:\Claude-Profile\CLAUDE.md` (what that import pulls in) likewise
-   contains no reference to any `MEMORY.md` path. `F:\BIMpossible\CLAUDE.md`
+   `{profile}\CLAUDE.md` (what that import pulls in) likewise
+   contains no reference to any `MEMORY.md` path. `{repos}\BIMpossible\CLAUDE.md`
    contains zero `@`-import lines and zero occurrences of the string
    "MEMORY" (checked directly, `grep -n MEMORY` / `grep -n '^@'`, both
    empty). `~/.claude/settings.json` contains zero occurrences of the
@@ -240,7 +240,7 @@ positively identified:
 4. **A documented local runtime contract does exist — and it establishes
    the opposite of cross-loading.** This very session's own system prompt
    (the harness's "auto memory" section) states the memory system lives at
-   `C:\Users\Zeria\.claude\projects\<encoded-session-cwd>\memory\` — keyed
+   `~\.claude\projects\<encoded-session-cwd>\memory\` — keyed
    to *this session's own* encoded working directory, not to a fixed
    global path. That is confirmed structurally: `~/.claude/projects/`
    holds one directory per distinct encoded working directory this

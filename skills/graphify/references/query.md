@@ -68,7 +68,7 @@ the graph, applies the reranker gate, and writes exactly one query-log record st
 place in either arm. Run it from any directory, no `cd` first; forward slashes work in both
 bash and PowerShell:
 ```bash
-python "F:/Claude-Profile/skills/graphify/scripts/query_reranked.py" "QUESTION" --graph "<resolved graph.json>" --budget 2000
+python "{profile}/skills/graphify/scripts/query_reranked.py" "QUESTION" --graph "<resolved graph.json>" --budget 2000
 # or: ... --dfs --budget 3000
 ```
 Omit `--graph` only when cwd resolves on its own (`scripts/resolve_graph.py`); the wrapper

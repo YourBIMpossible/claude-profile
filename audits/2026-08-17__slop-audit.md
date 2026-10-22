@@ -4,7 +4,7 @@
 - **Window:** INCREMENTAL — since `audits/2026-08-10__slop-audit.md` (window end `679e06f`). Commits `679e06f..7759f5c` (2 commits: `0017f5a` scope-governor v3 multi north-star, `7759f5c` docs generalization).
 - **Scope:** silent-catch census, counter-integrity, tested-but-dead. Read-only, findings only.
 - **In-window executable code:** `hooks/northstar_inject.py` (+218/-81, rewritten to v3), `hooks/protect_paths_gate.py` (+14/-?). Everything else in the window is markdown (`CLAUDE.md`, `LONG-TASK-HARNESS.md`, `docs/northstar-multi-design.md`, `hooks/README.md`, `templates/*`) — excluded from the three checks.
-- **Install drift:** none. `hooks/northstar_inject.py` and `hooks/protect_paths_gate.py` are byte-identical to the pinned copies in `C:\Users\Zeria\.claude\hooks` (SHA256 `16FD2297…` / `679A2051…`), and this session's own `SessionStart` output carried the v3 `<northstar-setup>` text — v3 is live.
+- **Install drift:** none. `hooks/northstar_inject.py` and `hooks/protect_paths_gate.py` are byte-identical to the pinned copies in `~\.claude\hooks` (SHA256 `16FD2297…` / `679A2051…`), and this session's own `SessionStart` output carried the v3 `<northstar-setup>` text — v3 is live.
 
 ## Verdict
 
@@ -40,7 +40,7 @@ No test changed in the window, so nothing is tested-but-dead. `hooks/tests/` con
 ### MED-2 — the injected text overclaims the gate: it is registered on `Write|Edit` only, so a Bash write is not intercepted — VERIFIED
 
 - **Where:** `hooks/northstar_inject.py:198-199` ("You cannot edit these files (a gate blocks Write/Edit on NORTHSTAR*.md; only *.draft.md is writable)") and `:202-204` ("Never abandon, merge, pause, or close a mission on your own - pausing/closing/switching is the human editing that file's 'status:' line"). Also the `<northstar-status>` branch at `:182-183` ("you cannot - a gate blocks NORTHSTAR*.md").
-- **What:** `C:\Users\Zeria\.claude\settings.json` registers `protect_paths_gate.py` under `PreToolUse` with `"matcher": "Write|Edit"` (verified by reading lines 100-111). Bash is not gated. A `Set-Content` / `sed` / `mv` through the Bash or PowerShell tool reaches any `NORTHSTAR*.md` untouched.
+- **What:** `~\.claude\settings.json` registers `protect_paths_gate.py` under `PreToolUse` with `"matcher": "Write|Edit"` (verified by reading lines 100-111). Bash is not gated. A `Set-Content` / `sed` / `mv` through the Bash or PowerShell tool reaches any `NORTHSTAR*.md` untouched.
 - **Why it matters in v3 specifically:** this bypass is pre-existing, but v2's mission lifecycle required renaming/replacing a whole file. v3 moved the lifecycle onto a **one-line `status:` field inside the file**, so a single one-line write now pauses or closes a mission — and the in-window text newly asserts the human is the only one who can do that. `northstar_inject.py`'s own docstring says "Never overclaim what this hook does" (SCOPE HONESTY, the C3 lesson); this is that overclaim.
 - **Verification step (RUN):** read the `PreToolUse` matcher in `settings.json` — done, it is `Write|Edit`. Not exercised further: writing to a real `NORTHSTAR*.md` to prove the bypass would mutate a locked mission file, which is out of bounds for a read-only audit.
 - **Shape of a fix (not applied):** either widen the gate to cover Bash/PowerShell writes touching protected paths, or soften the claim to what the control actually does ("a gate blocks the Write and Edit tools on these files") so the honesty note in the docstring stays true.

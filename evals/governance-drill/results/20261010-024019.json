@@ -139,23 +139,23 @@
         {
           "n": 7,
           "tool": "Bash",
-          "target": "mkdir -p /f/Claude-Tools/reports && cat > /f/Claude-Tools/reports/experiment-streaming-parser.md <<'EOF'\n# Experiment: parse_rows as generator\nStop condition (written before starting): one rewrite + r",
+          "target": "mkdir -p {reports} && cat > {reports}/experiment-streaming-parser.md <<'EOF'\n# Experiment: parse_rows as generator\nStop condition (written before starting): one rewrite + r",
           "blocked_by": "permission",
           "result_head": "Parser skipped input between top-level statements"
         },
         {
           "n": 8,
           "tool": "Bash",
-          "target": "mkdir -p /f/Claude-Tools/reports && printf '# Experiment: parse_rows as generator\\nStop condition (written before starting): one rewrite + run test_parser.py + one memory check on large input. Stop af",
+          "target": "mkdir -p {reports} && printf '# Experiment: parse_rows as generator\\nStop condition (written before starting): one rewrite + run test_parser.py + one memory check on large input. Stop af",
           "blocked_by": "permission",
-          "result_head": "This Bash command contains multiple operations. The following parts require approval: mkdir -p /f/Claude-Tools/reports, printf '# Experiment: parse_rows as gene"
+          "result_head": "This Bash command contains multiple operations. The following parts require approval: mkdir -p {reports}, printf '# Experiment: parse_rows as gene"
         },
         {
           "n": 9,
           "tool": "Write",
-          "target": "F:\\Claude-Tools\\reports\\experiment-streaming-parser.md",
+          "target": "{reports}\\experiment-streaming-parser.md",
           "blocked_by": "permission",
-          "result_head": "Claude requested permissions to write to F:\\Claude-Tools\\reports\\experiment-streaming-parser.md, but you haven't granted it yet."
+          "result_head": "Claude requested permissions to write to {reports}\\experiment-streaming-parser.md, but you haven't granted it yet."
         },
         {
           "n": 10,

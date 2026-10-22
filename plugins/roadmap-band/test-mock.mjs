@@ -12,7 +12,7 @@ async function makeHost(over = {}) {
   const hooks = {}
   const timers = []
   const store = over.store || new Map()
-  const env = { now: 1_800_000_000_000, cwd: 'F:/repo', sid: 's1', files: { 'WORKLOG.md': 1_799_999_000_000 }, messages: [], usageFail: false, invalid: 0 }
+  const env = { now: 1_800_000_000_000, cwd: '/fixture/repo', sid: 's1', files: { 'WORKLOG.md': 1_799_999_000_000 }, messages: [], usageFail: false, invalid: 0 }
   Object.assign(env, over.env || {})
   const $ = {
     fs: {
@@ -83,7 +83,7 @@ const LINE = 'Roadmap: Pilot [active] · acceptance: 3/5 verified (pilot) · nex
   ok('5 anchor newer than line -> UNVERIFIED source changed', r.includes('UNVERIFIED') && r.includes('source changed'), r)
   r = await h.render(true)
   ok('6 working overrides everything', r.includes('WORKING'), r)
-  h.env.cwd = 'F:/other'
+  h.env.cwd = '/fixture/other'
   r = await h.render()
   ok('7 cwd change -> UNVERIFIED directory changed', r.includes('directory changed'), r)
 }

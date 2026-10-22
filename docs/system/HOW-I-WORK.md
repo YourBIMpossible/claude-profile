@@ -1,6 +1,6 @@
 # How I Work
 
-> **Relocated 2026-08-22** — moved from `F:\AI-Dev\system\` to `F:\Claude-Profile\docs\system\` (AI-Dev extraction). `F:\AI-Dev` is now the owner's personal sandbox; project roots are `F:\BIMpossible*`, `F:\Claude-Profile`, `F:\Claude-Tools`, `F:\AI-Dashboard`, `F:\AI-Brain-Data`. Historical `F:\AI-Dev\...` paths below translate via `RENAMES.md`.
+> **Relocated 2026-08-22** — moved from `{repos}\AI-Dev\system\` to `{profile}\docs\system\` (AI-Dev extraction). `{repos}\AI-Dev` is now the owner's personal sandbox; project roots are `{repos}\BIMpossible*`, `{profile}`, `{tools}`, `{repos}\AI-Dashboard`, `{repos}\AI-Brain-Data`. Historical `{repos}\AI-Dev\...` paths below translate via `RENAMES.md`.
 
 ## Background
 - Electrical engineering firm context.
@@ -12,7 +12,7 @@
 ## Technical comfort
 - Strong in C# (Revit API).
 - Less comfortable with web development — learning by doing.
-- Claude Code for actual code in `F:\BIMpossible/`.
+- Claude Code for actual code in `{repos}\BIMpossible/`.
 - Cowork for documentation, planning, and project organization.
 
 ## What I want from this workspace
@@ -29,4 +29,4 @@
 
 ---
 
-This file is a personal profile, not a rules doc. For workspace-wide working style (foundations-first, complete-product-over-MVP, optimization priority, audit output format), see `F:\Claude-Profile\docs\system\WORKING-STYLE.md`.
+This file is a personal profile, not a rules doc. For workspace-wide working style (foundations-first, complete-product-over-MVP, optimization priority, audit output format), see `{profile}\docs\system\WORKING-STYLE.md`.

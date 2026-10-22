@@ -6,7 +6,7 @@ it fall out of context forever. This hook indexes it into ctxdex under
 source="bash-output" as a pure side effect. Unlike context_budget.py, it
 never rewrites the tool result — it only reads the same payload and writes
 to ctxdex's own SQLite DB. Query side: ctxdex search --source bash-output
-(see F:/Claude-Profile/skills/ctxdex/SKILL.md).
+(see skills/ctxdex/SKILL.md in this repo).
 
 Contract (same PostToolUse payload as context_budget.py — see that script's
 header for the schema note, verified against the real binary, not just
@@ -62,9 +62,27 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-CTXDEX_DIR = Path("F:/Claude-Tools/ctxdex")
+
+
+def _ctxdex_dir() -> Path:
+    """CTXDEX_DIR overrides; else <tools_root>/ctxdex from the machine config
+    (tools/machine_config.py). An unset or unreadable config yields a path that
+    does not exist, which the preflight below reports once and skips."""
+    if os.environ.get("CTXDEX_DIR"):
+        return Path(os.environ["CTXDEX_DIR"])
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+        import machine_config
+        tools = machine_config.load().get("tools_root") or ""
+    except Exception:
+        tools = ""
+    return Path(tools) / "ctxdex" if tools else Path.home() / ".claude" / "no-claude-tools-clone" / "ctxdex"
+
+
+CTXDEX_DIR = _ctxdex_dir()
 MIN_BYTES = 100 * 1024
-LOG_PATH = Path(__file__).with_name("ctxdex_autoindex.log")
+# Runtime state stays under ~/.claude/hooks, never in the clone the hook runs from.
+LOG_PATH = Path.home() / ".claude" / "hooks" / "ctxdex_autoindex.log"
 
 # --- secret-safety gates ------------------------------------------------------
 # Command gate: "env"/"printenv"/"set" only count as a command TOKEN (start of
@@ -102,6 +120,7 @@ _OUTPUT_PATTERNS = [
 def _logger() -> logging.Logger:
     log = logging.getLogger("ctxdex_autoindex")
     if not log.handlers:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         h = RotatingFileHandler(LOG_PATH, maxBytes=512_000, backupCount=2, encoding="utf-8")
         h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         log.addHandler(h)

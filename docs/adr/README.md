@@ -20,6 +20,7 @@ substrate. One decision per file, numbered, short.
 - [0002](0002-defer-context-budget-automation.md) — Context-budget automation deferred; ctxdex is artifact retrieval, not context management
 - [0003](0003-context-repair-superpowers-file-links-northstar.md) — Superpowers disabled persistently; CLAUDE.md owns one stateless file-path rule; NorthStar nudge follows assume-and-proceed
 - [0004](0004-northstar-owner-approved-edits.md) — North-star files become owner-approved edits via the gate's approval prompt (supersedes 0003's human-only edit rule)
+- [0005](0005-hooks-run-from-the-clone.md) — Machine-agnostic profile: named roots, one local machine config, hooks run from the clone (supersedes hooks/README.md C1)
 
 ## Template
 

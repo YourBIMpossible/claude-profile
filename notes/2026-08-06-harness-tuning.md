@@ -7,11 +7,11 @@ queue of things this session deliberately did NOT handle.
 ## Shipped (commit 1a32b36, local only — not pushed)
 
 - `LONG-TASK-HARNESS.md` — phases, anchor docs, checkpoints, session lifecycle, intake
-  discipline. Triggered by a pointer line in `F:\AI-Dev\CLAUDE.md`.
+  discipline. Triggered by a pointer line in `{repos}\AI-Dev\CLAUDE.md`.
 - `skills/close` — on-demand closeout audit (`/close status` read-only, `/close` executes).
 - `skills/tdd` — replaces the uninstalled superpowers TDD skill.
 - 10 design/brand skills parked to `parked-skills/` (~0.8k/session).
-- `F:\AI-Dev\CLAUDE.md` — act-then-report default, four CONFIRM gates, ~10-line report
+- `{repos}\AI-Dev\CLAUDE.md` — act-then-report default, four CONFIRM gates, ~10-line report
   cap, deliverables-to-files, context-discipline bullet, anti-wander bullet.
 - `settings.json` — `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 150000 → 200000.
 - Memories: `context-slimdown-2026-08-06`, `long-task-harness-adopted`,

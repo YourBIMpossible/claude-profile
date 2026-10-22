@@ -142,11 +142,11 @@ class HookIO(unittest.TestCase):
         self.assertNotIn("delegate", text)
 
     def test_command_is_shell_neutral_and_needs_no_cd(self):
-        # 2026-09-29 acceptance run: a session ran `cd F:\...` in Git Bash, the
+        # 2026-09-29 acceptance run: a session ran `cd <drive>:\...` in Git Bash, the
         # backslashes were eaten and the first query failed; the retry worked.
         _, out = run_hook({"hook_event_name": "SessionStart", "cwd": str(self.web)})
         cmd_line = next(l.strip() for l in self.ctx(out, "SessionStart").splitlines()
-                        if l.strip().startswith("python "))
+                        if l.strip().startswith(hint.PYTHON_CMD + " "))
         self.assertNotIn("\\", cmd_line)
         self.assertNotIn("cd ", cmd_line)
         self.assertIn("no `cd`", self.ctx(out, "SessionStart"))

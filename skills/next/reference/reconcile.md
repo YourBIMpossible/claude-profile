@@ -31,7 +31,7 @@ Read cheapest and most trustworthy first. Stop early if the delta is empty.
    records. This is what separates `landed` from `live`.
 3. **Session-close-out ledgers** — `BIMpossible_PHASE-STATUS.md`, `BIMpossible_WAVE-STATUS.md`, and
    whatever `ledgers:` the registry names. Written by each session's own close-out when it ships
-   wave-worthy work (`F:\BIMpossible\CLAUDE.md` § Session close-out — wave ledger), not by `sync`.
+   wave-worthy work (`{repos}\BIMpossible\CLAUDE.md` § Session close-out — wave ledger), not by `sync`.
    **Judgment source, never verification source.** A ledger claim becomes `verification.level:
    claimed` until machine evidence confirms it.
 4. **Audit reports, build logs, decision logs** — for items and gates the ledgers missed.
@@ -61,8 +61,8 @@ off, new gates in ledger rows, audit findings that block production, un-run veri
 or commit, probe the combined index:
 
 ```bash
-python F:/Claude-Tools/state/queue_store.py --known-pr <repo>#<N>     # exit 0 = known, 2 = unknown
-python F:/Claude-Tools/state/queue_store.py --known-commit <sha>
+python {tools}/state/queue_store.py --known-pr <repo>#<N>     # exit 0 = known, 2 = unknown
+python {tools}/state/queue_store.py --known-commit <sha>
 ```
 
 A PR represented only in `queue-archive.yaml` is **known** — never re-create it as a new active
@@ -97,15 +97,15 @@ condition the per-project ledgers lose.
 2. **Claim check** — for every item about to be written, if `owner` is set to a different
    session's identifier, skip writing that item and report it `OWNED BY <owner>` instead
    (`reference/item-model.md` § Claiming). Write everything else normally.
-3. Write `queue.yaml` in the live store (`F:\Claude-Tools\state`), then validate both tiers:
-   `python F:/Claude-Tools/state/queue_store.py` (must print OK, exit 0). Archive-eligible
+3. Write `queue.yaml` in the live store (`{tools}\state`), then validate both tiers:
+   `python {tools}/state/queue_store.py` (must print OK, exit 0). Archive-eligible
    records (item-model.md "Store hygiene and archiving") may be moved to `queue-archive.yaml`
    in the same pass; keep the watermark block structured values only — sync narrative goes in
    the commit message, not the file.
 4. Regenerate `QUEUE.md` deterministically — never hand-render it:
 
    ```bash
-   python F:/Claude-Tools/state/render_queue.py --generated-on <today> --check   # expect CHECK OK after step-4 write
+   python {tools}/state/render_queue.py --generated-on <today> --check   # expect CHECK OK after step-4 write
    ```
 
    `render_queue.py` (no flags) writes `QUEUE.md`; `--check` re-derives and byte-compares without
@@ -113,7 +113,7 @@ condition the per-project ledgers lose.
    ship the mismatch.
 5. Advance watermarks for successfully-read projects only.
 6. **Publish the mirror (Option B, 2026-08-08).** The workspace repo carries a committed mirror at
-   `F:\BIMpossible-Workspace\.tools\state`. Copy the regenerated `queue.yaml` + `QUEUE.md`
+   `{repos}\BIMpossible-Workspace\.tools\state`. Copy the regenerated `queue.yaml` + `QUEUE.md`
    (and any changed deterministic tooling — `render_queue.py`, `queue_store.py`, `projects.yaml`)
    into the mirror and commit **both together**
    through the normal workspace path — `Push-And-Verify.ps1` (PowerShell), never Bash git, never a
@@ -128,7 +128,7 @@ condition the per-project ledgers lose.
 
    **The mirror is a disposable, read-only DATA snapshot — never a second definition of the skill.**
    Global skill logic, instructions, heuristics, references, and templates have exactly one canonical
-   home: the global profile (`F:\Claude-Profile\skills\next`). A repo may hold generated *queue
+   home: the global profile (`{profile}\skills\next`). A repo may hold generated *queue
    snapshots* for offline reading; it must never hold an authoritative or executable mirror of `/next`
    behavior. This publish path copies `queue.yaml`/`QUEUE.md` (data) plus the deterministic tooling
    that regenerates and validates the view (`render_queue.py`, `queue_store.py`) — nothing that
@@ -140,13 +140,13 @@ condition the per-project ledgers lose.
    **Provenance headers (required on the published copies, so a snapshot can never be mistaken for
    config):**
    - The published `queue.yaml` copy is stamped with this block at the top — added to the *mirror
-     copy only*, because the canonical `queue.yaml` in `F:\Claude-Tools\state` is the hand-editable
+     copy only*, because the canonical `queue.yaml` in `{tools}\state` is the hand-editable
      source and must NOT carry a "do not edit" banner:
 
      ```yaml
      # GENERATED — DO NOT EDIT
      # Producer: global ~/.claude/skills/next
-     # Canonical skill home: F:\Claude-Profile\skills\next
+     # Canonical skill home: {profile}\skills\next
      # This file is a repository-local queue snapshot, not skill configuration.
      ```
    - The published `QUEUE.md` carries its provenance through `render_queue.py`'s own generated banner,

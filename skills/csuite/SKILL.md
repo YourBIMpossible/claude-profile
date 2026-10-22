@@ -95,7 +95,7 @@ Persistent decision memory is deferred pending separate authorization.
 No decision-record directory is part of the active /csuite workflow.
 docs/decision-memory-and-telemetry.md documents a future schema only.
 Candidate non-repository location, parked and not to be created:
-F:\Claude-Tools\state\decisions\
+{tools}\state\decisions\
 ```
 
 ## Fast path

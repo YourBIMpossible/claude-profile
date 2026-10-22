@@ -33,7 +33,7 @@ Design (see also notes/2026-09-21-context-audit-review.md §4):
     inspectable," not a scan failure.
   - Two independent scenario totals: global_session (loads in every
     session everywhere) and bimpossible_session (global_session + what
-    additionally loads inside F:\\BIMpossible). BIMpossible-only content
+    additionally loads inside {repos}\\BIMpossible). BIMpossible-only content
     is never charged to global_session.
   - Scenario totals are TELEMETRY, not a gate: the 32 KB design target and
     the 45 KB / 56 KB reference lines are this tool's own policy numbers,
@@ -75,8 +75,21 @@ HOME = Path.home()
 # fixture paths and never touch the real ~/.claude or repo files.
 SKILLS_DIR = HOME / ".claude" / "skills"
 WRAPPER_CLAUDE_MD = HOME / ".claude" / "CLAUDE.md"
-GLOBAL_CLAUDE_MD = Path("F:/Claude-Profile/CLAUDE.md")
-BIMPOSSIBLE_CLAUDE_MD = Path("F:/BIMpossible/CLAUDE.md")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import machine_config  # noqa: E402
+
+GLOBAL_CLAUDE_MD = machine_config.PROFILE_ROOT / "CLAUDE.md"
+
+
+def _bimpossible_claude_md() -> Path:
+    try:
+        repos = machine_config.load()["repos_root"]
+    except machine_config.ConfigError:
+        repos = str(machine_config.detect_repos_root())
+    return Path(repos) / "BIMpossible" / "CLAUDE.md"
+
+
+BIMPOSSIBLE_CLAUDE_MD = _bimpossible_claude_md()
 PROJECTS_DIR = HOME / ".claude" / "projects"
 # Claude Code keys each project's memory by an encoded form of its working
 # directory. These two are the fixed anchors this tool tracks: the "home"
@@ -396,7 +409,7 @@ def run_scan(*,
         ))
 
     # ---- global CLAUDE.md = ~/.claude/CLAUDE.md wrapper + the @-imported
-    # F:\Claude-Profile\CLAUDE.md it pulls in. Both load in every session.
+    # {profile}\CLAUDE.md it pulls in. Both load in every session.
     wb, werr = _read_bytes(wrapper_claude_md)
     pb, perr = _read_bytes(global_claude_md)
     if werr or perr:
@@ -441,7 +454,7 @@ def run_scan(*,
     # only, not SCENARIOS. Verified 2026-09-21 (pre-Phase-2 load-model
     # check): Claude Code's memory system is keyed per encoded session cwd
     # (~/.claude/projects/<encoded-cwd>/memory/MEMORY.md) — a session
-    # rooted at F:\BIMpossible reads F--BIMpossible's own MEMORY.md, never
+    # rooted at {repos}\BIMpossible reads that folder's own MEMORY.md, never
     # Claude-Profile's. No @import, hook, or settings.json entry injects
     # Claude-Profile's MEMORY.md content into a BIMpossible session; see
     # notes/2026-09-21-context-audit-phase-1-baseline.md §12 for the

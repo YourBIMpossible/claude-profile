@@ -24,7 +24,19 @@ import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
-RECALL_DIR = Path(r"F:\Claude-Tools\graphify\recall")
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))  # the profile clone's tools/
+import machine_config  # noqa: E402
+
+
+def _tools_root() -> Path:
+    """The claude-tools clone from the machine config (tools/machine_config.py)."""
+    tools = machine_config.load().get("tools_root")
+    if not tools:
+        raise SystemExit("claude-tools clone not configured: set tools_root in " + str(machine_config.config_path()))
+    return Path(tools)
+
+
+RECALL_DIR = _tools_root() / "graphify" / "recall"
 sys.path.insert(0, str(RECALL_DIR))
 
 import measure_recall as mr  # noqa: E402

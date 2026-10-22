@@ -1,7 +1,7 @@
 """Drop-in wrapper for `graphify query` that optionally reranks candidates with BM25.
 
 Productionizes the reranker evaluated in
-F:\\Claude-Tools\\graphify\\recall\\rerank_bm25.py (see RERANK-EXPERIMENT.md):
+{tools}/graphify/recall/rerank_bm25.py (see RERANK-EXPERIMENT.md):
 BM25 k1=1.5 b=0.75 over tokenize(label + source_file), stable sort so a
 0.0-vs-0.0 tie keeps graphify's own BFS order, truncated to the same node
 count graphify's own budget would have shown. That method is reused here
@@ -54,8 +54,10 @@ import argparse
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -64,9 +66,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve_graph  # noqa: E402
 
-GRAPHIFY = Path(
-    r"C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\Scripts\graphify.exe"
-)
+def _find_graphify() -> Path:
+    """GRAPHIFY_EXE overrides; else `graphify` on PATH; else the graphify script installed
+    beside this interpreter (scripts dir, then the per-user scripts dir)."""
+    if os.environ.get("GRAPHIFY_EXE"):
+        return Path(os.environ["GRAPHIFY_EXE"])
+    found = shutil.which("graphify")
+    if found:
+        return Path(found)
+    for scheme in (None, f"{os.name}_user"):
+        try:
+            scripts = Path(sysconfig.get_path("scripts", scheme) if scheme else sysconfig.get_path("scripts"))
+        except KeyError:
+            continue
+        for name in ("graphify.exe", "graphify"):
+            if (scripts / name).is_file():
+                return scripts / name
+    return Path("graphify")
+
+
+GRAPHIFY = _find_graphify()
 
 # Same ladder as rerank_bm25.py: ask for a lot, retry bigger only if still
 # truncated. Total pool size varies wildly by query (hundreds to thousands

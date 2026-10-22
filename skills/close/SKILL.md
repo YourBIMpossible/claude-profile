@@ -19,7 +19,7 @@ finishing side quests.
 3. Classify each item: IN-SCOPE (belongs to the mandate) or WANDER (found along
    the way).
 
-4. GRRP: if this session created or resumed a ledger (`F:\Claude-Tools\reports\grrp\*.ledger.md`
+4. GRRP: if this session created or resumed a ledger (`{reports}\grrp\*.ledger.md`
    or a repo anchor with `grrp: v1`), run Review to Resolution's gate:
    `python ~/.claude/skills/review-to-resolution/scripts/grrp.py gate --json <ledger>`.
    Read `verdict` (complete / incomplete / blocked / invalid), `transfers_ok`, and
@@ -51,10 +51,10 @@ Stage A conventions (BIMpossible Platform pilot: `bimpossible`, `addins`):
 - Commit the bookend hunk alone, under that repo's own commit rules (diff-check for foreign
   hunks first; foreign hunks in the anchor → stop, don't commit). Resume labels an
   uncommitted anchor `working tree, uncommitted` rather than crediting the last commit.
-- Before writing any store item: `python F:\Claude-Tools\state\queue_store.py
+- Before writing any store item: `python {tools}\state\queue_store.py
   --claim-of <ID> --me <worktree toplevel> --me <branch>`; exit 3 = another session's claim → skip,
   report `OWNED BY`.
-- Append one row to `F:\Claude-Tools\reports\stage-a-owner-turn-ledger.md` (manual;
+- Append one row to `{reports}\stage-a-owner-turn-ledger.md` (manual;
   this session's id is the dedup key; turn refs; `uncertain: yes` when a count is a
   judgment). Never classify turns automatically.
 

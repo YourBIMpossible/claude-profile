@@ -1,6 +1,6 @@
 # Item model, ranking, and rendering
 
-Canonical store, two tiers (both in `F:\Claude-Tools\state\`):
+Canonical store, two tiers (both in `{tools}\state\`):
 
 - `queue.yaml` — ACTIVE operational queue + reconcile watermarks. Authoritative for open work.
 - `queue-archive.yaml` — closed-item provenance (`live`/`dropped` records moved out of the active
@@ -97,9 +97,9 @@ An item whose `projects` include *both* a dormant and a live project (e.g.
 extra invariants apply, both machine-enforced by `dormancy_defects`:
 
 - **No command may target the dormant leg.** Every individual `live_check` command is scanned;
-  one that references a dormant checkout — by path (`F:/BIMpossible-Families`, either separator,
+  one that references a dormant checkout — by path (`{repos}/BIMpossible-Families`, either separator,
   subpaths), by the checkout's directory name as a standalone segment (a relative path, an MSYS
-  `/f/...` path), or by a GitHub `owner/repo` slug reusing that name — is a hard load failure,
+  Git-Bash drive path), or by a GitHub `owner/repo` slug reusing that name — is a hard load failure,
   whatever the item's declared legs (mis-scoping an item to hide a dormant leg is not a bypass).
   The live-leg commands stay runnable; only the dormant-targeting one must move to non-executable
   evidence.
