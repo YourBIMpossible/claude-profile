@@ -1,5 +1,9 @@
 [
   {
+    "path": "vendor/**",
+    "reason": "Byte-identical pins of upstream claude-tools code, verified by sha256 (vendor/README.md, hooks/tests). Editing them breaks the pin (validated: 6d5c9e2). The strings are a docstring example, a comment and a provenance note, not paths the code uses; fix upstream, then re-pin."
+  },
+  {
     "path": "hooks/Show-AuditAlerts.ps1",
     "match": "Ack-AuditAlert\\.ps1",
     "reason": "Byte-identical pin of an upstream BIMpossible-Workspace file (sha256 in hooks/README.md); the path is only the text of the acknowledge command it prints. Fix upstream, then re-pin."
