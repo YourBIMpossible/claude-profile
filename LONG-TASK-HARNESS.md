@@ -70,7 +70,7 @@ any moment without losing the job.
 
 - Build sessions: cwd = the repo root (worktree per lane, per house rules).
 - Portfolio/meta sessions (/next, dashboard, claude-profile tuning): cwd = {tools} (state/queue lives there; {repos}\AI-Dev is the personal sandbox).
-- Never grep/glob from a portfolio root (F:\ or {tools}) when the question concerns one repo.
+- Never grep/glob from a portfolio root ({repos} or {tools}) when the question concerns one repo.
 
 ## Intake discipline (per tool call)
 

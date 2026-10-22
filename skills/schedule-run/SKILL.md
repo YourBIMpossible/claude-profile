@@ -1,6 +1,6 @@
 ---
 name: schedule-run
-description: "Use whenever the user asks to schedule/start a Claude session, set up a routine, cron, weekly job, one-off run, or \"run this in N minutes / at <time> / every <day>\" — or types \"/schedule-run\". Routes to the RIGHT mechanism: LOCAL scheduled-tasks (runs on the user's PC, sees F:\\ drives, appears in the session list) vs CLOUD routines (isolated Linux, GitHub-only, no local drives). Owner has been burned by picking cloud for a local job; this skill removes the guess."
+description: "Use whenever the user asks to schedule/start a Claude session, set up a routine, cron, weekly job, one-off run, or \"run this in N minutes / at <time> / every <day>\" — or types \"/schedule-run\". Routes to the RIGHT mechanism: LOCAL scheduled-tasks (runs on the user's PC, sees the local drives, appears in the session list) vs CLOUD routines (isolated Linux, GitHub-only, no local drives). Owner has been burned by picking cloud for a local job; this skill removes the guess."
 ---
 
 # /schedule-run — schedule a Claude session (local vs cloud, decided for you)
@@ -17,11 +17,11 @@ The owner uses the word "routine" for BOTH mechanisms. Do not let the word decid
 
 **Default to LOCAL.** Cloud runs in an isolated Linux container: **no local drives, no local working tree, no desktop Revit.** A cloud routine pointed at `{repos}\anything` will fail every time and stop — this is the exact mistake to never repeat. Only go cloud when the owner is explicit AND the target is reachable as a GitHub URL.
 
-If genuinely ambiguous after applying the table, ask ONE question: *"On your PC (local, sees F:\\) or in the cloud (GitHub-only)?"* — nothing else.
+If genuinely ambiguous after applying the table, ask ONE question: *"On your PC (local, sees your drives) or in the cloud (GitHub-only)?"* — nothing else.
 
 ## LOCAL scheduled-task — the primary path
 
-Runs a fresh Claude Code session **on this PC**, in the owner's session list, with full F:\ access. This is the mechanism behind the owner's weekly jobs (slop-audit, weekly-full-audit, next-workspace-sync, context-weight, nl-filter-drift, graphify).
+Runs a fresh Claude Code session **on this PC**, in the owner's session list, with full access to the local drives ({repos}). This is the mechanism behind the owner's weekly jobs (slop-audit, weekly-full-audit, next-workspace-sync, context-weight, nl-filter-drift, graphify).
 
 Steps:
 1. **Re-check current time first** — `date "+%Y-%m-%dT%H:%M:%S%z"` (Bash). Never infer the date/time from context.
@@ -49,7 +49,7 @@ Invoke the bundled `/schedule` skill (it drives `RemoteTrigger`). Requirements:
 
 - ❌ Mapping the word "routine" → `/schedule` cloud. The owner says "routine" for local jobs too.
 - ❌ Cloud routine with an `{repos}\...` prompt. It cannot see the drive; it will stop with "not reachable."
-- ❌ Claiming this session can't see `F:\` repos. It can — this session runs on the PC. Verify with a quick `ls` before ever saying otherwise.
+- ❌ Claiming this session can't see the local repos (`{repos}`). It can — this session runs on the PC. Verify with a quick `ls` before ever saying otherwise.
 - ❌ Computing `fireAt`/cron from remembered time. Always re-fetch `date` first.
 
 ## Reference
