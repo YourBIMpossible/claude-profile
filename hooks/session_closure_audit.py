@@ -446,6 +446,14 @@ def build_report(cfg: dict) -> str:
             valid_repos.append((name, path))
         elif required:
             missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
+    if not valid_repos and not missing_sections:
+        # Nothing was checked: every configured entry is absent here (machine roots unset or wrong, an entry skipped for
+        # its platform or an unusable root) or the list is empty. That must not read as a clean, empty report (CP-9).
+        missing_sections.append(
+            "## (no repository)\n  ATTENTION REQUIRED: none of the configured repositories exists on this machine, "
+            "so the audit checked nothing. State unknown, not confirmed clean. Check the machine roots "
+            "(python tools/machine_config.py) and closure_audit_repos.json."
+        )
 
     # Stage 1: `git worktree list` for every valid repo, concurrently.
     wt_lists = _run_concurrently(
@@ -512,7 +520,7 @@ def build_report(cfg: dict) -> str:
 
     verdict = (
         f"Verdict: {total_attn} ATTENTION REQUIRED, {total_warn} WARNING across "
-        f"{len(repos)} configured repo(s). Nothing here blocks closing this session — "
+        f"{len(valid_repos)} configured repo(s). Nothing here blocks closing this session — "
         "items above are what to externalize before deleting any worktree that holds them."
     )
     if truncated_repos or truncated_worktrees:
