@@ -128,6 +128,10 @@ PLUGIN_ALLOWLIST = {
     "context7@claude-plugins-official",
     "claude-md-management@claude-plugins-official",
     "security-guidance@claude-code-plugins",
+    "hookify@claude-plugins-official",
+    "plugin-dev@claude-code-plugins",
+    "pr-review-toolkit@claude-code-plugins",
+    "roadmap-band@owner-local",
 }
 
 # Context sources known — from direct observation of live sessions — to load
