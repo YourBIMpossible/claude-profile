@@ -512,7 +512,7 @@ def build_report(cfg: dict) -> str:
 
     verdict = (
         f"Verdict: {total_attn} ATTENTION REQUIRED, {total_warn} WARNING across "
-        f"{len(repos)} configured repo(s). Nothing here blocks closing this session — "
+        f"{len(valid_repos)} configured repo(s). Nothing here blocks closing this session — "
         "items above are what to externalize before deleting any worktree that holds them."
     )
     if truncated_repos or truncated_worktrees:
