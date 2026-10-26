@@ -441,7 +441,8 @@ def build_report(cfg: dict) -> str:
     deadline = time.monotonic() + OVERALL_GIT_BUDGET
     valid_repos = []  # (name, path)
     missing_sections = []
-    for name, path, required in resolve_repos(cfg):
+    configured = resolve_repos(cfg)
+    for name, path, required in configured:
         if os.path.isdir(path):
             valid_repos.append((name, path))
         elif required:
@@ -512,7 +513,7 @@ def build_report(cfg: dict) -> str:
 
     verdict = (
         f"Verdict: {total_attn} ATTENTION REQUIRED, {total_warn} WARNING across "
-        f"{len(repos)} configured repo(s). Nothing here blocks closing this session — "
+        f"{len(configured)} configured repo(s). Nothing here blocks closing this session — "
         "items above are what to externalize before deleting any worktree that holds them."
     )
     if truncated_repos or truncated_worktrees:
