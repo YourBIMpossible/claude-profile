@@ -40,8 +40,8 @@ def git(repo, *args):
                            "-c", "commit.gpgsign=false", *args], capture_output=True, text=True, timeout=60, env=env)
 
 
-def make_repo(root: Path, untracked: bool) -> Path:
-    repo = root / "scratch-repo"
+def make_repo(root: Path, untracked: bool, name: str = "scratch-repo") -> Path:
+    repo = root / name
     repo.mkdir()
     git(repo, "init", "-q")
     (repo / "README.md").write_text("scratch\n", encoding="utf-8")
@@ -98,6 +98,26 @@ def run_checks() -> list:
         check("main() emits the audit instead of raising (an exception here is swallowed to silence by the "
               "fail-open handler)", not raised and len(emitted) == 1 and "<closure-audit>" in emitted[0], raised)
         check("the emitted audit carries the verdict", bool(emitted) and "Verdict:" in emitted[0])
+
+        # -- CP-9 slice: a machine where NO configured repository exists is an ATTENTION item, never an empty
+        #    report that reads as clean ("0 ATTENTION REQUIRED, 0 WARNING across 0 configured repo(s)").
+        ghost = root / "no-such-repos-root" / "ghost"
+        rep = sca.build_report(config_for(("ghost", ghost)))
+        check("only a missing (optional) repository: the report says ATTENTION REQUIRED",
+              "ATTENTION REQUIRED" in rep and "Verdict: 1 ATTENTION REQUIRED" in rep, rep[-260:])
+        check("... and says the audit checked nothing, not that all is clean",
+              "checked nothing" in rep, rep[-260:])
+        rep = sca.build_report(config_for())
+        check("an empty repository list is also an ATTENTION item", "Verdict: 1 ATTENTION REQUIRED" in rep, rep[-260:])
+        cfg_req = config_for(("ghost", ghost))
+        cfg_req["repos"][0]["required"] = True
+        rep = sca.build_report(cfg_req)
+        check("a missing REQUIRED repository is still exactly one ATTENTION item (no duplicate)",
+              "Verdict: 1 ATTENTION REQUIRED" in rep and rep.count("ATTENTION REQUIRED:") == 1, rep[-300:])
+        clean = make_repo(root, untracked=False, name="clean-repo")
+        rep = sca.build_report(config_for(("clean", clean), ("ghost", ghost)))
+        check("one repository present and an optional one missing: the shared-config rule holds (no attention)",
+              "Verdict: 0 ATTENTION REQUIRED" in rep and "across 1 configured repo(s)" in rep, rep[-300:])
     return list(results)
 
 
