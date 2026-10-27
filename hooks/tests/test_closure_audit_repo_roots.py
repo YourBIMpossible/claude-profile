@@ -134,6 +134,17 @@ def run_checks() -> list:
         check("(d) a tools root that is not a folder is an ATTENTION item too",
               "{tools}" in rep.split("Verdict:")[0] and "claude-tools" in rep.split("Verdict:")[0]
               and "Verdict: 1 ATTENTION REQUIRED" in rep and "## present" in rep, rep[:900])
+
+        # (e) review L1: a REQUIRED entry whose root is unset is ATTENTION (like a missing required path),
+        #     not the uncounted NOTE an optional entry gets.
+        required = config_for(("present", "{repos}/present"), ("claude-tools", "{tools}"))
+        required["repos"][1]["required"] = True
+        rep = report_with_machine_config(good, required, cfg_file)
+        head = rep.split("Verdict:")[0]
+        check("(e) a required entry with an unset root is an ATTENTION item",
+              "## claude-tools" in head and "ATTENTION REQUIRED" in head and "{tools} is not set" in head, rep[:900])
+        check("(e) ... counted once, and not also shown as a NOTE",
+              "Verdict: 1 ATTENTION REQUIRED" in rep and "NOTE:" not in head, rep[-400:])
     return list(results)
 
 
