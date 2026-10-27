@@ -148,6 +148,7 @@ let timer = null
 let busy = false
 let pending = false // a forced refresh requested while one was running
 let fenceKey = 'gen'
+let fenceOff = false // the fence key could not be written: this instance cannot be fenced and keeps working
 let sig = ''
 let ticks = 0
 let S = fresh()
@@ -159,6 +160,7 @@ function fresh() {
 // The fence is keyed by session id: two sessions share one store and must not silence each other.
 // Hot reload re-runs session.start in a new module instance of the SAME session; only the newest instance works.
 async function fence($) {
+  if (fenceOff) return true
   try {
     return (await $.store.get(fenceKey)) === GEN
   } catch {
@@ -224,9 +226,11 @@ export function register(on) {
     try { S.debug = !!(await $.env.get('ROADMAP_BAND_DEBUG')) } catch { /* debug off */ }
     let sid = ''
     try { sid = String((await $.session.id()) || '') } catch { /* identity unavailable */ }
-    fenceKey = `gen:${sid || 'nosid'}`
+    // Without a session id there is nothing to share a key with: each instance fences only itself.
+    fenceKey = sid ? `gen:${sid}` : `gen:nosid:${GEN}`
+    fenceOff = false
     pending = false
-    try { await $.store.set(fenceKey, GEN) } catch { /* fence unavailable: single instance assumed */ }
+    try { await $.store.set(fenceKey, GEN) } catch { fenceOff = true }
     // After /resume the live capture is gone; recover the last line from the transcript. Its age is unknown.
     try {
       const msgs = await $.session.messages()
@@ -310,7 +314,7 @@ export function register(on) {
     // --- deterministic verification of the model's claim ---
     // Chip precedence, first match wins: WORKING (host busy) > UNVERIFIED (resumed | directory changed | other session)
     // > NO ANCHOR > NEEDS YOU > UNVERIFIED (tools ran after the line | anchor/NORTHSTAR changed after a safe line
-    // | anchor or NORTHSTAR unreadable or undated) > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
+    // | anchor or NORTHSTAR unreadable or undated | no session identity) > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
     let chip = 'NO ROADMAP LINE'
     let tone = 'gray'
     let why = ''
@@ -320,6 +324,7 @@ export function register(on) {
     if (a && a.unreadable) unverifiable = 'status anchor unreadable'
     else if (a && !a.mtime) unverifiable = 'status anchor age unavailable'
     else if (S.mission && S.mission.unreadable) unverifiable = 'NORTHSTAR unreadable'
+    else if (!S.sid || (l && !l.sid)) unverifiable = 'session identity unavailable'
     if (l) {
       if (l.resumed) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'recovered from transcript after resume' }
       else if (l.cwd && cwdNow && l.cwd !== cwdNow) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'directory changed since the line' }

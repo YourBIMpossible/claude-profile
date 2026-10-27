@@ -27,10 +27,10 @@ async function makeHost(over = {}) {
       list: async () => { if (env.listThrow) throw new Error('EACCES'); return (env.list || []).map((name) => ({ kind: 'file', name })) },
     },
     clock: { now: async () => env.now, every: (ms, fn) => { const t = { ms, fn, cancelled: false, cancel() { this.cancelled = true } }; timers.push(t); return t } },
-    store: { get: async (k) => store.get(k), set: async (k, v) => { store.set(k, v) }, delete: async (k) => { store.delete(k) } },
+    store: { get: async (k) => store.get(k), set: async (k, v) => { if (env.setThrow) throw new Error('store write failed'); store.set(k, v) }, delete: async (k) => { store.delete(k) } },
     env: { get: async () => '1' },
     session: {
-      cwd: async () => env.cwd, id: async () => env.sid, messages: async () => env.messages,
+      cwd: async () => env.cwd, id: async () => { if (env.sidThrow) throw new Error('no session id'); return env.sid }, messages: async () => env.messages,
       usage: async () => { env.usageCalls = (env.usageCalls || 0) + 1; if (env.block) { const g = env.block; env.block = null; await g } if (env.usageFail) throw new Error('x'); return { context: { percent: 41.2 }, rateLimits: [{ kind: 'five_hour', percentUsed: 23.4, resetsAt: env.now / 1000 + 7800 }, { kind: 'weekly', percentUsed: 40, resetsAt: 'bogus' }] } },
     },
     ui: { invalidate: () => { env.invalidations = (env.invalidations || 0) + 1 }, resolve: () => ({ Box: (p) => ({ ...p, t: 'Box' }), Text: (p) => ({ ...p, t: 'Text' }) }) },
@@ -301,6 +301,37 @@ ${line}` })
   h = await safeLine(ns({ nullMtime: ['NORTHSTAR.a.md'] }))
   r = await h.render()
   ok('16 undated NORTHSTAR file -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+}
+{ // 17 CP-31: no session id, or a failing fence write, never freezes the band on a stale green
+  const store = new Map()
+  const a = await safeLine({ store, env: { sidThrow: true } })
+  const b = await makeHost({ store, env: { sidThrow: true, cwd: '/fixture/other' } })
+  await b.call('session.start', {})
+  ok('17 two sessions without an id get separate fence keys', [...store.keys()].length === 2, JSON.stringify([...store.keys()]))
+  const ia = a.env.invalidations || 0
+  a.env.now += 60_000
+  a.env.files['WORKLOG.md'] = a.env.now
+  await a.timers[0].fn()
+  ok('17 session A without an id keeps ticking after session B (also without an id) starts', !a.timers[0].cancelled && (a.env.invalidations || 0) > ia)
+  let r = await a.render()
+  ok('17 a safe line without session identity -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+  await b.call('session.end', {})
+  ok('17 session.end without an id removes only its own fence key', store.size === 1)
+  const h = await safeLine({ env: { sidThrow: true } })
+  h.env.sidThrow = false
+  h.env.sid = 's2'
+  await h.timers[0].fn()
+  r = await h.render()
+  ok('17 line captured without an id, session id now known -> UNVERIFIED session identity unavailable', r.includes('UNVERIFIED') && r.includes('session identity unavailable'), r)
+  for (const [label, seed] of [['old generation in store', [['gen:s1', 'old-gen']]], ['empty store', []]]) {
+    const st = new Map(seed)
+    const f = await safeLine({ store: st, env: { setThrow: true } })
+    f.env.now += 60_000
+    f.env.files['WORKLOG.md'] = f.env.now
+    await f.timers[0].fn()
+    r = await f.render()
+    ok(`17 store.set throws (${label}): timer keeps running and the anchor change shows UNVERIFIED`, !f.timers[0].cancelled && r.includes('UNVERIFIED') && r.includes('source changed'), r)
+  }
 }
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
