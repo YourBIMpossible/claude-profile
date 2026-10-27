@@ -73,8 +73,8 @@ def _default_paths() -> tuple[str, str, str]:
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
         import machine_config
-    except ImportError as exc:
-        error = f"cannot import machine_config: {exc}"
+    except Exception as exc:  # fail-open: runs at import, before main's guard
+        error = f"cannot import machine_config: {type(exc).__name__}: {exc}"
     else:
         try:
             cfg = machine_config.load()
