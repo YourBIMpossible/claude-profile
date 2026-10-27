@@ -114,6 +114,26 @@ def run_checks() -> list:
                                                           ("absent", "{repos}/absent")), cfg_file)
         check("a resolvable but absent optional entry is still silent",
               "absent" not in rep.split("Verdict:")[0] and "Verdict: 0 ATTENTION REQUIRED, 0 WARNING" in rep, rep[-400:])
+
+        # (d) the audit's own CP-9 verify step: "set the scratch config's repos root to a non-existent folder.
+        #     Expect an ATTENTION line, not '0 configured repo(s)'." Run on the shipped entry list, with the
+        #     {profile} entry pointed at a temp repo (it always resolves; this keeps git off the live clone).
+        shipped = dict(sca.load_config())
+        shipped["repos"] = [dict(r, path=str(repos_root / "present")) if r["path"] == "{profile}" else dict(r)
+                            for r in shipped["repos"]]
+        dead = root / "nope"
+        rep = report_with_machine_config(json.dumps({"repos_root": str(dead)}), shipped, cfg_file)
+        head = rep.split("Verdict:")[0]
+        check("(d) verify step: a repos root that is not a folder is an ATTENTION item",
+              "## (machine roots)" in head and "{repos}" in head and str(dead) in head, rep[:900])
+        check("(d) ... naming the entries it blocked", all(r["name"] in head for r in shipped["repos"]
+                                                           if r["path"].startswith("{repos}")), rep[:900])
+        check("(d) ... counted once in the verdict", "Verdict: 1 ATTENTION REQUIRED" in rep, rep[-300:])
+        rep = report_with_machine_config(json.dumps({"repos_root": str(repos_root), "tools_root": str(root / "no-tools")}),
+                                         entries, cfg_file)
+        check("(d) a tools root that is not a folder is an ATTENTION item too",
+              "{tools}" in rep.split("Verdict:")[0] and "claude-tools" in rep.split("Verdict:")[0]
+              and "Verdict: 1 ATTENTION REQUIRED" in rep and "## present" in rep, rep[:900])
     return list(results)
 
 

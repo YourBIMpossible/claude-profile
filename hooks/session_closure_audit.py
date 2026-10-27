@@ -67,6 +67,7 @@ class Resolved(NamedTuple):
     config_error: str  # why the machine roots are unusable here ("" when they are fine)
     broken: list  # names of entries not checked because of config_error
     unset: dict  # expand message ("{tools} is not set in ...") -> names of entries skipped for it
+    dead_roots: dict  # root token -> (its value, names of entries under it) for a set root that is not a folder
 
 
 def resolve_repos(cfg: dict) -> Resolved:
@@ -76,9 +77,10 @@ def resolve_repos(cfg: dict) -> Resolved:
     (a sys.platform prefix: win32 / linux / darwin) scopes an entry to one OS. A missing repo is reported
     only when the entry says "required": true - one shared config serves every machine, and most machines
     hold only some of the repos. An entry that cannot be resolved is never dropped silently (CP-9): an
-    unusable machine config or helper is returned as config_error with the entries it blocked, and an
-    entry naming a root this machine has not set is returned under unset."""
-    out, broken, unset = [], [], {}
+    unusable machine config or helper is returned as config_error with the entries it blocked, an entry
+    naming a root this machine has not set is returned under unset, and an entry under a root that is set
+    but is not an existing folder (a misconfigured root, never a legitimately absent repo) under dead_roots."""
+    out, broken, unset, dead_roots = [], [], {}, {}
     config_error, roots_cfg = "", None
     if machine_config is None:
         config_error = f"the machine-roots helper tools/machine_config.py did not import ({MACHINE_CONFIG_ERROR})"
@@ -88,6 +90,7 @@ def resolve_repos(cfg: dict) -> Resolved:
         except Exception as exc:
             config_error = f"the machine config is unusable ({type(exc).__name__}: {exc})"
             roots_cfg = {}  # {profile} still resolves; every other root reads as unset and lands in broken
+    root_values = machine_config.roots(roots_cfg) if machine_config is not None else {}
     for r in cfg.get("repos", []):
         if r.get("platform") and not sys.platform.startswith(r["platform"]):
             continue
@@ -105,8 +108,12 @@ def resolve_repos(cfg: dict) -> Resolved:
             else:
                 unset.setdefault(str(exc), []).append(r["name"])
             continue
+        dead = [tok for tok, value in root_values.items() if tok in r["path"] and value and not os.path.isdir(value)]
+        if dead:
+            dead_roots.setdefault(dead[0], (root_values[dead[0]], []))[1].append(r["name"])
+            continue
         out.append((r["name"], path, bool(r.get("required"))))
-    return Resolved(out, config_error, broken, unset)
+    return Resolved(out, config_error, broken, unset, dead_roots)
 
 
 GIT_TIMEOUT = 8  # seconds, per git call — this hook must never hang a session
@@ -478,6 +485,12 @@ def build_report(cfg: dict) -> str:
             f"## (machine roots)\n  ATTENTION REQUIRED: {resolved.config_error}, so these configured repositories "
             f"were not checked: {', '.join(resolved.broken)}. State unknown, not confirmed clean. Fix it "
             "(python tools/machine_config.py shows the roots)."
+        )
+    for tok, (value, names) in resolved.dead_roots.items():
+        missing_sections.append(
+            f"## (machine roots)\n  ATTENTION REQUIRED: {tok} is set to {value}, which is not an existing folder, so "
+            f"these configured repositories were not checked: {', '.join(names)}. State unknown, not confirmed "
+            "clean. Fix that root (python tools/machine_config.py shows the roots)."
         )
     note_sections = [
         f"## (not checked)\n  NOTE: skipped {', '.join(names)}: {reason}. Not counted in the verdict; set that root if "
