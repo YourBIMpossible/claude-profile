@@ -5,14 +5,20 @@ failure as "clean".
 The end-to-end cases (a real failed pull, origin/HEAD unset, a corrupt index) run the hook in a
 sandbox in test_bootstrap_install.py. This file covers the paths a real git cannot be made to hit
 on demand - a timeout and a missing git - by importing the hook and replacing its `git` and `log`
-helpers. Nothing here runs git or writes outside memory.
+helpers. Nothing here runs git. The N-1 timeout bound runs a fake git (a Python script) in a temp dir.
 
 Run: python hooks/tests/test_session_start_warnings.py   (or pytest hooks/tests)
 """
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import signal
 import subprocess
+import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -126,6 +132,55 @@ class CloneWarnings(HookWithFakeGit):
         warnings = self.ss.clone_warnings()
         self.assertEqual(len(warnings), 1, warnings)
         self.assertIn("is on 'feature', not 'main'", warnings[0])
+
+
+# Stands in for `git pull`: it starts a process that inherits its stdout/stderr (as git's fetch and
+# remote helpers do), then hangs. Killing it on the timeout leaves that child holding the output open.
+FAKE_GIT = """import subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep({hold})"])
+with open({pidfile!r}, "w") as f:
+    f.write(str(child.pid))
+print("fetching", flush=True)
+time.sleep(120)
+"""
+
+
+class GitTimeoutIsBounded(unittest.TestCase):
+    """N-1: the timeout must bound the whole call. subprocess.run(capture_output=True) kills git on the
+    timeout, then keeps reading its pipes until git's surviving child closes them: a 3 s timeout returned
+    after 20.5 s, near the hook's 25 s SessionStart limit."""
+
+    TIMEOUT_S = 2.0
+    HOLD_S = 12
+    SLACK_S = 3.0
+
+    def setUp(self) -> None:
+        self.ss = load_hook()
+        self.tmp = Path(tempfile.mkdtemp(prefix="ss-n1-"))
+        self.pidfile = self.tmp / "child.pid"
+        self.fake = self.tmp / "fake_git.py"
+        self.fake.write_text(FAKE_GIT.format(hold=self.HOLD_S, pidfile=str(self.pidfile)), encoding="utf-8")
+
+    def tearDown(self) -> None:
+        try:
+            os.kill(int(self.pidfile.read_text()), signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_returns_at_the_deadline_while_a_child_holds_the_output(self) -> None:
+        start = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.ss.run_bounded([sys.executable, str(self.fake)], timeout=self.TIMEOUT_S)
+        elapsed = time.monotonic() - start
+        self.assertTrue(self.pidfile.exists(), "the fake git never started its child; the probe proved nothing")
+        self.assertLess(elapsed, self.TIMEOUT_S + self.SLACK_S,
+                        f"a {self.TIMEOUT_S}s timeout returned after {elapsed:.1f}s")
+
+    def test_output_and_exit_code_are_returned(self) -> None:
+        proc = self.ss.run_bounded(
+            [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"], 30)
+        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (3, "out\n", "err\n"))
 
 
 if __name__ == "__main__":

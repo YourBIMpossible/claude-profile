@@ -89,9 +89,13 @@ def log(message: str) -> None:
         pass
 
 
+def run_bounded(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout)
+
+
 def git(*args: str, timeout: float = GIT_TIMEOUT_S) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(PROFILE_ROOT), *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout)
+    return run_bounded(["git", "-C", str(PROFILE_ROOT), *args], timeout)
 
 
 PULL_SEE_LOG = "this clone may be out of date - see ~/.claude/hooks/last-run.log"
