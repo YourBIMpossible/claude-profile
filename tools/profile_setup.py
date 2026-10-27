@@ -430,7 +430,8 @@ def plan_desktop_config(appdata: Path, profile_root: Path = PROFILE_ROOT) -> Des
         merged = existing_raw[:dst[0]] + block + existing_raw[dst[1] + 1:]
     else:
         brace = existing_raw.find("{")
-        merged = existing_raw[:brace + 1] + '\n  "mcpServers": ' + block + "," + existing_raw[brace + 1:]
+        sep = "," if existing else "\n"  # an empty object takes no separator after the new key
+        merged = existing_raw[:brace + 1] + '\n  "mcpServers": ' + block + sep + existing_raw[brace + 1:]
     try:
         merged_obj = json.loads(merged)
     except ValueError as exc:

@@ -588,6 +588,28 @@ class RefusalLeavesProfileUntouched(Sandbox):
         self.assert_refused_untouched("claude_desktop_config.json")
 
 
+class DesktopConfigMerge(unittest.TestCase):
+    """plan_desktop_config on hand-planted configs; plans only, nothing is written."""
+
+    def setUp(self) -> None:
+        self.appdata = Path(tempfile.mkdtemp(prefix="desktop-merge-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.appdata, True)
+        (self.appdata / "Claude").mkdir()
+        fresh = ps.plan_desktop_config(self.appdata / "empty", REPO)
+        self.servers = json.loads(fresh.text)["mcpServers"]
+
+    def plan(self, existing: str) -> dict:
+        (self.appdata / "Claude" / "claude_desktop_config.json").write_text(existing, encoding="utf-8")
+        plan = ps.plan_desktop_config(self.appdata, REPO)
+        self.assertTrue(plan.changed)
+        return json.loads(plan.text)
+
+    def test_empty_object_gains_mcp_servers(self) -> None:
+        for raw in ("{}", "{ }", "\n{\n}\n"):
+            with self.subTest(existing=raw):
+                self.assertEqual(self.plan(raw), {"mcpServers": self.servers})
+
+
 class FixtureClone(Sandbox):
     """A committed copy of the profile in the sandbox: template edits, refusals, sync."""
 
