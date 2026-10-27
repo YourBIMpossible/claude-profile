@@ -390,6 +390,15 @@ ${LINE}` })
   r = await h.render()
   ok('20 a later valid line replaces it and clears the note', r.includes('CHECKPOINT REPORTED') && !r.includes('did not parse'), r)
 }
+{ // 21 rev 2 F2: while the band cannot read state, a safe line is never green
+  const h = await safeLine()
+  ok('21 control: readable state -> CHECKPOINT REPORTED', (await h.render()).includes('CHECKPOINT REPORTED'))
+  h.env.cwdThrow = true
+  await h.timers[0].fn()
+  const r = await h.render()
+  ok('21 failing refresh -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+  ok('21 the read-failure text is shown once', r.split('band read failed').length === 2, r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)

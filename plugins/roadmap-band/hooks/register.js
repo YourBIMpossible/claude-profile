@@ -342,7 +342,7 @@ export function register(on) {
     // --- deterministic verification of the model's claim ---
     // Chip precedence, first match wins: WORKING (host busy) > UNVERIFIED (resumed | directory changed | other session)
     // > NO ANCHOR > NEEDS YOU > UNVERIFIED (tools ran after the line | anchor/NORTHSTAR changed after a safe line
-    // | a newer footer did not parse | anchor or NORTHSTAR unreadable or undated | no session identity)
+    // | refresh failed | a newer footer did not parse | anchor or NORTHSTAR unreadable or undated | no session identity)
     // > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
     let chip = 'NO ROADMAP LINE'
     let tone = 'gray'
@@ -350,7 +350,8 @@ export function register(on) {
     const anchorNewer = !!(l && l.at && a && a.mtime && a.mtime > l.at) || !!(l && l.at && S.mission && S.mission.mtime && S.mission.mtime > l.at)
     // A safe claim the mod cannot check against the anchor is not a checkpoint.
     let unverifiable = ''
-    if (l && l.superseded) unverifiable = S.note
+    if (S.err) unverifiable = S.err // the last refresh failed: anchor and identity facts may be stale
+    else if (l && l.superseded) unverifiable = S.note
     else if (a && a.unreadable) unverifiable = 'status anchor unreadable'
     else if (a && !a.mtime) unverifiable = 'status anchor age unavailable'
     else if (S.mission && S.mission.unreadable) unverifiable = 'NORTHSTAR unreadable'
@@ -391,7 +392,7 @@ export function register(on) {
     if (a) r2.push(`${a.rel} ${a.unreadable ? 'unreadable' : a.mtime ? fmtAge(now - a.mtime) + ' ago' : 'age unavailable'}`)
     else r2.push('no status anchor file in this directory')
     if (S.note && S.note !== why) r2.push(S.note)
-    if (S.err) r2.push(S.err)
+    if (S.err && S.err !== why) r2.push(S.err)
     const u = S.usage
     if (!u || !u.ok) r2.push('usage unavailable')
     else {
