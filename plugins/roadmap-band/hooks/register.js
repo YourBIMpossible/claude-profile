@@ -96,18 +96,25 @@ async function findAnchor($, cwd) {
   return null
 }
 
+// Newest NORTHSTAR*.md mtime. unreadable is set when the listing fails or any mission file cannot be dated:
+// change detection is then incomplete, and a safe line cannot be verified. A failing entry never hides the rest.
 async function missionMtime($, cwd) {
   let newest = null
+  let entries
   try {
-    for (const ent of await $.fs.list(cwd || '.')) {
-      if (ent.kind !== 'file' || !ent.name.startsWith(MISSION_PREFIX) || !ent.name.endsWith('.md')) continue
-      const t = mtimeOf(await $.fs.stat(join(cwd, ent.name)))
-      if (t && (!newest || t > newest)) newest = t
-    }
+    entries = await $.fs.list(cwd || '.')
   } catch {
-    // no listing: no mission-change signal
+    return { mtime: null, unreadable: true }
   }
-  return newest
+  let unreadable = false
+  for (const ent of entries) {
+    if (ent.kind !== 'file' || !ent.name.startsWith(MISSION_PREFIX) || !ent.name.endsWith('.md')) continue
+    let t = null
+    try { t = mtimeOf(await $.fs.stat(join(cwd, ent.name))) } catch { /* counted below as undated */ }
+    if (!t) { unreadable = true; continue }
+    if (!newest || t > newest) newest = t
+  }
+  return { mtime: newest, unreadable }
 }
 
 const KIND_LABELS = [
@@ -199,7 +206,7 @@ async function refreshOnce($, force) {
     const l = S.line
     const next = [
       l ? l.raw : '', l ? Math.floor((now - (l.at || now)) / 60_000) : '', S.repliesSince,
-      S.anchor ? `${S.anchor.rel}:${S.anchor.unreadable ? 'unreadable' : S.anchor.mtime}` : 'none', S.mission, cwd, sid, S.note, l ? l.workSince : '',
+      S.anchor ? `${S.anchor.rel}:${S.anchor.unreadable ? 'unreadable' : S.anchor.mtime}` : 'none', `${S.mission.mtime}:${S.mission.unreadable}`, cwd, sid, S.note, l ? l.workSince : '',
       S.usage.ctx, S.usage.limits.map((x) => `${x.label}${x.pct}${x.reset == null ? '' : Math.floor(x.reset / 60_000)}`).join(','),
     ].join('|')
     if (force || next !== sig) {
@@ -303,15 +310,16 @@ export function register(on) {
     // --- deterministic verification of the model's claim ---
     // Chip precedence, first match wins: WORKING (host busy) > UNVERIFIED (resumed | directory changed | other session)
     // > NO ANCHOR > NEEDS YOU > UNVERIFIED (tools ran after the line | anchor/NORTHSTAR changed after a safe line
-    // | anchor unreadable or undated) > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
+    // | anchor or NORTHSTAR unreadable or undated) > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
     let chip = 'NO ROADMAP LINE'
     let tone = 'gray'
     let why = ''
-    const anchorNewer = !!(l && l.at && a && a.mtime && a.mtime > l.at) || !!(l && l.at && S.mission && S.mission > l.at)
+    const anchorNewer = !!(l && l.at && a && a.mtime && a.mtime > l.at) || !!(l && l.at && S.mission && S.mission.mtime && S.mission.mtime > l.at)
     // A safe claim the mod cannot check against the anchor is not a checkpoint.
     let unverifiable = ''
     if (a && a.unreadable) unverifiable = 'status anchor unreadable'
     else if (a && !a.mtime) unverifiable = 'status anchor age unavailable'
+    else if (S.mission && S.mission.unreadable) unverifiable = 'NORTHSTAR unreadable'
     if (l) {
       if (l.resumed) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'recovered from transcript after resume' }
       else if (l.cwd && cwdNow && l.cwd !== cwdNow) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'directory changed since the line' }

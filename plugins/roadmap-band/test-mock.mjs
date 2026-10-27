@@ -280,6 +280,28 @@ ${line}` })
   h = await safeLine({ env: { statThrow: ['WORKLOG.md'] } }, 'Roadmap: Pilot [active] · pause: attention')
   ok('15 unreadable anchor does not override NEEDS YOU', (await h.render()).includes('NEEDS YOU'))
 }
+{ // 16 CP-30: a NORTHSTAR listing or stat failure is visible and never green; one bad entry does not hide the rest
+  const ns = (extra = {}) => ({ env: { list: ['NORTHSTAR.a.md', 'NORTHSTAR.b.md'], files: { 'WORKLOG.md': 1_799_999_000_000, 'NORTHSTAR.a.md': 1_799_999_000_000, 'NORTHSTAR.b.md': 1_799_999_000_000 }, ...extra } })
+  const changeB = async (h) => { h.env.now += 60_000; h.env.files['NORTHSTAR.b.md'] = h.env.now; await h.timers[0].fn() }
+  let h = await safeLine(ns())
+  let r = await h.render()
+  ok('16 control: readable NORTHSTAR files, unchanged -> CHECKPOINT REPORTED', r.includes('CHECKPOINT REPORTED'), r)
+  await changeB(h)
+  r = await h.render()
+  ok('16 control: NORTHSTAR.b changed after the line -> UNVERIFIED source changed', r.includes('UNVERIFIED') && r.includes('source changed'), r)
+  h = await safeLine(ns({ listThrow: true }))
+  r = await h.render()
+  ok('16 listing throws -> UNVERIFIED NORTHSTAR unreadable', r.includes('UNVERIFIED') && r.includes('NORTHSTAR unreadable') && !r.includes('CHECKPOINT REPORTED'), r)
+  h = await safeLine(ns({ statThrow: ['NORTHSTAR.a.md'] }))
+  r = await h.render()
+  ok('16 one NORTHSTAR stat throws -> UNVERIFIED NORTHSTAR unreadable', r.includes('UNVERIFIED') && r.includes('NORTHSTAR unreadable') && !r.includes('CHECKPOINT REPORTED'), r)
+  await changeB(h)
+  r = await h.render()
+  ok('16 a failing NORTHSTAR.a stat does not stop NORTHSTAR.b being read (change detected)', r.includes('source changed'), r)
+  h = await safeLine(ns({ nullMtime: ['NORTHSTAR.a.md'] }))
+  r = await h.render()
+  ok('16 undated NORTHSTAR file -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)
