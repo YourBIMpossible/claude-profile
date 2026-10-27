@@ -1,7 +1,8 @@
-"""Regression tests for slop-audit 2026-10-26 CP-11: session_start.py must tell the session when it
-could not pull, instead of writing the failure to last-run.log only.
+"""Regression tests for slop-audit 2026-10-26 CP-11 and CP-26: session_start.py must tell the session
+when it could not pull or could not check the profile clone, instead of logging only or reading a
+failure as "clean".
 
-The end-to-end cases (a real failed pull) run the hook in a
+The end-to-end cases (a real failed pull, origin/HEAD unset, a corrupt index) run the hook in a
 sandbox in test_bootstrap_install.py. This file covers the paths a real git cannot be made to hit
 on demand - a timeout and a missing git - by importing the hook and replacing its `git` and `log`
 helpers. Nothing here runs git or writes outside memory.
@@ -71,6 +72,53 @@ class PullWarnings(HookWithFakeGit):
         self.fake_git(lambda args: done(0, stdout="Already up to date."))
         self.assertIsNone(self.ss.pull())
         self.assertIn("pull ok", self.logged[-1])
+
+
+class CloneWarnings(HookWithFakeGit):
+    """CP-26: clone_warnings() swallowed exceptions and never read the `git status` exit code."""
+
+    @staticmethod
+    def answers(branch: str = "main", default: str = "origin/main", status: subprocess.CompletedProcess | None = None):
+        def handler(args):
+            if args[:1] == ("symbolic-ref",):
+                return done(0, branch + "\n") if args[-1] == "HEAD" else (done(0, default + "\n") if default else done(1))
+            if args[:1] == ("status",):
+                return status if status is not None else done(0)
+            raise AssertionError(f"unexpected git call {args}")
+        return handler
+
+    def test_clean_default_branch_has_no_warning(self) -> None:
+        self.fake_git(self.answers())
+        self.assertEqual(self.ss.clone_warnings(), [])
+
+    def test_unset_origin_head_is_reported(self) -> None:
+        self.fake_git(self.answers(branch="feature", default=""))
+        warnings = self.ss.clone_warnings()
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("origin/HEAD is not set", warnings[0])
+        self.assertIn("remote set-head origin -a", warnings[0])
+
+    def test_nonzero_status_is_not_clean(self) -> None:
+        self.fake_git(self.answers(status=done(128, stderr="fatal: index file corrupt")))
+        warnings = self.ss.clone_warnings()
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("could not check the profile clone", warnings[0])
+        self.assertIn("git status exit 128", warnings[0])
+
+    def test_a_timeout_is_reported_not_swallowed(self) -> None:
+        def handler(args):
+            raise subprocess.TimeoutExpired(["git", *args], 5)
+        self.fake_git(handler)
+        warnings = self.ss.clone_warnings()
+        self.assertTrue(warnings, "a git timeout produced no warning")
+        self.assertTrue(all("could not check the profile clone" in w and "TimeoutExpired" in w for w in warnings),
+                        warnings)
+
+    def test_branch_warning_still_fires(self) -> None:
+        self.fake_git(self.answers(branch="feature"))
+        warnings = self.ss.clone_warnings()
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("is on 'feature', not 'main'", warnings[0])
 
 
 if __name__ == "__main__":

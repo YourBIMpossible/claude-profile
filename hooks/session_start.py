@@ -15,7 +15,7 @@ platform, for startup|resume|clear|compact:
   3. Print the machine roots ({profile}, {repos}, {tools}, {reports}, {mailbox}) as
      session context, plus a warning when this clone is not on its default branch or
      has uncommitted hook code - hooks run from here, so that state runs on every
-     prompt.
+     prompt - or when either check could not run (origin/HEAD unset, git failed).
 
 Best effort, never blocks: every path exits 0. Record: ~/.claude/hooks/last-run.log
 (same vocabulary as before: "pull ok", "pull skipped (in flight)", "pull failed (exit
@@ -135,21 +135,31 @@ def sync_settings() -> str | None:
 
 
 def clone_warnings() -> list[str]:
-    """Hooks run from this clone: say so when it is not the merged default branch."""
+    """Hooks run from this clone: say so when it is not the merged default branch, has
+    uncommitted hook code, or could not be checked (a check that fails is never "clean")."""
     out = []
+    unchecked = f"could not check the profile clone {PROFILE_ROOT}"
     try:
         branch = git("symbolic-ref", "--quiet", "--short", "HEAD", timeout=5).stdout.strip()
         default = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", timeout=5).stdout.strip()
         default = default.split("/", 1)[1] if "/" in default else default
-        if default and branch != default:
+        if not default:
+            out.append(f"{unchecked} for its default branch: origin/HEAD is not set - run "
+                       f"`git -C {PROFILE_ROOT.as_posix()} remote set-head origin -a`")
+        elif branch != default:
             out.append(f"the profile clone {PROFILE_ROOT} is on '{branch or 'a detached HEAD'}', not '{default}': "
                        "its hooks run on every prompt - do feature work in a worktree")
-        dirty = git("status", "--porcelain", "--", "hooks", "vendor", "tools", "settings.template.json",
-                    timeout=5).stdout.strip()
-        if dirty:
+    except (OSError, subprocess.SubprocessError) as exc:
+        out.append(f"{unchecked} for its default branch ({type(exc).__name__})")
+    try:
+        status = git("status", "--porcelain", "--", "hooks", "vendor", "tools", "settings.template.json",
+                     timeout=5)
+        if status.returncode != 0:
+            out.append(f"{unchecked} for uncommitted hook/tool changes (git status exit {status.returncode})")
+        elif status.stdout.strip():
             out.append(f"the profile clone {PROFILE_ROOT} has uncommitted hook/tool changes, which run on every prompt")
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        out.append(f"{unchecked} for uncommitted hook/tool changes ({type(exc).__name__})")
     return out
 
 

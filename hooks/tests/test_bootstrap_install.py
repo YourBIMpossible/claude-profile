@@ -752,6 +752,23 @@ class SessionStartSync(FixtureClone):
         for unexpected in ("pull failed", "could not check", "origin/HEAD", "is on '"):
             self.assertNotIn(unexpected, context)
 
+    def test_unset_origin_head_is_reported_not_skipped(self) -> None:
+        # CP-26: with origin/HEAD unset the branch check was skipped silently, even on a feature branch.
+        clone = self.clone_of_fixture()
+        git(clone, "switch", "-q", "-c", "feature")
+        git(clone, "remote", "set-head", "origin", "-d")
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("origin/HEAD is not set", context)
+        self.assertIn("remote set-head origin -a", context)
+
+    def test_a_failed_git_status_is_not_read_as_clean(self) -> None:
+        # CP-26: a nonzero `git status` left stdout empty, which read as "no uncommitted changes".
+        clone = self.clone_of_fixture()
+        (clone / ".git" / "index").write_bytes(b"not an index")
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("could not check the profile clone", context)
+        self.assertIn("git status exit", context)
+
 
 @unittest.skipUnless(os.name == "nt" and shutil.which(POWERSHELL), "Show-AuditAlerts.ps1 is Windows-only")
 class AuditAlertsHook(Sandbox):
