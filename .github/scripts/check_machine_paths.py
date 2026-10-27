@@ -14,8 +14,10 @@ Usage:
   python check_machine_paths.py --self-test     # run the built-in rule cases
 
 What is scanned: every file ``git ls-files`` lists (tracked or staged), read from the
-working tree. Files with a NUL byte in their first 8 KiB are treated as binary and
-skipped (counted in the summary). Nothing else is exempt unless the allowlist says so.
+working tree. A file that starts with a byte-order mark is decoded with that codec
+(UTF-8, UTF-16 or UTF-32) and scanned; any other file with a NUL byte in its first
+8 KiB is treated as binary and skipped (counted in the summary). Nothing else is
+exempt unless the allowlist says so.
 
 Rules (each match is one finding):
   drive-path   a Windows drive-letter path: a letter, a colon, then either separator
@@ -52,6 +54,9 @@ from pathlib import Path
 
 ALLOW_FILE = ".machine-paths-allow.json"
 BINARY_SNIFF = 8192
+# Longest first: the UTF-32LE mark begins with the UTF-16LE one. Each codec consumes its own mark.
+BOMS = [(b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
+        (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"), (b"\xef\xbb\xbf", "utf-8-sig")]
 
 SEP = r"[\\/]"
 RULES: list[tuple[str, re.Pattern[str], str]] = [
@@ -170,6 +175,17 @@ def tracked_files(root: Path) -> list[str]:
     return sorted(p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p)
 
 
+def decode_text(data: bytes) -> str | None:
+    """The file's text, or None for binary. A byte-order mark picks the codec, so UTF-16 and UTF-32 text
+    (PowerShell 5.1 writes UTF-16LE by default) is scanned rather than mistaken for binary by its NUL bytes."""
+    for bom, codec in BOMS:
+        if data.startswith(bom):
+            return data.decode(codec, errors="replace")
+    if b"\0" in data[:BINARY_SNIFF]:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
 def check(root: Path, allow_path: Path) -> int:
     allow = load_allowlist(allow_path)
     findings, binary, scanned = [], 0, 0
@@ -182,11 +198,11 @@ def check(root: Path, allow_path: Path) -> int:
         except OSError as exc:
             findings.append(f"{rel}: unreadable: {exc.strerror}")
             continue
-        if b"\0" in data[:BINARY_SNIFF]:
+        text = decode_text(data)
+        if text is None:
             binary += 1
             continue
         scanned += 1
-        text = data.decode("utf-8", errors="replace")
         candidates = [e for e in allow if e["path_re"].match(rel)]
         for lineno, line in enumerate(text.splitlines(), 1):
             for rid, text_hit, pos in scan_line(line):
@@ -310,6 +326,10 @@ def _repo_cases() -> list[tuple[str, bool]]:
         cases.append(("stale entry fails the run", run(root) == 1))
         (root / ALLOW_FILE).write_text(json.dumps([{"path": "*.py"}]), encoding="utf-8")
         cases.append(("entry without reason is a config error", run(root) == 2))
+        (root / ALLOW_FILE).write_text(json.dumps(allow[:1]), encoding="utf-8")
+        (root / "out16.ps1").write_bytes(_expand("$p = '<D>/real/y'\r\n").encode("utf-16"))
+        subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+        cases.append(("UTF-16 text with a byte-order mark is scanned", run(root) == 1))
     return cases
 
 

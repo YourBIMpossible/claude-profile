@@ -2,6 +2,8 @@
 
 - CP-5: an allowlist entry's `match` used to cover every hit on the line, so one allowlisted fixture hid a real path
   written next to it. An entry now covers only the hits in the path token its `match` is found in.
+- CP-6: a file with a NUL byte was taken as binary, so UTF-16 text (PowerShell 5.1's default `Out-File` encoding)
+  was never scanned. A byte-order mark now selects the codec before the binary check.
 
 Every case runs the shipped scanner exactly as CI runs it, against a throwaway git repository. Fixture paths are
 assembled from pieces so that this file holds no literal machine path (it is scanned too).
@@ -108,6 +110,37 @@ def test_cp5_a_match_found_later_in_the_same_token_covers_the_hit():
     assert code == 0, out
     code, out = scan({"a.ps1": f"$ack = '{token}'; $src = '{REAL_USER_PATH}'\n"}, [entry])
     assert code == 1 and len(findings(out)) == 1 and "('C:" in out, out
+
+
+# --- CP-6: UTF-16 text is decoded and scanned, not skipped as binary ----------------------------------------------
+
+def _text(body: str) -> str:
+    return "# header\r\n" + body + "\r\n"
+
+
+def test_cp6_utf16le_with_bom_is_scanned():
+    code, out = scan({"a.ps1": b"\xff\xfe" + _text(f"$p = '{REAL_USER_PATH}'").encode("utf-16-le")}, [])
+    assert code == 1 and "a.ps1:2: drive-path" in out and "0 binary skipped" in out, out
+
+
+def test_cp6_utf16be_with_bom_is_scanned():
+    code, out = scan({"a.ps1": b"\xfe\xff" + _text(f"$p = '{REAL_UNC}'").encode("utf-16-be")}, [])
+    assert code == 1 and "a.ps1:2: unc-path" in out, out
+
+
+def test_cp6_utf8_with_bom_is_scanned():
+    code, out = scan({"a.ps1": b"\xef\xbb\xbf" + _text(f"$p = '{REAL_USER_PATH}'").encode("utf-8")}, [])
+    assert code == 1 and "a.ps1:2: drive-path" in out, out
+
+
+def test_cp6_a_clean_utf16_file_passes_and_is_counted_as_text():
+    code, out = scan({"a.ps1": b"\xff\xfe" + _text("Write-Output 'hello'").encode("utf-16-le")}, [])
+    assert code == 0 and "0 binary skipped" in out, out
+
+
+def test_cp6_a_real_binary_is_still_skipped():
+    code, out = scan({"b.bin": b"\x89PNG\x00\x00" + REAL_USER_PATH.encode()}, [])
+    assert code == 0 and "1 binary skipped" in out, out
 
 
 if __name__ == "__main__":
