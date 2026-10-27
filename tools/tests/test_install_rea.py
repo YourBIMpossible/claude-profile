@@ -86,7 +86,7 @@ class InstallReaStubbed(unittest.TestCase):
         self.write_stub("node", NODE_STUB)
         self.write_stub("npm", NPM_STUB.replace("{prefix}", str(self.prefix)))
         self.write_stub("claude", CLAUDE_STUB)
-        system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+        system32 = Path(os.environ["SystemRoot"]) / "System32"
         self.env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{system32}", "STUB_NODE_VERSION": "v24.11.0",
                     "STUB_STATUS": "Connected", "STUB_COMMAND": "node", "STUB_ARGS": f"{self.entry_forward} --mcp"}
 
