@@ -196,6 +196,7 @@ async function refresh($, force) {
 }
 
 async function refreshOnce($, force) {
+  const prevErr = S.err
   try {
     if (!(await fence($))) {
       if (timer) timer.cancel()
@@ -221,12 +222,14 @@ async function refreshOnce($, force) {
       S.anchor ? `${S.anchor.rel}:${S.anchor.unreadable ? 'unreadable' : S.anchor.mtime}` : 'none', `${S.mission.mtime}:${S.mission.unreadable}`, cwd, sid, S.note, l ? l.workSince : '',
       S.usage.ctx, S.usage.limits.map((x) => `${x.label}${x.pct}${x.reset == null ? '' : Math.floor(x.reset / 60_000)}`).join(','),
     ].join('|')
-    if (force || next !== sig) {
+    if (force || next !== sig || prevErr) {
       sig = next
       $.ui.invalidate('ui.render')
     }
   } catch {
     S.err = 'band read failed; showing last good state'
+    // repaint once when the error appears, so it is not hidden until something else redraws
+    if (S.err !== prevErr) try { $.ui.invalidate('ui.render') } catch { /* nothing more to do: the next render shows it */ }
   }
 }
 

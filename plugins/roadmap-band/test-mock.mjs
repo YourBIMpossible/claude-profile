@@ -30,7 +30,7 @@ async function makeHost(over = {}) {
     store: { get: async (k) => store.get(k), set: async (k, v) => { if (env.setThrow) throw new Error('store write failed'); store.set(k, v) }, delete: async (k) => { store.delete(k) } },
     env: { get: async () => '1' },
     session: {
-      cwd: async () => env.cwd, id: async () => { if (env.sidThrow) throw new Error('no session id'); return env.sid }, messages: async () => env.messages,
+      cwd: async () => { if (env.cwdThrow) throw new Error('cwd unavailable'); return env.cwd }, id: async () => { if (env.sidThrow) throw new Error('no session id'); return env.sid }, messages: async () => env.messages,
       usage: async () => { env.usageCalls = (env.usageCalls || 0) + 1; if (env.block) { const g = env.block; env.block = null; await g } if (env.usageFail) throw new Error('x'); return { context: { percent: 41.2 }, rateLimits: [{ kind: 'five_hour', percentUsed: 23.4, resetsAt: env.now / 1000 + 7800 }, { kind: 'weekly', percentUsed: 40, resetsAt: 'bogus' }] } },
     },
     ui: { invalidate: () => { env.invalidations = (env.invalidations || 0) + 1 }, resolve: () => ({ Box: (p) => ({ ...p, t: 'Box' }), Text: (p) => ({ ...p, t: 'Text' }) }) },
@@ -351,6 +351,24 @@ ${line}` })
   ok('18 acceptance: 0/0 (no denominator) -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
   r = await one('Roadmap: X [complete] · acceptance: 7/7 verified (all) · pause: safe')
   ok('18 control: acceptance 7/7 parses', r.includes('X [complete]') && r.includes('acceptance 7/7 verified (all)') && r.includes('CHECKPOINT REPORTED'), r)
+}
+{ // 19 CP-33: a failed refresh repaints with the error, and the recovery repaints it away
+  const h = await safeLine()
+  ok('19 baseline renders without an error', !(await h.render()).includes('band read failed'))
+  const i0 = h.env.invalidations || 0
+  h.env.cwdThrow = true
+  await h.timers[0].fn()
+  ok('19 failing tick repaints', (h.env.invalidations || 0) > i0, String((h.env.invalidations || 0) - i0))
+  let r = await h.render()
+  ok('19 the error is on the band', r.includes('band read failed'), r)
+  const i1 = h.env.invalidations || 0
+  await h.timers[0].fn()
+  ok('19 a repeated identical failure does not repaint again', (h.env.invalidations || 0) === i1)
+  h.env.cwdThrow = false
+  await h.timers[0].fn()
+  ok('19 recovery repaints', (h.env.invalidations || 0) > i1)
+  r = await h.render()
+  ok('19 recovered band no longer shows the error', !r.includes('band read failed'), r)
 }
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
