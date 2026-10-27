@@ -435,6 +435,75 @@ ${LINE}` })
   r = await one('Roadmap: X [active] · pause: safe · blocker: none')
   ok('25 valid line with blocker: none shows no BLOCKER', r.includes('CHECKPOINT REPORTED') && !r.includes('BLOCKER'), r)
 }
+{ // 26 F-106 R-c: sessions without an id are told apart by directory, so a hot reload fences the older instance and keys do not pile up
+  const nosid = (cwd) => ({ env: { sidThrow: true, cwd } })
+  const store = new Map()
+  const a = await makeHost({ store, ...nosid('/fixture/repo') })
+  await a.call('session.start', {})
+  const b = await makeHost({ store, ...nosid('/fixture/repo') })
+  await b.call('session.start', {})
+  const before = a.env.invalidations || 0
+  await a.timers[0].fn()
+  ok('26 hot reload without an id: the older instance in the same directory is fenced and stops refreshing', a.timers[0].cancelled && (a.env.invalidations || 0) === before)
+  const ib = b.env.invalidations || 0
+  b.env.now += 60_000
+  b.env.files['WORKLOG.md'] = b.env.now
+  await b.timers[0].fn()
+  ok('26 the newer instance keeps refreshing', !b.timers[0].cancelled && (b.env.invalidations || 0) > ib)
+  ok('26 two instances in one directory leave one fence key, not one each', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 1, JSON.stringify([...store.keys()]))
+  const many = new Map()
+  for (let i = 0; i < 6; i++) await (await makeHost({ store: many, ...nosid('/fixture/repo') })).call('session.start', {})
+  ok('26 six reloads in one directory still leave one gen:nosid key', [...many.keys()].length === 1, JSON.stringify([...many.keys()]))
+  const other = await makeHost({ store, ...nosid('/fixture/other') })
+  await other.call('session.start', {})
+  const ib2 = b.env.invalidations || 0
+  b.env.now += 60_000
+  b.env.files['WORKLOG.md'] = b.env.now
+  await b.timers[0].fn()
+  ok('26 a session without an id in ANOTHER directory does not silence it (CP-31 kept)', !b.timers[0].cancelled && (b.env.invalidations || 0) > ib2)
+  ok('26 each directory has its own key', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 2, JSON.stringify([...store.keys()]))
+  await a.call('session.end', {})
+  ok('26 the fenced older instance ending does not delete the newer instance key', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 2)
+  await b.call('session.end', {})
+  ok('26 the newer instance ending removes only its own key', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 1)
+  const sid1 = await makeHost({ store, env: { sid: 'real-1', cwd: '/fixture/repo' } })
+  await sid1.call('session.start', {})
+  ok('26 a session WITH an id still uses its own gen:<id> key', store.has('gen:real-1'))
+  const nocwd = new Map()
+  const x = await makeHost({ store: nocwd, env: { sidThrow: true, cwdThrow: true } })
+  await x.call('session.start', {})
+  const y = await makeHost({ store: nocwd, env: { sidThrow: true, cwdThrow: true } })
+  await y.call('session.start', {})
+  await x.timers[0].fn()
+  ok('26 no id and no directory: instances stay independent (nothing to tell them apart by)', !x.timers[0].cancelled && [...nocwd.keys()].length === 2, JSON.stringify([...nocwd.keys()]))
+}
+{ // 27 F-106 R-resume: an attention footer that did not parse is recovered after a resume, not skipped for an older line
+  const OLD = 'Roadmap: Older [active] · acceptance: 1/2 verified (x) · next: later (you) · pause: safe'
+  const resumed = async (msgs) => {
+    const h = await makeHost({ env: { messages: msgs } })
+    await h.call('session.start', {})
+    return h
+  }
+  let h = await resumed([{ role: 'assistant', text: `done\n${OLD}` }, { role: 'user', text: 'go on' }, { role: 'assistant', text: 'working\nRoadmap: garbage · pause: attention · blocker: waiting on the owner' }])
+  let r = await h.render()
+  ok('27 a malformed footer that asks for attention is recovered after a resume: NEEDS YOU, as written', r.includes('NEEDS YOU') && r.includes('garbage') && !r.includes('Older [active]'), r)
+  ok('27 and it says it did not parse', r.includes('did not parse'), r)
+  h = await resumed([{ role: 'assistant', text: `done\n${OLD}` }, { role: 'assistant', text: 'Roadmap: see notes · blocker: waiting on x' }])
+  r = await h.render()
+  ok('27 a malformed footer with a real blocker also comes back as NEEDS YOU', r.includes('NEEDS YOU') && r.includes('waiting on x'), r)
+  h = await resumed([{ role: 'assistant', text: `done\n${OLD}` }, { role: 'assistant', text: 'Roadmap: see notes · blocker: none' }])
+  r = await h.render()
+  ok('27 control: a malformed footer with no attention and no blocker still falls back to the older line (UNVERIFIED, resumed)', r.includes('UNVERIFIED') && r.includes('Older [active]') && r.includes('recovered from transcript'), r)
+  h = await resumed([{ role: 'assistant', text: 'Roadmap: garbage · pause: attention' }, { role: 'assistant', text: `fine\n${OLD}` }])
+  r = await h.render()
+  ok('27 control: a good line NEWER than the malformed attention one wins, as in a live turn', r.includes('Older [active]') && !r.includes('garbage'), r)
+  h = await resumed([{ role: 'assistant', text: 'Roadmap: garbage · pause: attention' }, { role: 'user', text: 'q' }, { role: 'assistant', text: 'plain reply' }])
+  r = await h.render()
+  ok('27 the replies since the recovered footer are counted', r.includes('NEEDS YOU') && r.includes('1 reply since'), r)
+  h.env.cwd = '/fixture/other'
+  r = await h.render()
+  ok('27 a recovered attention line still goes UNVERIFIED when the directory changed', r.includes('UNVERIFIED') && r.includes('directory changed'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)

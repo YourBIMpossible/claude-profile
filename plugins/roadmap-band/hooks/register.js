@@ -190,7 +190,8 @@ function fresh() {
 
 // The fence is keyed by session id: two sessions share one store and must not silence each other.
 // Hot reload re-runs session.start in a new module instance of the SAME session; only the newest instance works.
-// Without a session id the key is per instance (see session.start), so such an instance fences only itself.
+// Without a session id the key is per DIRECTORY (see session.start): instances in one directory share a key, so the newest
+// fences the older ones (a hot reload), while sessions in other directories keep their own keys and are not silenced.
 async function fence($) {
   if (fenceOff) return true
   try {
@@ -261,8 +262,13 @@ export function register(on) {
     try { S.debug = !!(await $.env.get('ROADMAP_BAND_DEBUG')) } catch { /* debug off */ }
     let sid = ''
     try { sid = String((await $.session.id()) || '') } catch { /* identity unavailable */ }
-    // Without a session id there is nothing to share a key with: each instance fences only itself.
-    fenceKey = sid ? `gen:${sid}` : `gen:nosid:${GEN}`
+    // Without a session id the directory is the best identity there is. Instances in the same directory share one key, so a hot
+    // reload fences the older instance (it can no longer keep refreshing beside the new one) and keys do not pile up, one per
+    // directory instead of one per instance; sessions in other directories keep their own key and silence nobody. With neither
+    // an id nor a directory nothing tells instances apart, so such an instance fences only itself, as before.
+    let dir = ''
+    if (!sid) try { dir = String((await $.session.cwd()) || '') } catch { /* directory unavailable */ }
+    fenceKey = sid ? `gen:${sid}` : `gen:nosid:${dir || GEN}`
     fenceOff = false
     pending = false
     try { await $.store.set(fenceKey, GEN) } catch { fenceOff = true }
@@ -278,13 +284,21 @@ export function register(on) {
           S.repliesSince = since
           break
         }
+        if (p && p.malformed && p.attention) {
+          // The same route as a live turn (turn.complete): a footer that did not parse but asks for the owner is shown as written,
+          // not skipped for an older line. Its age is unknown; the directory and session checks still apply once they are known.
+          S.line = { raw: p.raw, unparsed: true, pause: 'attention', blocker: p.blocker, at: null, resumed: false, fromTranscript: true, workSince: false, cwd: '', sid: '' }
+          S.repliesSince = since
+          S.note = 'last Roadmap line did not parse; showing it as written'
+          break
+        }
         since += 1
       }
     } catch { /* no transcript access: start empty */ }
     if (timer) timer.cancel()
     timer = $.clock.every(TICK_MS, () => refresh($, false))
     await refresh($, true)
-    if (S.line && S.line.resumed) {
+    if (S.line && (S.line.resumed || S.line.fromTranscript)) {
       S.line.cwd = S.cwd
       S.line.sid = S.sid
     }
