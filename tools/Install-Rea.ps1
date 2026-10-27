@@ -122,7 +122,12 @@ if ($matchesExpected) {
 }
 if ($registered) {
     Write-Step "MCP server '$serverName' registered with a different command - re-registering"
-    if (-not $DryRun) { & claude mcp remove --scope user $serverName | Out-Null }
+    if (-not $DryRun) {
+        $removal = Invoke-NativeLines $claude.Source @('mcp', 'remove', '--scope', 'user', $serverName)
+        if ($removal.ExitCode -ne 0) {
+            throw "claude mcp remove --scope user $serverName failed (exit $($removal.ExitCode)); not re-adding it. $($removal.Err)"
+        }
+    }
 }
 Write-Step "claude mcp add --scope user $serverName -- node $expectedArgs"
 if ($DryRun) { return }

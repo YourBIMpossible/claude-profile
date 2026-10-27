@@ -129,6 +129,20 @@ class InstallReaStubbed(unittest.TestCase):
                 self.assertNotIn("RemoteException", out)
                 self.assertIn("[rea] claude mcp add --scope user rea -- node", out)
 
+    # CT-SLOP1026 / CP-22: a failed `claude mcp remove` must stop the run before `mcp add`.
+    def test_failed_remove_stops_before_re_adding(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.marker.write_text("", encoding="ascii")
+                self.log.unlink(missing_ok=True)
+                proc = self.run_script(shell, STUB_COMMAND="npx", STUB_REMOVE_FAIL="1")
+                out = proc.stdout + proc.stderr
+                self.assertNotEqual(proc.returncode, 0, out)
+                self.assertIn("claude mcp remove --scope user rea failed (exit 1)", out)
+                self.assertIn("not re-adding it. Failed to remove MCP server rea", out)
+                self.assertIn("mcp remove --scope user rea", self.calls())
+                self.assertNotIn("mcp add", self.calls())
+
 
 if __name__ == "__main__":
     unittest.main()
