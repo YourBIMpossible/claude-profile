@@ -176,6 +176,7 @@ function fresh() {
 
 // The fence is keyed by session id: two sessions share one store and must not silence each other.
 // Hot reload re-runs session.start in a new module instance of the SAME session; only the newest instance works.
+// Without a session id the key is per instance (see session.start), so such an instance fences only itself.
 async function fence($) {
   if (fenceOff) return true
   try {
@@ -353,8 +354,8 @@ export function register(on) {
     let unverifiable = ''
     if (S.err) unverifiable = S.err // the last refresh failed: anchor and identity facts may be stale
     else if (l && l.superseded) unverifiable = S.note
-    else if (a && a.unreadable) unverifiable = 'status anchor unreadable'
-    else if (a && !a.mtime) unverifiable = 'status anchor age unavailable'
+    else if (a && a.unreadable) unverifiable = `${a.rel} unreadable`
+    else if (a && !a.mtime) unverifiable = `${a.rel} age unavailable`
     else if (S.mission && S.mission.unreadable) unverifiable = 'NORTHSTAR unreadable'
     else if (!S.sid || (l && !l.sid)) unverifiable = 'session identity unavailable'
     if (l) {
@@ -390,7 +391,8 @@ export function register(on) {
       const rec = l.at ? `model-reported ${fmtAge(now - l.at)} ago` : 'model-reported earlier session, age unknown'
       r2.push(`${rec}${S.repliesSince ? ` · ${S.repliesSince} repl${S.repliesSince === 1 ? 'y' : 'ies'} since` : ''}`)
     }
-    if (a) r2.push(`${a.rel} ${a.unreadable ? 'unreadable' : a.mtime ? fmtAge(now - a.mtime) + ' ago' : 'age unavailable'}`)
+    const anchorText = a ? `${a.rel} ${a.unreadable ? 'unreadable' : a.mtime ? fmtAge(now - a.mtime) + ' ago' : 'age unavailable'}` : ''
+    if (a) { if (anchorText !== why) r2.push(anchorText) }
     else r2.push('no status anchor file in this directory')
     if (S.note && S.note !== why) r2.push(S.note)
     if (S.err && S.err !== why) r2.push(S.err)

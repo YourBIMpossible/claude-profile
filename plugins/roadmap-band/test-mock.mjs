@@ -407,6 +407,12 @@ ${LINE}` })
   r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: safe-ish')).render()
   ok('22 control: safe-ish still not safe', r.includes('PAUSE UNKNOWN'), r)
 }
+{ // 23 rev 2: row 2 names an unreadable or undated anchor once
+  let r = await (await safeLine({ env: { files: { 'CURRENT-STATE.md': 1, 'WORKLOG.md': 1 }, statThrow: ['CURRENT-STATE.md'] } })).render()
+  ok('23 unreadable anchor named once', r.includes('UNVERIFIED') && r.split('unreadable').length === 2 && r.includes('CURRENT-STATE.md unreadable'), r)
+  r = await (await safeLine({ env: { nullMtime: ['WORKLOG.md'] } })).render()
+  ok('23 undated anchor named once', r.includes('UNVERIFIED') && r.split('age unavailable').length === 2 && r.includes('WORKLOG.md age unavailable'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)
