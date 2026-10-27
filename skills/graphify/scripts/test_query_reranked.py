@@ -11,12 +11,14 @@ Run: python -m unittest test_query_reranked -v
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -29,6 +31,52 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))  # the pr
 import machine_config  # noqa: E402
 
 BIMPOSSIBLE_BACKEND = Path(machine_config.load()["repos_root"]) / "BIMpossible" / "backend"
+
+
+HAVE_GRAPHIFY = importlib.util.find_spec("graphify") is not None
+
+
+def _graphify_stub() -> dict:
+    """Stand-ins for the two `graphify` modules the wrapper imports, for an environment without the graphify package (CI
+    installs only pytest): `graphify.paths` (one constant, the value the real package defines, checked below) and
+    `graphify.querylog` (log_query records its calls on `.calls` instead of writing a log)."""
+    pkg = types.ModuleType("graphify")
+    pkg.__path__ = []
+    paths = types.ModuleType("graphify.paths")
+    paths.GRAPHIFY_OUT = "graphify-out"
+    querylog = types.ModuleType("graphify.querylog")
+    querylog.calls = []
+    querylog.log_query = lambda **kwargs: querylog.calls.append(kwargs)
+    pkg.paths, pkg.querylog = paths, querylog
+    return {"graphify": pkg, "graphify.paths": paths, "graphify.querylog": querylog}
+
+
+class WithoutGraphifyPackage(unittest.TestCase):
+    """Tests of the wrapper's own logic must not need the graphify package: with it absent, the two modules are stubbed;
+    with it present, the real ones are used."""
+
+    def setUp(self):
+        super().setUp()
+        if not HAVE_GRAPHIFY:
+            patcher = mock.patch.dict(sys.modules, _graphify_stub())
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class TestGraphifyStub(unittest.TestCase):
+    @unittest.skipUnless(HAVE_GRAPHIFY, "the graphify package is not installed here")
+    def test_the_stub_constant_is_the_real_one(self):
+        from graphify.paths import GRAPHIFY_OUT
+        self.assertEqual(_graphify_stub()["graphify.paths"].GRAPHIFY_OUT, GRAPHIFY_OUT)
+
+    @unittest.skipUnless(HAVE_GRAPHIFY, "the graphify package is not installed here")
+    def test_the_stub_log_query_takes_the_keywords_the_real_one_takes(self):
+        import inspect
+        from graphify import querylog
+        real = inspect.signature(querylog.log_query)
+        wanted = {"kind", "question", "corpus", "result", "mode", "depth", "token_budget", "duration_ms"}
+        self.assertTrue(wanted <= set(real.parameters) or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in real.parameters.values()), real)
 
 
 class TestTokenize(unittest.TestCase):
@@ -237,7 +285,7 @@ class TestArgParsing(unittest.TestCase):
         self.assertEqual(unknown, ["--some-future-flag", "v"])
 
 
-class TestGraphResolution(unittest.TestCase):
+class TestGraphResolution(WithoutGraphifyPackage):
     def _args(self, graph=None):
         return mock.Mock(graph=graph)
 
@@ -275,7 +323,7 @@ class TestGraphResolution(unittest.TestCase):
             self.assertIsNone(args.graph)
 
 
-class TestPassthroughTelemetry(unittest.TestCase):
+class TestPassthroughTelemetry(WithoutGraphifyPackage):
     """Passthrough queries log exactly one wrapper record stamped rerank=false."""
 
     STDOUT = b"Traversal: BFS | 1 nodes found\n\nNODE Foo [src=a.py loc=L1]\n"
@@ -302,6 +350,7 @@ class TestPassthroughTelemetry(unittest.TestCase):
                        if log.exists() else [])
             return code, records, run
 
+    @unittest.skipUnless(HAVE_GRAPHIFY, "reads the record the graphify package's querylog writes")
     def test_success_logs_one_rerank_false_record(self):
         code, records, run = self._run(0, ["find foo"])
         self.assertEqual(code, 0)
@@ -314,6 +363,7 @@ class TestPassthroughTelemetry(unittest.TestCase):
         self.assertEqual(rec["nodes_returned"], 1)
         self.assertEqual(run.call_args.kwargs["env"]["GRAPHIFY_QUERY_LOG_DISABLE"], "1")
 
+    @unittest.skipUnless(HAVE_GRAPHIFY, "reads the record the graphify package's querylog writes")
     def test_dfs_logs_mode_dfs_even_with_gate_forced_on(self):
         code, records, _ = self._run(0, ["find foo", "--dfs", "--rerank"])
         self.assertEqual(code, 0)
@@ -325,6 +375,52 @@ class TestPassthroughTelemetry(unittest.TestCase):
         code, records, _ = self._run(3, ["find foo"])
         self.assertEqual(code, 3)
         self.assertEqual(records, [])
+
+
+class TestPassthroughTelemetryContract(unittest.TestCase):
+    """The wrapper's side of the logging contract, against a stubbed querylog (so it runs without the graphify package):
+    exactly one record per query, stamped rerank=false, the mode and question passed through, none for a failed query."""
+
+    STDOUT = b"Traversal: BFS | 1 nodes found\n\nNODE Foo [src=a.py loc=L1]\n"
+
+    def _run(self, rc, argv):
+        stub = _graphify_stub()
+        completed = subprocess.CompletedProcess([], rc, stdout=self.STDOUT, stderr=b"")
+        with tempfile.TemporaryDirectory() as td:
+            graph = Path(td) / "graphify-out" / "graph.json"
+            graph.parent.mkdir()
+            graph.write_text("{}")
+            env = {"GRAPHIFY_RERANK": "", "GRAPHIFY_QUERY_LOG_DISABLE": ""}
+            with (
+                mock.patch.dict(sys.modules, stub),
+                mock.patch.dict(os.environ, env),
+                mock.patch.object(qr, "GRAPHIFY", Path(td) / "graphify.exe"),
+                mock.patch.object(qr.subprocess, "run", return_value=completed),
+                mock.patch.object(qr.Path, "cwd", return_value=Path(td)),
+                mock.patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+                mock.patch.object(sys, "stderr", io.TextIOWrapper(io.BytesIO())),
+            ):
+                code = qr.main(argv)
+            return code, list(stub["graphify.querylog"].calls)
+
+    def test_success_logs_one_rerank_false_record(self):
+        code, calls = self._run(0, ["find foo"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertIs(call["rerank"], False)
+        self.assertEqual((call["via"], call["kind"], call["mode"], call["question"]), ("wrapper", "query", "bfs", "find foo"))
+        self.assertTrue(call["corpus"].endswith("graph.json"))
+
+    def test_dfs_logs_mode_dfs_even_with_gate_forced_on(self):
+        code, calls = self._run(0, ["find foo", "--dfs", "--rerank"])
+        self.assertEqual(code, 0)
+        self.assertEqual((calls[0]["mode"], calls[0]["rerank"]), ("dfs", False))
+
+    def test_failed_query_logs_nothing(self):
+        code, calls = self._run(3, ["find foo"])
+        self.assertEqual(code, 3)
+        self.assertEqual(calls, [])
 
 
 class TestMissingBinary(unittest.TestCase):

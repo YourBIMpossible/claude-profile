@@ -2,7 +2,8 @@ name: install-tests
 
 # The installer, the session-start sync, the machine config and the graphify scripts on Linux and Windows.
 # Every test runs in a sandboxed HOME/USERPROFILE; no secrets, read-only token. The graphify tests need no graphify:
-# their live-graph cases skip themselves when the binary or the graph is missing.
+# the wrapper's own logic runs against stubbed graphify modules, and the tests that need the package, its binary or a
+# real graph skip themselves.
 on:
   pull_request:
   workflow_dispatch:
