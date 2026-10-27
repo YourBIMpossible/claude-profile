@@ -208,7 +208,7 @@ class CleanInstall(Sandbox):
         probe = ("import json, sys; sys.path.insert(0, sys.argv[1]); import pipeline, screen; "
                  "print(json.dumps([pipeline.tool_identity()[1], screen.__file__, sys.modules['shell_paths'].__file__]))")
         proc = subprocess.run([sys.executable, "-I", "-c", probe, str(unit)], capture_output=True, text=True,
-                              timeout=60, cwd=self.root)
+                              timeout=60, env=self.env(), cwd=self.root)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         sha, screen_file, shell_paths_file = json.loads(proc.stdout)
         self.assertEqual(sha, CAPTURE_TOOL_SHA256, "vendor/README.md tool_sha256 is stale or the unit changed")
@@ -216,6 +216,10 @@ class CleanInstall(Sandbox):
             self.assertTrue(Path(loaded).resolve().is_relative_to((REPO / "vendor").resolve()), loaded)
 
     def test_vendored_capture_hooks_capture_synthetic_episodes(self) -> None:
+        # capture.py dry refuses any output path with a "scratchpad" part (dryrun.check_out_dir), and
+        # the sandbox must stay under TEMP (see env()), so a session whose TEMP is a scratchpad can't run it.
+        if any(part.lower() == "scratchpad" for part in self.root.parts):
+            self.skipTest(f"TEMP is inside a scratchpad ({self.root.parent}); capture.py dry refuses scratchpad output")
         out = self.root / "dry"
         out.mkdir()
         env = {k: v for k, v in self.env().items() if not k.startswith(("EC_CAPTURE", "EVIDENCE_CAPTURE"))}
@@ -271,7 +275,8 @@ class CleanInstall(Sandbox):
         locked = {"hook_event_name": "PreToolUse", "tool_name": "Write",
                   "tool_input": {"file_path": str(self.root / "NORTHSTAR.md"), "content": "x"}}
         for stdin in (json.dumps(locked), "not json"):
-            proc = subprocess.run([sys.executable, str(gate)], input=stdin, capture_output=True, text=True, timeout=30)
+            proc = subprocess.run([sys.executable, str(gate)], input=stdin, capture_output=True, text=True, timeout=30,
+                                  env=self.env())
             self.assertEqual(proc.returncode, 2, f"gate did not block: {stdin!r}")
 
     def test_second_run_changes_nothing(self) -> None:
