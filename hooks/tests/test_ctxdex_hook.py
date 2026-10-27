@@ -1,14 +1,19 @@
 """Self-test driver for ctxdex_autoindex.py — exercises it exactly as Claude
 Code would (JSON on stdin, inspect stdout/exit code), then checks ctxdex's
-own DB for what did/didn't get indexed. Uses an isolated synthetic project
-so nothing touches real data.
+own DB for what did/didn't get indexed. Every run gets its own throwaway
+sandbox (a copy of ctxdex.py, so its database, a working directory and a fake
+home for the hook's log and tool-results tree), so nothing touches real data and
+two runs on one machine cannot collide (CT-SLOP1026 / N-3).
 """
 import json
+import os
+import shutil
 import subprocess
 import sys
 import sqlite3
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "ctxdex_autoindex.py")
@@ -16,17 +21,58 @@ PROFILE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROFILE / "tools"))
 import machine_config  # noqa: E402
 
-# The real ctxdex in this machine's claude-tools clone (CTXDEX_DIR overrides, as for the hook).
-import os  # noqa: E402
-CTXDEX_DIR = Path(os.environ.get("CTXDEX_DIR") or Path(machine_config.load().get("tools_root") or "missing-claude-tools") / "ctxdex")
-CTXDEX = (CTXDEX_DIR / "ctxdex.py").as_posix()
-PROJECT = "ctxdex-hook-selftest"
-# Isolated synthetic scratch root under the OS temp dir — the self-test writes
-# fixture files at f"{CWD}-*.txt", so this MUST be a writable, throwaway location
-# outside any real tree (previously {repos}/AI-Dev/_scratch, which both created an
-# operative dependency on the retired AI-Dev root and littered that archive).
-CWD = str(Path(tempfile.gettempdir()) / "ctxdex-hook-selftest")
-DB_PATH = CTXDEX_DIR / "data" / f"{PROJECT}.db"
+# The real ctxdex in this machine's claude-tools clone (CTXDEX_DIR overrides, as for the hook). It is only READ: each run copies
+# ctxdex.py into its own sandbox and works there.
+SOURCE_CTXDEX_DIR = Path(os.environ.get("CTXDEX_DIR") or Path(machine_config.load().get("tools_root") or "missing-claude-tools") / "ctxdex")
+
+# Per-run sandbox (set by setup_sandbox, removed by teardown_sandbox). ctxdex.py keeps its databases next to itself, the hook honours
+# CTXDEX_DIR, and Path.home() follows HOME and USERPROFILE, so a fresh temp root holding a copy of ctxdex.py and a fake home isolates
+# the database, the hook's log and the tool-results tree without changing the hook. The project name is the working directory's name
+# (the hook derives it from the cwd), made unique per run. The self-test writes fixture files at f"{CWD}-*.txt", so all of it lives
+# under the one throwaway root, outside any real tree.
+SANDBOX_ROOT = None
+CTXDEX_DIR = None
+CTXDEX = None
+PROJECT = None
+CWD = None
+DB_PATH = None
+TEST_HOME = None
+
+
+def setup_sandbox() -> Path:
+    """Create this run's sandbox and point the module's locations at it. Returns the sandbox root."""
+    global SANDBOX_ROOT, CTXDEX_DIR, CTXDEX, PROJECT, CWD, DB_PATH, TEST_HOME
+    root = Path(tempfile.mkdtemp(prefix="ctxdex-hook-selftest-"))
+    CTXDEX_DIR = root / "ctxdex"
+    CTXDEX_DIR.mkdir()
+    shutil.copy2(SOURCE_CTXDEX_DIR / "ctxdex.py", CTXDEX_DIR / "ctxdex.py")
+    CTXDEX = (CTXDEX_DIR / "ctxdex.py").as_posix()
+    PROJECT = "selftest-" + uuid.uuid4().hex[:10]
+    CWD = str(root / "work" / PROJECT)
+    DB_PATH = CTXDEX_DIR / "data" / f"{PROJECT}.db"
+    TEST_HOME = root / "home"
+    TEST_HOME.mkdir()
+    SANDBOX_ROOT = root
+    return root
+
+
+def teardown_sandbox() -> None:
+    """Remove this run's sandbox (best effort: a lock left by a just-exited child must not fail the run)."""
+    global SANDBOX_ROOT
+    if SANDBOX_ROOT is not None:
+        shutil.rmtree(SANDBOX_ROOT, ignore_errors=True)
+        SANDBOX_ROOT = None
+
+
+def hook_env(env_extra=None) -> dict:
+    """The environment the hook runs in: the sandbox's ctxdex copy and fake home, plus any extra variables."""
+    env = os.environ.copy()
+    env["CTXDEX_DIR"] = str(CTXDEX_DIR)
+    env["HOME"] = str(TEST_HOME)
+    env["USERPROFILE"] = str(TEST_HOME)
+    if env_extra:
+        env.update(env_extra)
+    return env
 
 results = []
 
@@ -37,10 +83,7 @@ def check(name, cond, detail=""):
 
 
 def run_hook(payload, env_extra=None):
-    import os
-    env = os.environ.copy()
-    if env_extra:
-        env.update(env_extra)
+    env = hook_env(env_extra)
     p = subprocess.run(
         [sys.executable, HOOK],
         input=json.dumps(payload),
@@ -74,7 +117,15 @@ def clean_db():
 
 
 def run_checks() -> list:
-    """Drive ctxdex_autoindex.py through every scenario. Returns the (name, ok, detail) result tuples."""
+    """Drive ctxdex_autoindex.py through every scenario in a fresh sandbox. Returns the (name, ok, detail) result tuples."""
+    setup_sandbox()
+    try:
+        return _run_scenarios()
+    finally:
+        teardown_sandbox()
+
+
+def _run_scenarios() -> list:
     results.clear()
     # fresh start
     clean_db()
@@ -244,9 +295,7 @@ def run_checks() -> list:
     clean_db()
 
     # --- Scenario 8: native persisted-output pointer is followed (and only when safe) ---
-    import os
-
-    TOOL_RESULTS_DIR = Path.home() / ".claude" / "projects" / "_ctxdex-hook-selftest" / "tool-results"
+    TOOL_RESULTS_DIR = TEST_HOME / ".claude" / "projects" / "_ctxdex-hook-selftest" / "tool-results"
     TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     real_big_file = TOOL_RESULTS_DIR / "selftest-real.txt"
     MARKER = "UNIQUE_MARKER_ONLY_IN_REAL_FILE_9f3a"
@@ -287,7 +336,7 @@ def run_checks() -> list:
     # This is the ACTUAL confirmed live payload shape (2026-08-07 live payload
     # dump) - the primary mechanism. Scenario 8 above tests the secondary
     # string-wrapper fallback only; this is what real Bash calls produce.
-    TOOL_RESULTS_DIR2 = Path.home() / ".claude" / "projects" / "_ctxdex-hook-selftest2" / "tool-results"
+    TOOL_RESULTS_DIR2 = TEST_HOME / ".claude" / "projects" / "_ctxdex-hook-selftest2" / "tool-results"
     TOOL_RESULTS_DIR2.mkdir(parents=True, exist_ok=True)
     real_big_file2 = TOOL_RESULTS_DIR2 / "selftest-real2.txt"
     MARKER2 = "UNIQUE_MARKER_ONLY_IN_REAL_FILE_DICT_7e2b"
