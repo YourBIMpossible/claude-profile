@@ -60,6 +60,7 @@ function trailingFooter(text) {
 
 // Returns null when there is no usable footer, { malformed } when the footer exists but does not hold exactly one
 // [status] after a non-empty milestone, or carries an acceptance that is not n/N with 0 <= n <= N, N >= 1.
+// A malformed footer that still reads `pause: attention` or has a blocker keeps that signal ({ attention, blocker }).
 const STATUS = /\[(proposed|active|blocked|complete)\]/gi
 const ACCEPTANCE = /^(\d+)\/(\d+)(?!\S)/
 function parseRoadmap(text) {
@@ -69,11 +70,7 @@ function parseRoadmap(text) {
   if (/^no anchor\b/i.test(body)) return { noAnchor: body.replace(/^no anchor\s*[—–-]*\s*/i, '') || 'no anchor', raw: body }
   const parts = body.split(FIELD_SPLIT)
   const head = parts.shift() || ''
-  const tags = [...head.matchAll(STATUS)]
-  if (tags.length !== 1) return { malformed: true, raw: body }
-  const sm = tags[0]
-  const out = { raw: body, milestone: head.replace(sm[0], '').trim(), status: sm[1].toLowerCase() }
-  if (!out.milestone) return { malformed: true, raw: body }
+  const fields = {}
   for (const p of parts) {
     const kv = p.match(FIELD)
     if (!kv) continue
@@ -81,15 +78,24 @@ function parseRoadmap(text) {
     if (key === 'pause') {
       // the first word, whole: `safe — reason` is safe, `safe-ish` is not
       const w = kv[2].trim().split(/[\s—–]+/)[0].toLowerCase()
-      out.pause = ['safe', 'attention', 'unknown'].includes(w) ? w : 'unknown'
-    } else if (key === 'acceptance') {
-      const am = kv[2].trim().match(ACCEPTANCE)
-      if (!am || Number(am[2]) < 1 || Number(am[1]) > Number(am[2])) return { malformed: true, raw: body }
-      out.acceptance = kv[2].trim()
-    } else out[key] = kv[2].trim()
+      fields.pause = ['safe', 'attention', 'unknown'].includes(w) ? w : 'unknown'
+    } else fields[key] = kv[2].trim()
   }
-  if (!out.pause) out.pause = 'unknown'
-  return out
+  const malformed = () => {
+    const out = { malformed: true, raw: body }
+    if (fields.pause === 'attention' || fields.blocker) Object.assign(out, { attention: true, blocker: fields.blocker || '' })
+    return out
+  }
+  const tags = [...head.matchAll(STATUS)]
+  if (tags.length !== 1) return malformed()
+  const sm = tags[0]
+  const milestone = head.replace(sm[0], '').trim()
+  if (!milestone) return malformed()
+  if (fields.acceptance != null) {
+    const am = fields.acceptance.match(ACCEPTANCE)
+    if (!am || Number(am[2]) < 1 || Number(am[1]) > Number(am[2])) return malformed()
+  }
+  return { ...fields, raw: body, milestone, status: sm[1].toLowerCase(), pause: fields.pause || 'unknown' }
 }
 
 // Returns null only when every candidate is provably absent. A candidate that cannot be checked or read
@@ -302,14 +308,23 @@ export function register(on) {
         S.line = { ...p, at: now, resumed: false, workSince: false, cwd: S.cwd, sid: S.sid }
         S.repliesSince = 0
         S.note = ''
+      } else if (p && p.malformed && p.attention) {
+        // Unparsed, but it asks for the owner: show it as written rather than an older line.
+        const now = await $.clock.now()
+        S.line = { raw: p.raw, unparsed: true, pause: 'attention', blocker: p.blocker, at: now, resumed: false, workSince: false, cwd: S.cwd, sid: S.sid }
+        S.repliesSince = 0
+        S.note = 'last Roadmap line did not parse; showing it as written'
       } else if (p && p.malformed) {
         S.note = 'last Roadmap line did not parse; showing the previous one'
+        // The model's newest report is unreadable: the kept line no longer describes the state.
+        if (S.line) S.line.superseded = true
         S.repliesSince += 1
       } else {
         S.repliesSince += 1
       }
-      // Work finished without a fresh valid line: any earlier checkpoint claim no longer describes the state.
-      if (worked && S.line && !(p && !p.malformed) && !e.isAborted) S.line.workSince = true
+      // Work finished without a fresh line: any earlier checkpoint claim no longer describes the state.
+      const freshLine = !!(p && (!p.malformed || p.attention))
+      if (worked && S.line && !freshLine && !e.isAborted) S.line.workSince = true
       await refresh($, true)
     }
     return next(e)
@@ -327,14 +342,16 @@ export function register(on) {
     // --- deterministic verification of the model's claim ---
     // Chip precedence, first match wins: WORKING (host busy) > UNVERIFIED (resumed | directory changed | other session)
     // > NO ANCHOR > NEEDS YOU > UNVERIFIED (tools ran after the line | anchor/NORTHSTAR changed after a safe line
-    // | anchor or NORTHSTAR unreadable or undated | no session identity) > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
+    // | a newer footer did not parse | anchor or NORTHSTAR unreadable or undated | no session identity)
+    // > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
     let chip = 'NO ROADMAP LINE'
     let tone = 'gray'
     let why = ''
     const anchorNewer = !!(l && l.at && a && a.mtime && a.mtime > l.at) || !!(l && l.at && S.mission && S.mission.mtime && S.mission.mtime > l.at)
     // A safe claim the mod cannot check against the anchor is not a checkpoint.
     let unverifiable = ''
-    if (a && a.unreadable) unverifiable = 'status anchor unreadable'
+    if (l && l.superseded) unverifiable = S.note
+    else if (a && a.unreadable) unverifiable = 'status anchor unreadable'
     else if (a && !a.mtime) unverifiable = 'status anchor age unavailable'
     else if (S.mission && S.mission.unreadable) unverifiable = 'NORTHSTAR unreadable'
     else if (!S.sid || (l && !l.sid)) unverifiable = 'session identity unavailable'
@@ -355,6 +372,7 @@ export function register(on) {
     // --- row 1: what the model reports ---
     let row1 = 'No Roadmap line in this session yet (rule not loaded, or no work-finishing reply so far).'
     if (l && l.noAnchor) row1 = `No anchor: ${l.noAnchor}`
+    else if (l && l.unparsed) row1 = l.raw
     else if (l) {
       const bits = [`${l.milestone || '?'} [${l.status}]`]
       if (l.acceptance) bits.push(`acceptance ${l.acceptance}`)
@@ -372,7 +390,7 @@ export function register(on) {
     }
     if (a) r2.push(`${a.rel} ${a.unreadable ? 'unreadable' : a.mtime ? fmtAge(now - a.mtime) + ' ago' : 'age unavailable'}`)
     else r2.push('no status anchor file in this directory')
-    if (S.note) r2.push(S.note)
+    if (S.note && S.note !== why) r2.push(S.note)
     if (S.err) r2.push(S.err)
     const u = S.usage
     if (!u || !u.ok) r2.push('usage unavailable')

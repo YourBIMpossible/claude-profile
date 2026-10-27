@@ -370,6 +370,26 @@ ${line}` })
   r = await h.render()
   ok('19 recovered band no longer shows the error', !r.includes('band read failed'), r)
 }
+{ // 20 rev 2 F1: a newer footer that did not parse never leaves the older line green, and keeps an attention signal
+  let h = await safeLine()
+  await h.call('turn.complete', { answer: 'Done\nRoadmap: X [blocked] · acceptance: n/a · pause: attention · blocker: need owner' })
+  let r = await h.render()
+  ok('20 malformed attention line after a safe line -> NEEDS YOU with its blocker, never CHECKPOINT',
+    r.includes('NEEDS YOU') && r.includes('need owner') && r.includes('did not parse') && !r.includes('CHECKPOINT REPORTED'), r)
+  h = await safeLine()
+  await h.call('turn.complete', { answer: 'Done\nRoadmap: X [active] · acceptance: lots · pause: safe' })
+  r = await h.render()
+  ok('20 malformed safe line after a safe line -> kept line UNVERIFIED, never CHECKPOINT',
+    r.includes('UNVERIFIED') && r.includes('Pilot [active]') && r.includes('did not parse') && !r.includes('CHECKPOINT REPORTED'), r)
+  ok('20 the did-not-parse reason is shown once', r.split('did not parse').length === 2, r)
+  h = await safeLine({}, 'Roadmap: X [active] · acceptance: lots · pause: attention · blocker: waiting')
+  r = await h.render()
+  ok('20 malformed attention line with no earlier line -> NEEDS YOU with its blocker', r.includes('NEEDS YOU') && r.includes('waiting') && !r.includes('CHECKPOINT REPORTED'), r)
+  await h.call('turn.complete', { answer: `Done
+${LINE}` })
+  r = await h.render()
+  ok('20 a later valid line replaces it and clears the note', r.includes('CHECKPOINT REPORTED') && !r.includes('did not parse'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)
