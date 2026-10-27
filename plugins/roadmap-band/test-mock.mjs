@@ -12,13 +12,19 @@ async function makeHost(over = {}) {
   const hooks = {}
   const timers = []
   const store = over.store || new Map()
+  const hit = (names, p) => !!names && names.some((n) => p.endsWith(n))
   const env = { now: 1_800_000_000_000, cwd: '/fixture/repo', sid: 's1', files: { 'WORKLOG.md': 1_799_999_000_000 }, messages: [], usageFail: false, invalid: 0 }
   Object.assign(env, over.env || {})
   const $ = {
+    // fault injection: existsThrow / statThrow / nullMtime name files (suffix match); listThrow fails the listing
     fs: {
-      exists: async (p) => Object.keys(env.files).some((k) => p.endsWith(k)),
-      stat: async (p) => ({ mtimeMs: env.files[Object.keys(env.files).find((k) => p.endsWith(k))] }),
-      list: async () => [],
+      exists: async (p) => { if (hit(env.existsThrow, p)) throw new Error('EACCES'); return Object.keys(env.files).some((k) => p.endsWith(k)) },
+      stat: async (p) => {
+        if (hit(env.statThrow, p)) throw new Error('EACCES')
+        if (hit(env.nullMtime, p)) return {}
+        return { mtimeMs: env.files[Object.keys(env.files).find((k) => p.endsWith(k))] }
+      },
+      list: async () => { if (env.listThrow) throw new Error('EACCES'); return (env.list || []).map((name) => ({ kind: 'file', name })) },
     },
     clock: { now: async () => env.now, every: (ms, fn) => { const t = { ms, fn, cancelled: false, cancel() { this.cancelled = true } }; timers.push(t); return t } },
     store: { get: async (k) => store.get(k), set: async (k, v) => { store.set(k, v) }, delete: async (k) => { store.delete(k) } },
@@ -243,6 +249,36 @@ const LINE = 'Roadmap: Pilot [active] · acceptance: 3/5 verified (pilot) · nex
   ok('14 unknown pause value normalises to unknown', r.includes('PAUSE UNKNOWN'), r)
   r = await run('Done\n**Roadmap:** Pilot [active] · pause: safe')
   ok('14 bold-wrapped label is not accepted', r.includes('NO ROADMAP LINE'), r)
+}
+// a safe line captured on a host with the given faults; returns the host after one render
+const safeLine = async (over = {}, line = LINE) => {
+  const h = await makeHost(over)
+  await h.call('session.start', {})
+  await h.call('turn.complete', { answer: `Done
+${line}` })
+  return h
+}
+{ // 15 CP-12: an anchor the band cannot read or date is never a green checkpoint; no fallthrough past it
+  const both = { 'CURRENT-STATE.md': 1_799_999_000_000, 'WORKLOG.md': 1_799_999_000_000 }
+  let h = await safeLine({ env: { files: { ...both } } })
+  let r = await h.render()
+  ok('15 control: readable CURRENT-STATE.md -> CHECKPOINT REPORTED', r.includes('CHECKPOINT REPORTED') && r.includes('CURRENT-STATE.md'), r)
+  h = await safeLine({ env: { files: { ...both }, statThrow: ['CURRENT-STATE.md'] } })
+  r = await h.render()
+  ok('15 stat throws on CURRENT-STATE.md -> UNVERIFIED, anchor shown unreadable, no fallthrough to WORKLOG',
+    r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED') && r.includes('CURRENT-STATE.md unreadable') && !r.includes('WORKLOG.md'), r)
+  h = await safeLine({ env: { files: { ...both }, existsThrow: ['CURRENT-STATE.md'] } })
+  r = await h.render()
+  ok('15 exists() throws -> UNVERIFIED, not "no status anchor file"',
+    r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED') && !r.includes('no status anchor file') && !r.includes('WORKLOG.md'), r)
+  h = await safeLine({ env: { nullMtime: ['WORKLOG.md'] } })
+  r = await h.render()
+  ok('15 anchor mtime unavailable -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED') && r.includes('age unavailable'), r)
+  h = await safeLine({ env: { files: {} } })
+  r = await h.render()
+  ok('15 control: no anchor file at all keeps CHECKPOINT REPORTED', r.includes('CHECKPOINT REPORTED') && r.includes('no status anchor file'), r)
+  h = await safeLine({ env: { statThrow: ['WORKLOG.md'] } }, 'Roadmap: Pilot [active] · pause: attention')
+  ok('15 unreadable anchor does not override NEEDS YOU', (await h.render()).includes('NEEDS YOU'))
 }
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length

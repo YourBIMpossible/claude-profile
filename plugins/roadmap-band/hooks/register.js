@@ -82,13 +82,15 @@ function parseRoadmap(text) {
   return out
 }
 
+// Returns null only when every candidate is provably absent. A candidate that cannot be checked or read
+// stops the scan (strict order, no fallthrough) and comes back as { rel, unreadable: true }.
 async function findAnchor($, cwd) {
   for (const rel of STATUS_ANCHORS) {
+    const p = join(cwd, rel)
     try {
-      const p = join(cwd, rel)
-      if (await $.fs.exists(p)) return { rel, mtime: mtimeOf(await $.fs.stat(p)) }
+      if (await $.fs.exists(p)) return { rel, mtime: mtimeOf(await $.fs.stat(p)), unreadable: false }
     } catch {
-      // unreadable candidate: treat as absent, keep scanning the strict order
+      return { rel, mtime: null, unreadable: true }
     }
   }
   return null
@@ -197,7 +199,7 @@ async function refreshOnce($, force) {
     const l = S.line
     const next = [
       l ? l.raw : '', l ? Math.floor((now - (l.at || now)) / 60_000) : '', S.repliesSince,
-      S.anchor ? `${S.anchor.rel}:${S.anchor.mtime}` : 'none', S.mission, cwd, sid, S.note, l ? l.workSince : '',
+      S.anchor ? `${S.anchor.rel}:${S.anchor.unreadable ? 'unreadable' : S.anchor.mtime}` : 'none', S.mission, cwd, sid, S.note, l ? l.workSince : '',
       S.usage.ctx, S.usage.limits.map((x) => `${x.label}${x.pct}${x.reset == null ? '' : Math.floor(x.reset / 60_000)}`).join(','),
     ].join('|')
     if (force || next !== sig) {
@@ -300,12 +302,16 @@ export function register(on) {
 
     // --- deterministic verification of the model's claim ---
     // Chip precedence, first match wins: WORKING (host busy) > UNVERIFIED (resumed | directory changed | other session)
-    // > NO ANCHOR > NEEDS YOU > UNVERIFIED (tools ran after the line | anchor/NORTHSTAR changed after a safe line)
-    // > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
+    // > NO ANCHOR > NEEDS YOU > UNVERIFIED (tools ran after the line | anchor/NORTHSTAR changed after a safe line
+    // | anchor unreadable or undated) > CHECKPOINT REPORTED (pause: safe) > PAUSE UNKNOWN. No line at all: NO ROADMAP LINE.
     let chip = 'NO ROADMAP LINE'
     let tone = 'gray'
     let why = ''
     const anchorNewer = !!(l && l.at && a && a.mtime && a.mtime > l.at) || !!(l && l.at && S.mission && S.mission > l.at)
+    // A safe claim the mod cannot check against the anchor is not a checkpoint.
+    let unverifiable = ''
+    if (a && a.unreadable) unverifiable = 'status anchor unreadable'
+    else if (a && !a.mtime) unverifiable = 'status anchor age unavailable'
     if (l) {
       if (l.resumed) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'recovered from transcript after resume' }
       else if (l.cwd && cwdNow && l.cwd !== cwdNow) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'directory changed since the line' }
@@ -314,6 +320,7 @@ export function register(on) {
       else if (l.pause === 'attention') { chip = 'NEEDS YOU'; tone = 'yellow' }
       else if (l.workSince) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'work finished after the line without a new Roadmap line' }
       else if (l.pause === 'safe' && anchorNewer) { chip = 'UNVERIFIED'; tone = 'yellow'; why = 'source changed after the line' }
+      else if (l.pause === 'safe' && unverifiable) { chip = 'UNVERIFIED'; tone = 'yellow'; why = unverifiable }
       else if (l.pause === 'safe') { chip = 'CHECKPOINT REPORTED'; tone = 'green' }
       else { chip = 'PAUSE UNKNOWN'; tone = 'gray' }
     }
@@ -337,7 +344,7 @@ export function register(on) {
       const rec = l.at ? `model-reported ${fmtAge(now - l.at)} ago` : 'model-reported earlier session, age unknown'
       r2.push(`${rec}${S.repliesSince ? ` · ${S.repliesSince} repl${S.repliesSince === 1 ? 'y' : 'ies'} since` : ''}`)
     }
-    if (a) r2.push(`${a.rel} ${a.mtime ? fmtAge(now - a.mtime) + ' ago' : 'age unavailable'}`)
+    if (a) r2.push(`${a.rel} ${a.unreadable ? 'unreadable' : a.mtime ? fmtAge(now - a.mtime) + ' ago' : 'age unavailable'}`)
     else r2.push('no status anchor file in this directory')
     if (S.note) r2.push(S.note)
     if (S.err) r2.push(S.err)
