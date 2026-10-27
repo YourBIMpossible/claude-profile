@@ -31,6 +31,21 @@ $serverName = 'rea'
 
 function Write-Step { param([string]$Text) Write-Host "[rea] $Text" }
 
+function Invoke-NativeLines {
+    # Run a native command and keep its stdout lines, stderr text and exit code apart. Under
+    # Windows PowerShell 5.1 with ErrorActionPreference=Stop, a redirected native stderr line
+    # becomes a terminating NativeCommandError (npm prints warnings there), so relax it for
+    # this call only.
+    param([string]$FilePath, [string[]]$ArgumentList)
+    $ErrorActionPreference = 'Continue'
+    $stdout = [System.Collections.Generic.List[string]]::new()
+    $stderr = [System.Collections.Generic.List[string]]::new()
+    & $FilePath @ArgumentList 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) { $stderr.Add("$_") } else { $stdout.Add("$_") }
+    }
+    return [pscustomobject]@{ Out = $stdout.ToArray(); Err = ($stderr -join "`n"); ExitCode = $LASTEXITCODE }
+}
+
 function Test-NodeVersion {
     param([string]$VersionText)
     if ($VersionText -notmatch '^v?(\d+)\.(\d+)\.(\d+)') { return $false }
@@ -50,7 +65,7 @@ if (-not $node -or -not $npm) {
     Write-Warning "[rea] Node.js/npm not on PATH - skipping REA install. Install Node 24 LTS and re-run tools\Install-Rea.ps1."
     return
 }
-$nodeVersion = (& node --version 2>$null | Select-Object -First 1)
+$nodeVersion = (Invoke-NativeLines $node.Source @('--version')).Out | Select-Object -First 1
 if (-not (Test-NodeVersion $nodeVersion)) {
     Write-Warning "[rea] Node $nodeVersion is below REA's floor (22.19+/24.11+/26+) - skipping. Upgrade Node and re-run tools\Install-Rea.ps1."
     return
@@ -59,10 +74,11 @@ if (-not $claude) {
     Write-Warning "[rea] 'claude' CLI not on PATH - will install the package but cannot register the MCP server."
 }
 
-# npm can print warnings before the path; keep the line that is an absolute path.
-$npmPrefix = @(& $npm.Source prefix -g 2>$null | ForEach-Object { "$_".Trim() } |
+# npm can print warnings before the path; keep the stdout line that is an absolute path.
+$prefixRun = Invoke-NativeLines $npm.Source @('prefix', '-g')
+$npmPrefix = @($prefixRun.Out | ForEach-Object { "$_".Trim() } |
     Where-Object { $_ -match '^[A-Za-z]:[\\/]' -or $_.StartsWith('/') }) | Select-Object -Last 1
-if (-not $npmPrefix) { throw "npm prefix -g returned no path" }
+if (-not $npmPrefix) { throw "npm prefix -g returned no path (exit $($prefixRun.ExitCode)): $($prefixRun.Err)" }
 $reaEntry = Join-Path $npmPrefix "node_modules\$package\scripts\rea.mjs"
 $installed = Test-Path -LiteralPath $reaEntry
 
