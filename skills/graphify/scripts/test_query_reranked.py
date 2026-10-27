@@ -325,8 +325,57 @@ class TestPassthroughTelemetry(unittest.TestCase):
         self.assertEqual(records, [])
 
 
+class TestMissingBinary(unittest.TestCase):
+    """A missing graphify binary gives one clear stderr line and exit 2, never a traceback."""
+
+    SCRIPT = Path(__file__).resolve().parent / "query_reranked.py"
+
+    def _run_script(self, mode_flag: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "no" / "graphify.exe"
+            env = dict(os.environ, GRAPHIFY_EXE=str(missing), GRAPHIFY_QUERY_LOG_DISABLE="1")
+            return subprocess.run(
+                [sys.executable, str(self.SCRIPT), "find foo", mode_flag],
+                cwd=td, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+
+    def _assert_clear_failure(self, rc: int, stderr: str) -> None:
+        self.assertEqual(rc, 2, stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertIn("graphify not found (GRAPHIFY_EXE=", stderr)
+
+    def test_missing_graphify_exe_rerank(self):
+        proc = self._run_script("--rerank")
+        self._assert_clear_failure(proc.returncode, proc.stderr)
+
+    def test_missing_graphify_exe_no_rerank(self):
+        proc = self._run_script("--no-rerank")
+        self._assert_clear_failure(proc.returncode, proc.stderr)
+
+    def _main_with_vanishing_binary(self, argv: list[str]) -> tuple[int, str]:
+        err = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(qr, "GRAPHIFY", Path(td) / "graphify.exe"),
+            mock.patch.object(qr, "_resolve_graph_arg"),
+            mock.patch.object(qr.subprocess, "run", side_effect=FileNotFoundError(2, "gone")),
+            mock.patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+            mock.patch.object(sys, "stderr", err),
+        ):
+            code = qr.main(argv)
+        return code, err.getvalue()
+
+    def test_binary_vanishing_mid_run_rerank(self):
+        self._assert_clear_failure(*self._main_with_vanishing_binary(["find foo", "--rerank"]))
+
+    def test_binary_vanishing_mid_run_no_rerank(self):
+        self._assert_clear_failure(*self._main_with_vanishing_binary(["find foo", "--no-rerank"]))
+
+
 @unittest.skipUnless(
-    qr.GRAPHIFY.exists() and (BIMPOSSIBLE_BACKEND / "graphify-out" / "graph.json").exists(),
+    qr.GRAPHIFY is not None and qr.GRAPHIFY.exists()
+    and (BIMPOSSIBLE_BACKEND / "graphify-out" / "graph.json").exists(),
     "graphify binary or BIMpossible backend graph not available on this machine",
 )
 class TestLiveIntegration(unittest.TestCase):

@@ -66,11 +66,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve_graph  # noqa: E402
 
-def _find_graphify() -> Path:
+def _find_graphify() -> Path | None:
     """GRAPHIFY_EXE overrides; else `graphify` on PATH; else the graphify script installed
-    beside this interpreter (scripts dir, then the per-user scripts dir)."""
+    beside this interpreter (scripts dir, then the per-user scripts dir). None when the
+    GRAPHIFY_EXE override is not a file or nothing is found."""
     if os.environ.get("GRAPHIFY_EXE"):
-        return Path(os.environ["GRAPHIFY_EXE"])
+        exe = Path(os.environ["GRAPHIFY_EXE"])
+        return exe if exe.is_file() else None
     found = shutil.which("graphify")
     if found:
         return Path(found)
@@ -82,10 +84,19 @@ def _find_graphify() -> Path:
         for name in ("graphify.exe", "graphify"):
             if (scripts / name).is_file():
                 return scripts / name
-    return Path("graphify")
+    return None
 
 
-GRAPHIFY = _find_graphify()
+GRAPHIFY: Path | None = _find_graphify()
+
+
+class GraphifyNotFoundError(RuntimeError):
+    """The graphify binary is missing at startup or vanished before a query ran."""
+
+
+def _not_found_message() -> str:
+    exe = os.environ.get("GRAPHIFY_EXE") or "unset"
+    return f"graphify not found (GRAPHIFY_EXE={exe}, PATH, scripts dirs)"
 
 # Same ladder as rerank_bm25.py: ask for a lot, retry bigger only if still
 # truncated. Total pool size varies wildly by query (hundreds to thousands
@@ -158,19 +169,25 @@ class BM25:
 
 
 def run_query_raw(cwd: Path, question: str, budget: int, extra_args: list[str]) -> str:
-    """Run `graphify query` and return its raw stdout. Raises on nonzero exit."""
+    """Run `graphify query` and return its raw stdout. Raises on nonzero exit,
+    GraphifyNotFoundError when the binary is missing."""
+    if GRAPHIFY is None:
+        raise GraphifyNotFoundError(_not_found_message())
     env = dict(os.environ)
     env["GRAPHIFY_QUERY_LOG_DISABLE"] = "1"
     env["PYTHONHASHSEED"] = "0"
-    proc = subprocess.run(
-        [str(GRAPHIFY), "query", question, "--budget", str(budget), *extra_args],
-        cwd=str(cwd),
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        proc = subprocess.run(
+            [str(GRAPHIFY), "query", question, "--budget", str(budget), *extra_args],
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise GraphifyNotFoundError(_not_found_message()) from exc
     if proc.returncode != 0:
         raise RuntimeError(
             f"graphify query failed ({proc.returncode}) for {question!r}: "
@@ -401,6 +418,9 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 def main(argv: list[str] | None = None) -> int:
     args, unknown = parse_args(argv)
+    if GRAPHIFY is None:
+        print(_not_found_message(), file=sys.stderr)
+        return 2
     cwd = Path.cwd()
     _resolve_graph_arg(args, cwd)
 
@@ -416,10 +436,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dfs or not args.rerank:
         _t0 = time.perf_counter()
-        rc, out = _passthrough(
-            [str(GRAPHIFY), "query", args.question, "--budget", str(args.budget), *extra_args],
-            cwd,
-        )
+        try:
+            rc, out = _passthrough(
+                [str(GRAPHIFY), "query", args.question, "--budget", str(args.budget), *extra_args],
+                cwd,
+            )
+        except FileNotFoundError:
+            print(_not_found_message(), file=sys.stderr)
+            return 2
         if rc == 0:
             _log_wrapped(
                 args,
@@ -443,6 +467,9 @@ def main(argv: list[str] | None = None) -> int:
             retrieval_ms=rr.retrieval_ms,
             rerank_ms=rr.rerank_ms,
         )
+    except GraphifyNotFoundError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1
