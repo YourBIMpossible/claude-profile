@@ -41,14 +41,17 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 HOOKS_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = HOOKS_DIR / "closure_audit_repos.json"
 sys.path.insert(0, str(HOOKS_DIR.parent / "tools"))
 try:
     import machine_config  # roots for {repos}/{tools}/{profile}/{reports} in the config
-except Exception:  # fail open: an unusable helper must not take the audit down
+    MACHINE_CONFIG_ERROR = ""
+except Exception as _exc:  # fail open: an unusable helper must not take the audit down - but say so (CP-9)
     machine_config = None
+    MACHINE_CONFIG_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 
 def reports_dir() -> str:
@@ -59,25 +62,53 @@ def reports_dir() -> str:
         return "the reports folder"
 
 
-def resolve_repos(cfg: dict) -> list:
-    """(name, path, required) for the config entries that apply to this machine.
+class Resolved(NamedTuple):
+    repos: list  # (name, path, required) for the entries that apply to this machine
+    config_error: str  # why the machine roots are unusable here ("" when they are fine)
+    broken: list  # names of entries not checked because of config_error
+    unset: dict  # expand message ("{tools} is not set in ...") -> names of entries skipped for it
 
-    An entry's path may use the machine roots ({repos}, {tools}, {profile}) and '~';
-    an entry naming a root this machine has not set is skipped. Optional 'platform'
-    (a sys.platform prefix: win32 / linux / darwin) scopes an entry to one OS. A
-    missing repo is reported only when the entry says "required": true - one shared
-    config serves every machine, and most machines hold only some of the repos."""
-    out = []
+
+def resolve_repos(cfg: dict) -> Resolved:
+    """The config entries that apply to this machine, plus every entry that could not be resolved.
+
+    An entry's path may use the machine roots ({repos}, {tools}, {profile}) and '~'. Optional 'platform'
+    (a sys.platform prefix: win32 / linux / darwin) scopes an entry to one OS. A missing repo is reported
+    only when the entry says "required": true - one shared config serves every machine, and most machines
+    hold only some of the repos. An entry that cannot be resolved is never dropped silently (CP-9): an
+    unusable machine config or helper is returned as config_error with the entries it blocked, and an
+    entry naming a root this machine has not set is returned under unset."""
+    out, broken, unset = [], [], {}
+    config_error, roots_cfg = "", None
+    if machine_config is None:
+        config_error = f"the machine-roots helper tools/machine_config.py did not import ({MACHINE_CONFIG_ERROR})"
+    else:
+        try:
+            roots_cfg = machine_config.load()
+        except Exception as exc:
+            config_error = f"the machine config is unusable ({type(exc).__name__}: {exc})"
+            roots_cfg = {}  # {profile} still resolves; every other root reads as unset and lands in broken
     for r in cfg.get("repos", []):
         if r.get("platform") and not sys.platform.startswith(r["platform"]):
             continue
         path = r["path"]
         try:
-            path = machine_config.expand(path) if machine_config else os.path.expanduser(path)
-        except Exception:
+            if machine_config is None:
+                if "{" in path:
+                    raise LookupError(path)
+                path = os.path.expanduser(path)
+            else:
+                path = machine_config.expand(path, roots_cfg)
+        except Exception as exc:
+            if config_error:
+                broken.append(r["name"])
+            else:
+                unset.setdefault(str(exc), []).append(r["name"])
             continue
         out.append((r["name"], path, bool(r.get("required"))))
-    return out
+    return Resolved(out, config_error, broken, unset)
+
+
 GIT_TIMEOUT = 8  # seconds, per git call — this hook must never hang a session
 OVERALL_GIT_BUDGET = 10.0  # seconds, wall-clock ceiling for ALL git calls combined.
 # The outer harness (settings.json hook "timeout": 15) kills this whole process
@@ -441,14 +472,27 @@ def build_report(cfg: dict) -> str:
     deadline = time.monotonic() + OVERALL_GIT_BUDGET
     valid_repos = []  # (name, path)
     missing_sections = []
-    for name, path, required in resolve_repos(cfg):
+    resolved = resolve_repos(cfg)
+    if resolved.broken:
+        missing_sections.append(
+            f"## (machine roots)\n  ATTENTION REQUIRED: {resolved.config_error}, so these configured repositories "
+            f"were not checked: {', '.join(resolved.broken)}. State unknown, not confirmed clean. Fix it "
+            "(python tools/machine_config.py shows the roots)."
+        )
+    note_sections = [
+        f"## (not checked)\n  NOTE: skipped {', '.join(names)}: {reason}. Not counted in the verdict; set that root if "
+        "this machine holds the repository."
+        for reason, names in resolved.unset.items()
+    ]
+    for name, path, required in resolved.repos:
         if os.path.isdir(path):
             valid_repos.append((name, path))
         elif required:
             missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
     if not valid_repos and not missing_sections:
-        # Nothing was checked: every configured entry is absent here (machine roots unset or wrong, an entry skipped for
-        # its platform or an unusable root) or the list is empty. That must not read as a clean, empty report (CP-9).
+        # Nothing was checked: every configured entry is absent here (machine roots wrong, an entry skipped for its
+        # platform or naming an unset root) or the list is empty. That must not read as a clean, empty report (CP-9).
+        # An unusable machine config is not this case: it already reported itself above, with its error.
         missing_sections.append(
             "## (no repository)\n  ATTENTION REQUIRED: none of the configured repositories exists on this machine, "
             "so the audit checked nothing. State unknown, not confirmed clean. Check the machine roots "
@@ -517,6 +561,7 @@ def build_report(cfg: dict) -> str:
                     total_warn += 1
                 lines.append(f"  [{f['severity']}] {f['text']}\n      -> {f['action']}")
         sections.append("\n".join(lines))
+    sections.extend(note_sections)
 
     verdict = (
         f"Verdict: {total_attn} ATTENTION REQUIRED, {total_warn} WARNING across "
