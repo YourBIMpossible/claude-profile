@@ -18,6 +18,7 @@ Output: exactly one status line on the success stream, and nothing else there; b
 prints it as its last line ("REA: <status>"). A skip still exits 0, because REA is optional:
   skipped: <reason> | not registered: <reason> | dry run: no changes made |
   already registered | registered and connected | registered, not connected
+Under -DryRun every status starts with "dry run: ".
 The skill itself (skills/reverse-engineer-anything) ships in this repo and reaches
 ~/.claude/skills through the junction bootstrap creates, so no copy step is needed here.
 
@@ -34,6 +35,13 @@ $package = 'rea-agents'
 $serverName = 'rea'
 
 function Write-Step { param([string]$Text) Write-Host "[rea] $Text" }
+
+function Format-Status {
+    # A dry run changes nothing, so its status must never read as a real outcome.
+    param([string]$Status)
+    if ($DryRun) { return "dry run: $Status" }
+    return $Status
+}
 
 function Invoke-NativeLines {
     # Run a native command and keep its stdout lines, stderr text and exit code apart. Under
@@ -67,12 +75,18 @@ if (-not $npm) { $npm = Get-Command npm -ErrorAction SilentlyContinue }
 $claude = Get-Command claude -ErrorAction SilentlyContinue
 if (-not $node -or -not $npm) {
     Write-Warning "[rea] Node.js/npm not on PATH - skipping REA install. Install Node 24 LTS and re-run tools\Install-Rea.ps1."
-    return 'skipped: Node.js/npm not on PATH'
+    return (Format-Status 'skipped: Node.js/npm not on PATH')
 }
-$nodeVersion = (Invoke-NativeLines $node.Source @('--version')).Out | Select-Object -First 1
+$nodeRun = Invoke-NativeLines $node.Source @('--version')
+$nodeVersion = @($nodeRun.Out | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) | Select-Object -First 1
+if ($nodeRun.ExitCode -ne 0 -or -not $nodeVersion) {
+    $reason = if ($nodeRun.ExitCode -ne 0) { "'node --version' failed (exit $($nodeRun.ExitCode))" } else { "'node --version' printed no version" }
+    Write-Warning "[rea] $reason - skipping. Repair Node.js and re-run tools\Install-Rea.ps1. $($nodeRun.Err)"
+    return (Format-Status "skipped: $reason")
+}
 if (-not (Test-NodeVersion $nodeVersion)) {
     Write-Warning "[rea] Node $nodeVersion is below REA's floor (22.19+/24.11+/26+) - skipping. Upgrade Node and re-run tools\Install-Rea.ps1."
-    return "skipped: Node $nodeVersion is below REA's floor (22.19+/24.11+/26+)"
+    return (Format-Status "skipped: Node $nodeVersion is below REA's floor (22.19+/24.11+/26+)")
 }
 if (-not $claude) {
     Write-Warning "[rea] 'claude' CLI not on PATH - will install the package but cannot register the MCP server."
@@ -80,6 +94,7 @@ if (-not $claude) {
 
 # npm can print warnings before the path; keep the stdout line that is an absolute path.
 $prefixRun = Invoke-NativeLines $npm.Source @('prefix', '-g')
+if ($prefixRun.ExitCode -ne 0) { throw "npm prefix -g failed (exit $($prefixRun.ExitCode)): $($prefixRun.Err)" }
 $npmPrefix = @($prefixRun.Out | ForEach-Object { "$_".Trim() } |
     Where-Object { $_ -match '^[A-Za-z]:[\\/]' -or $_.StartsWith('/') }) | Select-Object -Last 1
 if (-not $npmPrefix) { throw "npm prefix -g returned no path (exit $($prefixRun.ExitCode)): $($prefixRun.Err)" }
@@ -112,7 +127,7 @@ function Get-McpServerInfo {
 }
 
 # 3. Claude Code user-scope MCP registration
-if (-not $claude) { return "not registered: 'claude' CLI not on PATH" }
+if (-not $claude) { return (Format-Status "not registered: 'claude' CLI not on PATH") }
 $entryForward = $reaEntry -replace '\\', '/'
 $expectedArgs = "$entryForward --mcp"
 $info = Get-McpServerInfo $serverName
@@ -122,7 +137,7 @@ $matchesExpected = $registered -and ($current -match [regex]::Escape($entryForwa
 
 if ($matchesExpected) {
     Write-Step "MCP server '$serverName' already registered at user scope - left untouched"
-    return 'already registered'
+    return (Format-Status 'already registered')
 }
 if ($registered) {
     Write-Step "MCP server '$serverName' registered with a different command - re-registering"
@@ -138,7 +153,10 @@ if ($DryRun) { return 'dry run: no changes made' }
 & claude mcp add --scope user $serverName -- node $entryForward --mcp | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "claude mcp add failed (exit $LASTEXITCODE)" }
 $verify = (Get-McpServerInfo $serverName).Text
-if ($verify -notmatch 'Connected') {
+# Only the exact status token counts: "Status: <check mark> Connected", never "Disconnected" or
+# "Not Connected". The mark is skipped as any run of symbols or non-ASCII characters, because
+# Windows PowerShell 5.1 may decode it from the console code page as several letters.
+if ($verify -cnotmatch '(?m)^\s*Status:\s*(?:[^\w\s]|[^\x00-\x7F])*\s*Connected\s*$') {
     Write-Warning "[rea] Registered, but 'claude mcp get $serverName' does not report Connected:`n$verify"
     return 'registered, not connected'
 }

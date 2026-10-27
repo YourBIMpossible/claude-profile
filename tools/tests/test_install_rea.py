@@ -59,11 +59,16 @@ exit /b 0
 :prefix
 if "%STUB_NPM_WARN%"=="1" echo npm warn config global --global, --local are deprecated. 1>&2
 echo {prefix}
-exit /b 0
+if "%STUB_NPM_PREFIX_EXIT%"=="" exit /b 0
+exit /b %STUB_NPM_PREFIX_EXIT%
 """
 
 NODE_STUB = r"""@echo off
 if "%STUB_NODE_WARN%"=="1" echo node warning: stub stderr line 1>&2
+if "%STUB_NODE_EXIT%"=="" goto version
+echo node: cannot load the runtime 1>&2
+exit /b %STUB_NODE_EXIT%
+:version
 echo %STUB_NODE_VERSION%
 """
 
@@ -168,6 +173,23 @@ class InstallReaStubbed(unittest.TestCase):
                 self.assertEqual(self.status(shell, STUB_NODE_VERSION="v18.0.0"),
                                  "skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)")
 
+    # CT-SLOP1026 / L1: a failing `node --version` is reported as such, never as "Node  is below".
+    def test_status_when_node_version_fails(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell, STUB_NODE_EXIT="3"), "skipped: 'node --version' failed (exit 3)")
+
+    # CT-SLOP1026 / L2: a non-zero `npm prefix -g` stops the run even when it printed a path.
+    def test_failed_npm_prefix_stops_the_run(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.log.unlink(missing_ok=True)
+                proc = self.run_script(shell, STUB_NPM_PREFIX_EXIT="1")
+                out = proc.stdout + proc.stderr
+                self.assertNotEqual(proc.returncode, 0, out)
+                self.assertIn("npm prefix -g failed (exit 1)", out)
+                self.assertNotIn("mcp ", self.calls())
+
     def test_status_when_claude_is_missing(self) -> None:
         (self.bin / "claude.cmd").unlink()
         for shell in SHELLS:
@@ -185,10 +207,30 @@ class InstallReaStubbed(unittest.TestCase):
             with self.subTest(shell=shell):
                 self.assertEqual(self.status(shell), "already registered")
 
+    # CT-SLOP1026 / L2-C nit: every status of a -DryRun run says it was a dry run.
+    def test_dry_run_statuses_say_dry_run(self) -> None:
+        self.marker.write_text("", encoding="ascii")
+        for shell in SHELLS:
+            with self.subTest(shell=shell, case="registered"):
+                self.assertEqual(self.status(shell, "-DryRun"), "dry run: already registered")
+        (self.bin / "claude.cmd").unlink()
+        for shell in SHELLS:
+            with self.subTest(shell=shell, case="no claude"):
+                self.assertEqual(self.status(shell, "-DryRun"), "dry run: not registered: 'claude' CLI not on PATH")
+        for shell in SHELLS:
+            with self.subTest(shell=shell, case="old node"):
+                self.assertEqual(self.status(shell, "-DryRun", STUB_NODE_VERSION="v18.0.0"),
+                                 "dry run: skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)")
+
     def test_status_after_registering(self) -> None:
         for shell in SHELLS:
+            # CT-SLOP1026 / L3: only an exact "Connected" status token counts.
             for reported, expected in (("Connected", "registered and connected"),
-                                       ("Failed to connect", "registered, not connected")):
+                                       ("* Connected", "registered and connected"),
+                                       ("Failed to connect", "registered, not connected"),
+                                       ("Disconnected", "registered, not connected"),
+                                       ("Not Connected", "registered, not connected"),
+                                       ("connected", "registered, not connected")):
                 with self.subTest(shell=shell, reported=reported):
                     self.marker.unlink(missing_ok=True)
                     self.assertEqual(self.status(shell, STUB_STATUS=reported), expected)
