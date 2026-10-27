@@ -333,6 +333,25 @@ ${line}` })
     ok(`17 store.set throws (${label}): timer keeps running and the anchor change shows UNVERIFIED`, !f.timers[0].cancelled && r.includes('UNVERIFIED') && r.includes('source changed'), r)
   }
 }
+{ // 18 CP-32: the parser rejects junk instead of rendering it as a checkpoint
+  const one = async (line) => (await safeLine({}, line)).render()
+  let r = await one('Roadmap: Pilot [active] · pause: safe-ish')
+  ok('18 pause: safe-ish is not safe (PAUSE UNKNOWN)', r.includes('PAUSE UNKNOWN') && !r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: Pilot [active] · pause: safe — mostly')
+  ok('18 control: pause: safe — mostly stays safe', r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: X [complete] [blocked] · pause: safe')
+  ok('18 two [status] tags -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: [active] · pause: safe')
+  ok('18 empty milestone -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · acceptance: lots · pause: safe')
+  ok('18 acceptance: lots -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · acceptance: 9/7 verified (s) · pause: safe')
+  ok('18 acceptance: 9/7 (n > N) -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · acceptance: 0/0 verified (s) · pause: safe')
+  ok('18 acceptance: 0/0 (no denominator) -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [complete] · acceptance: 7/7 verified (all) · pause: safe')
+  ok('18 control: acceptance 7/7 parses', r.includes('X [complete]') && r.includes('acceptance 7/7 verified (all)') && r.includes('CHECKPOINT REPORTED'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)

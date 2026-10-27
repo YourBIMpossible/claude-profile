@@ -58,7 +58,10 @@ function trailingFooter(text) {
   return m ? m[1] : null
 }
 
-// Returns null when there is no usable footer, { malformed } when the footer exists but has no [status].
+// Returns null when there is no usable footer, { malformed } when the footer exists but does not hold exactly one
+// [status] after a non-empty milestone, or carries an acceptance that is not n/N with 0 <= n <= N, N >= 1.
+const STATUS = /\[(proposed|active|blocked|complete)\]/gi
+const ACCEPTANCE = /^(\d+)\/(\d+)(?!\S)/
 function parseRoadmap(text) {
   if (typeof text !== 'string') return null
   const body = trailingFooter(text)
@@ -66,16 +69,23 @@ function parseRoadmap(text) {
   if (/^no anchor\b/i.test(body)) return { noAnchor: body.replace(/^no anchor\s*[—–-]*\s*/i, '') || 'no anchor', raw: body }
   const parts = body.split(FIELD_SPLIT)
   const head = parts.shift() || ''
-  const sm = head.match(/\[(proposed|active|blocked|complete)\]/i)
-  if (!sm) return { malformed: true, raw: body }
+  const tags = [...head.matchAll(STATUS)]
+  if (tags.length !== 1) return { malformed: true, raw: body }
+  const sm = tags[0]
   const out = { raw: body, milestone: head.replace(sm[0], '').trim(), status: sm[1].toLowerCase() }
+  if (!out.milestone) return { malformed: true, raw: body }
   for (const p of parts) {
     const kv = p.match(FIELD)
     if (!kv) continue
     const key = kv[1].toLowerCase()
     if (key === 'pause') {
-      const w = kv[2].trim().split(/[\s—–-]+/)[0].toLowerCase()
+      // the first word, whole: `safe — reason` is safe, `safe-ish` is not
+      const w = kv[2].trim().split(/[\s—–]+/)[0].toLowerCase()
       out.pause = ['safe', 'attention', 'unknown'].includes(w) ? w : 'unknown'
+    } else if (key === 'acceptance') {
+      const am = kv[2].trim().match(ACCEPTANCE)
+      if (!am || Number(am[2]) < 1 || Number(am[1]) > Number(am[2])) return { malformed: true, raw: body }
+      out.acceptance = kv[2].trim()
     } else out[key] = kv[2].trim()
   }
   if (!out.pause) out.pause = 'unknown'
