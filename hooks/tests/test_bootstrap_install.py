@@ -311,6 +311,16 @@ class MachineConfigReruns(Sandbox):
         self.assertIn("profile-machine.json", proc.stdout + proc.stderr)
         self.assertEqual(sorted(p.name for p in self.claude.iterdir()), ["profile-machine.json"])
 
+    def test_explicit_root_that_is_not_a_folder_is_refused_before_any_write(self) -> None:
+        (self.root / "a-file").write_text("x", encoding="utf-8")
+        for flag, value in (("--repos-root", self.root / "no-such-repos"),
+                            ("--tools-root", self.root / "no-such-tools"),
+                            ("--tools-root", self.root / "a-file")):
+            with self.subTest(flag=flag, value=value.name):
+                proc = self.run_bootstrap(flag, str(value), expect_ok=False)
+                self.assertIn(f"{flag} is not a folder", proc.stdout + proc.stderr)
+                self.assertFalse(self.claude.exists())
+
     def test_dry_run_writes_nothing(self) -> None:
         proc = self.run_bootstrap("--dry-run")
         self.assertIn("DRY RUN - nothing written", proc.stdout)
