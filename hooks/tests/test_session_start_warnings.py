@@ -110,9 +110,12 @@ class CloneWarnings(HookWithFakeGit):
             raise subprocess.TimeoutExpired(["git", *args], 5)
         self.fake_git(handler)
         warnings = self.ss.clone_warnings()
-        self.assertTrue(warnings, "a git timeout produced no warning")
+        # Both checks must report on their own: reverting either `except` to `pass` drops one line.
+        self.assertEqual(len(warnings), 2, warnings)
         self.assertTrue(all("could not check the profile clone" in w and "TimeoutExpired" in w for w in warnings),
                         warnings)
+        self.assertEqual(sum("for its default branch" in w for w in warnings), 1, warnings)
+        self.assertEqual(sum("for uncommitted hook/tool changes" in w for w in warnings), 1, warnings)
 
     def test_branch_warning_still_fires(self) -> None:
         self.fake_git(self.answers(branch="feature"))
