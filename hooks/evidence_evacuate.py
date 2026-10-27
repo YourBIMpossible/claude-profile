@@ -354,6 +354,8 @@ def acknowledge(entries: list[Path]) -> None:
 def main(argv: list[str]) -> int:
     if os.environ.get("EVIDENCE_EVACUATE", "1") == "0":
         return 0
+    if CONFIG_ERROR:  # once per run: the default paths below are fallbacks, even when they work
+        log(f"WARN machine config: {CONFIG_ERROR} (default archive and evacuator paths are fallbacks)")
     archive = Path(os.environ.get("EVIDENCE_LIVE_ARCHIVE", DEFAULT_ARCHIVE))
     evacuator = Path(os.environ.get("EVIDENCE_EVACUATOR", DEFAULT_EVACUATOR))
     run = Run(float(os.environ.get("EVIDENCE_EVACUATE_BUDGET_S", TOTAL_BUDGET_S)))

@@ -487,6 +487,30 @@ def case_bad_machine_config_is_named(root: Path) -> None:
           "machine config:" in logged and "not valid JSON" in logged, logged)
 
 
+def case_bad_config_logged_when_fallback_works(root: Path) -> None:
+    """CP-27: with a malformed machine config but an existing fallback evacuator, the
+    packets are archived as before, no systemMessage is shown, and the config error is
+    still written to the hook's log, once."""
+    home = root / "home"
+    fallback = home / "claude-tools" / "evidence-archive" / "evacuate_worktree.py"
+    fallback.parent.mkdir(parents=True)
+    shutil.copyfile(EVACUATOR, fallback)
+    config = root / "profile-machine.json"
+    config.write_text("{bad json", encoding="utf-8")
+    _, store, stop = lane(root)
+    make_packet(store, "ep_efefefefefefefef")
+    p, _ = run(root, stop, drop=("EVIDENCE_EVACUATOR",),
+               env_extra={"CLAUDE_PROFILE_MACHINE_CONFIG": str(config), "HOME": str(home),
+                          "USERPROFILE": str(home)})
+    logged = (root / "hook.log").read_text(encoding="utf-8") if (root / "hook.log").is_file() else ""
+    check("bad config, fallback evacuator exists: exit 0, silent, packet archived",
+          p.returncode == 0 and not p.stdout
+          and (root / "archive" / "packets" / "ep_efefefefefefefef.json").is_file(),
+          p.stdout.decode("utf-8", "replace"))
+    check("bad config, fallback evacuator exists: config error logged once",
+          logged.count("machine config:") == 1 and "not valid JSON" in logged, logged)
+
+
 def case_broken_machine_config_module_fails_open(root: Path) -> None:
     """CP-27: a machine_config.py that fails to import must not crash the hook at
     module load. A scratch copy of the hook sits beside a scratch tools/ whose
@@ -580,7 +604,8 @@ CASES = (case_non_ascii_output_is_success, case_two_session_end_failures_both_sh
          case_partial_copy_is_retried, case_id_mismatch_is_settled, case_budget_is_shared,
          case_session_end_sweeps_siblings, case_bad_checkout_does_not_stop_sweep,
          case_budget_covers_hashing, case_import_failure_restores_state,
-         case_bad_machine_config_is_named, case_broken_machine_config_module_fails_open)
+         case_bad_machine_config_is_named, case_broken_machine_config_module_fails_open,
+         case_bad_config_logged_when_fallback_works)
 
 
 def run_case(case) -> list:
@@ -674,6 +699,10 @@ def test_bad_machine_config_is_named() -> None:
 
 def test_broken_machine_config_module_fails_open() -> None:
     assert_case(case_broken_machine_config_module_fails_open)
+
+
+def test_bad_config_logged_when_fallback_works() -> None:
+    assert_case(case_bad_config_logged_when_fallback_works)
 
 
 def case_core_flow(root: Path) -> None:
