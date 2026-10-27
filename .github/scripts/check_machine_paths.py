@@ -33,8 +33,10 @@ override), a JSON list of entries::
 
 ``path`` is a glob over repo-relative POSIX paths (``*`` stays within one directory,
 ``**`` crosses directories). ``match``, when given, must be found in the offending
-line for the entry to apply; without it the entry covers every finding in the
-matched files. ``reason`` is required. An entry that covers no finding fails the
+path token (the run of characters around the hit up to whitespace, a quote or a
+bracket) for the entry to apply, so it never covers another path written on the
+same line; without it the entry covers every finding in the matched files.
+``reason`` is required. An entry that covers no finding fails the
 run, so the list cannot silently outlive what it was written for.
 
 Exit status: 0 clean, 1 findings or a stale allowlist entry, 2 usage/config error.
@@ -122,9 +124,11 @@ def load_allowlist(path: Path) -> list[dict]:
 
 
 REGEX_CLASS_LETTERS = set("dwsbDWSB")
+TOKEN_DELIMITERS = frozenset("\"'`,;()[]{}<>|=")
 
 
-def scan_line(line: str) -> list[tuple[str, str]]:
+def scan_line(line: str) -> list[tuple[str, str, int]]:
+    """Every rule hit on the line: (rule id, matched text, start offset)."""
     hits = []
     for rid, rx, _ in RULES:
         for m in rx.finditer(line):
@@ -132,8 +136,28 @@ def scan_line(line: str) -> list[tuple[str, str]]:
             if (rid == "drive-path" and m.start() > 0 and line[m.start() - 1] == "\\"
                     and line[m.start()] in REGEX_CLASS_LETTERS):
                 continue
-            hits.append((rid, m.group(0)))
+            hits.append((rid, m.group(0), m.start()))
     return hits
+
+
+def token_span(line: str, pos: int) -> tuple[int, int]:
+    """The path token holding offset ``pos``: up to whitespace, a quote or a bracket on either side."""
+    def inside(c: str) -> bool:
+        return not c.isspace() and c not in TOKEN_DELIMITERS
+    start = pos
+    while start > 0 and inside(line[start - 1]):
+        start -= 1
+    end = pos
+    while end < len(line) and inside(line[end]):
+        end += 1
+    return start, max(end, pos + 1)
+
+
+def entry_covers(entry: dict, line: str, span: tuple[int, int]) -> bool:
+    if entry["match_re"] is None:
+        return True
+    start, end = span
+    return any(m.start() < end and max(m.end(), m.start() + 1) > start for m in entry["match_re"].finditer(line))
 
 
 def tracked_files(root: Path) -> list[str]:
@@ -165,18 +189,12 @@ def check(root: Path, allow_path: Path) -> int:
         text = data.decode("utf-8", errors="replace")
         candidates = [e for e in allow if e["path_re"].match(rel)]
         for lineno, line in enumerate(text.splitlines(), 1):
-            hits = scan_line(line)
-            if not hits:
-                continue
-            covered = None
-            for e in candidates:
-                if e["match_re"] is None or e["match_re"].search(line):
-                    covered = e
-                    break
-            if covered is not None:
-                covered["used"] += len(hits)
-                continue
-            for rid, text_hit in hits:
+            for rid, text_hit, pos in scan_line(line):
+                span = token_span(line, pos)
+                covered = next((e for e in candidates if entry_covers(e, line, span)), None)
+                if covered is not None:
+                    covered["used"] += 1
+                    continue
                 excerpt = line.strip()
                 if len(excerpt) > 160:
                     excerpt = excerpt[:157] + "..."
@@ -238,7 +256,7 @@ SELF_TEST = [
 def self_test() -> int:
     bad = 0
     for line, want in SELF_TEST:
-        got = [rid for rid, _ in scan_line(_expand(line))]
+        got = [rid for rid, _, _ in scan_line(_expand(line))]
         if got != want:
             bad += 1
             print(f"self-test FAIL: {line!r}: expected {want}, got {got}")
@@ -284,6 +302,9 @@ def _repo_cases() -> list[tuple[str, bool]]:
         allow = [{"path": "*.py", "match": "fixture", "reason": "synthetic fixture"}]
         (root / ALLOW_FILE).write_text(json.dumps(allow), encoding="utf-8")
         cases.append(("allowlisted finding passes", run(root) == 0))
+        (root / "fixture.py").write_text(_expand('P = "<D>/fixture/x"; Q = "<d>/real/y"\n'), encoding="utf-8")
+        cases.append(("allowlist entry does not cover another path on its line", run(root) == 1))
+        (root / "fixture.py").write_text(_expand('P = "<D>/fixture/x"\n'), encoding="utf-8")
         allow.append({"path": "docs/**", "reason": "covers nothing"})
         (root / ALLOW_FILE).write_text(json.dumps(allow), encoding="utf-8")
         cases.append(("stale entry fails the run", run(root) == 1))
