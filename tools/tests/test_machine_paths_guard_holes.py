@@ -4,6 +4,9 @@
   written next to it. An entry now covers only the hits in the path token its `match` is found in.
 - CP-6: a file with a NUL byte was taken as binary, so UTF-16 text (PowerShell 5.1's default `Out-File` encoding)
   was never scanned. A byte-order mark now selects the codec before the binary check.
+- CP-21: a tracked symlink was read through the working tree, so a dangling one (or one git stores only in the index,
+  as on Windows without symlink rights) took the "deleted" branch and was neither scanned nor counted. A symlink's
+  target text is now read from the index and scanned, and a tracked file missing from the working tree is counted.
 
 Every case runs the shipped scanner exactly as CI runs it, against a throwaway git repository. Fixture paths are
 assembled from pieces so that this file holds no literal machine path (it is scanned too).
@@ -11,10 +14,13 @@ assembled from pieces so that this file holds no literal machine path (it is sca
 Run: python -m pytest tools/tests -q   (or directly: python tools/tests/test_machine_paths_guard_holes.py)
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCANNER = REPO / ".github" / "scripts" / "check_machine_paths.py"
@@ -30,10 +36,12 @@ def git(root: Path, *args: str, stdin: bytes = None) -> bytes:
     return subprocess.run(["git", "-C", str(root), *args], input=stdin, capture_output=True, check=True).stdout
 
 
-def scan_repo(root: Path, entries: list):
+def scan_repo(root: Path, entries: list, after_add=None):
     allow = root / "allow.json"
     allow.write_text(json.dumps(entries), encoding="utf-8")
     git(root, "add", "-A")
+    if after_add is not None:
+        after_add(root)
     proc = subprocess.run([sys.executable, str(SCANNER), "--root", str(root), "--allow", str(allow)],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
     return proc.returncode, proc.stdout
@@ -143,6 +151,58 @@ def test_cp6_a_real_binary_is_still_skipped():
     assert code == 0 and "1 binary skipped" in out, out
 
 
+# --- CP-21: a tracked symlink is scanned by its target text; a missing file is counted ----------------------------
+
+HOME_TARGET = "/" + "home" + "/someone/y"
+
+
+def _index_only_symlink(name: str, target: str):
+    """Stage a symlink the way git stores it (mode 120000, blob = target text) with nothing on disk: the state a
+    dangling link, or a link checked out without symlink rights, leaves the scanner to read."""
+    def add(root: Path) -> None:
+        sha = git(root, "hash-object", "-w", "--stdin", stdin=target.encode()).decode().strip()
+        git(root, "update-index", "--add", "--cacheinfo", f"120000,{sha},{name}")
+    return add
+
+
+def _repo(files: dict) -> tempfile.TemporaryDirectory:
+    tmp = tempfile.TemporaryDirectory()
+    git(Path(tmp.name), "init", "-q")
+    for name, text in files.items():
+        (Path(tmp.name) / name).write_text(text, encoding="utf-8")
+    return tmp
+
+
+def test_cp21_a_symlink_to_a_machine_path_is_flagged_even_with_nothing_on_disk():
+    with _repo({"readme.md": "clean\n"}) as tmp:
+        code, out = scan_repo(Path(tmp), [], _index_only_symlink("link", HOME_TARGET))
+    assert code == 1 and "link:1: home-path" in out, out
+
+
+def test_cp21_a_symlink_to_a_relative_path_passes_and_is_counted():
+    with _repo({"readme.md": "clean\n"}) as tmp:
+        code, out = scan_repo(Path(tmp), [], _index_only_symlink("link", "docs/readme.md"))
+    assert code == 0 and "3 text files scanned" in out, out
+
+
+def test_cp21_a_real_dangling_symlink_is_flagged():
+    with _repo({"readme.md": "clean\n"}) as tmp:
+        try:
+            os.symlink(HOME_TARGET, Path(tmp) / "link")
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable here ({exc}); the index-only case covers the same branch")
+        code, out = scan_repo(Path(tmp), [])
+    assert code == 1 and "link:1: home-path" in out, out
+
+
+def test_cp21_a_tracked_file_missing_from_the_working_tree_is_counted():
+    def delete(root: Path) -> None:
+        (root / "gone.md").unlink()
+    with _repo({"readme.md": "clean\n", "gone.md": "clean\n"}) as tmp:
+        code, out = scan_repo(Path(tmp), [], delete)
+    assert code == 0 and "1 missing from the working tree" in out, out
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
@@ -150,6 +210,8 @@ if __name__ == "__main__":
             try:
                 fn()
                 print("PASS:", name)
+            except pytest.skip.Exception as exc:
+                print("SKIP:", name, "--", exc)
             except AssertionError as exc:
                 failed += 1
                 print("FAIL:", name, "--", str(exc)[:300])

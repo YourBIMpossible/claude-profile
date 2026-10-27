@@ -14,7 +14,8 @@ Usage:
   python check_machine_paths.py --self-test     # run the built-in rule cases
 
 What is scanned: every file ``git ls-files`` lists (tracked or staged), read from the
-working tree. A file that starts with a byte-order mark is decoded with that codec
+working tree; a symlink is scanned as its target text, read from the index. A listed
+file absent from the working tree is counted as missing in the summary. A file that starts with a byte-order mark is decoded with that codec
 (UTF-8, UTF-16 or UTF-32) and scanned; any other file with a NUL byte in its first
 8 KiB is treated as binary and skipped (counted in the summary). Nothing else is
 exempt unless the allowlist says so.
@@ -165,14 +166,33 @@ def entry_covers(entry: dict, line: str, span: tuple[int, int]) -> bool:
     return any(m.start() < end and max(m.end(), m.start() + 1) > start for m in entry["match_re"].finditer(line))
 
 
-def tracked_files(root: Path) -> list[str]:
+SYMLINK_MODE = "120000"
+
+
+def tracked_files(root: Path) -> list[tuple[str, str, str]]:
+    """Every path in the index, once: (path, mode, blob id)."""
     try:
-        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "-s", "-z"],
+                             capture_output=True, check=True).stdout
     except FileNotFoundError as exc:
         raise ConfigError("git not found on PATH") from exc
     except subprocess.CalledProcessError as exc:
         raise ConfigError(f"not a git repository: {root} ({exc.stderr.decode(errors='replace').strip()})") from exc
-    return sorted(p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p)
+    entries: dict[str, tuple[str, str]] = {}
+    for record in out.decode("utf-8", errors="surrogateescape").split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        mode, sha, _stage = meta.split(" ")
+        entries.setdefault(path, (mode, sha))  # an unmerged path is listed once per stage
+    return [(path, mode, sha) for path, (mode, sha) in sorted(entries.items())]
+
+
+def read_blob(root: Path, sha: str) -> bytes:
+    proc = subprocess.run(["git", "-C", str(root), "cat-file", "blob", sha], capture_output=True)
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.decode(errors="replace").strip() or f"git cat-file blob {sha} failed")
+    return proc.stdout
 
 
 def decode_text(data: bytes) -> str | None:
@@ -188,15 +208,20 @@ def decode_text(data: bytes) -> str | None:
 
 def check(root: Path, allow_path: Path) -> int:
     allow = load_allowlist(allow_path)
-    findings, binary, scanned = [], 0, 0
-    for rel in tracked_files(root):
-        full = root / rel
+    findings, binary, scanned, missing = [], 0, 0, 0
+    for rel, mode, sha in tracked_files(root):
         try:
-            data = full.read_bytes()
+            if mode == SYMLINK_MODE:
+                # A symlink's content is its target text. Read it from the index: following the link would scan
+                # another file (or nothing, when it dangles or was checked out without symlink rights).
+                data = read_blob(root, sha)
+            else:
+                data = (root / rel).read_bytes()
         except FileNotFoundError:
-            continue  # deleted in the working tree but still in the index
+            missing += 1  # deleted in the working tree but still in the index
+            continue
         except OSError as exc:
-            findings.append(f"{rel}: unreadable: {exc.strerror}")
+            findings.append(f"{rel}: unreadable: {exc.strerror or exc}")
             continue
         text = decode_text(data)
         if text is None:
@@ -221,7 +246,7 @@ def check(root: Path, allow_path: Path) -> int:
     for e in stale:
         print(f"{allow_path.name}: entry {e['n']} ({e['path']}) covers nothing - remove it")
     print(f"machine-paths: {scanned} text files scanned, {binary} binary skipped, "
-          f"{len(allow)} allowlist entries, {len(findings)} findings, {len(stale)} stale entries")
+          f"{missing} missing from the working tree, {len(allow)} allowlist entries, {len(findings)} findings, {len(stale)} stale entries")
     if findings or stale:
         print("FAIL: replace machine paths with paths derived at runtime (repo root, home folder, "
               "per-machine config) or add a justified allowlist entry.")
@@ -330,6 +355,13 @@ def _repo_cases() -> list[tuple[str, bool]]:
         (root / "out16.ps1").write_bytes(_expand("$p = '<D>/real/y'\r\n").encode("utf-16"))
         subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
         cases.append(("UTF-16 text with a byte-order mark is scanned", run(root) == 1))
+        (root / "out16.ps1").unlink()
+        subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+        target = subprocess.run(["git", "-C", str(root), "hash-object", "-w", "--stdin"], capture_output=True,
+                                input=_expand("<H>/someone/y").encode()).stdout.decode().strip()
+        subprocess.run(["git", "-C", str(root), "update-index", "--add", "--cacheinfo", f"120000,{target},link"],
+                       capture_output=True)
+        cases.append(("symlink target text is scanned, even with nothing on disk", run(root) == 1))
     return cases
 
 
