@@ -76,9 +76,10 @@ function parseRoadmap(text) {
     if (!kv) continue
     const key = kv[1].toLowerCase()
     if (key === 'pause') {
-      // the first word, whole: `safe — reason` is safe, `safe-ish` is not
+      // the first word: `safe` only as a whole word (`safe — reason` is safe, `safe-ish` is not);
+      // any word starting `attention` (`attention-needed`) still asks for the owner
       const w = kv[2].trim().split(/[\s—–]+/)[0].toLowerCase()
-      fields.pause = ['safe', 'attention', 'unknown'].includes(w) ? w : 'unknown'
+      fields.pause = w.startsWith('attention') ? 'attention' : ['safe', 'unknown'].includes(w) ? w : 'unknown'
     } else fields[key] = kv[2].trim()
   }
   const malformed = () => {

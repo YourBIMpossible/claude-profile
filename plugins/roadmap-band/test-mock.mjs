@@ -399,6 +399,14 @@ ${LINE}` })
   ok('21 failing refresh -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
   ok('21 the read-failure text is shown once', r.split('band read failed').length === 2, r)
 }
+{ // 22 rev 2 F4: an attention-prefixed pause word still asks for the owner
+  let r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: attention-needed')).render()
+  ok('22 pause: attention-needed -> NEEDS YOU', r.includes('NEEDS YOU'), r)
+  r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: Attention — owner review')).render()
+  ok('22 pause: Attention — reason -> NEEDS YOU', r.includes('NEEDS YOU'), r)
+  r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: safe-ish')).render()
+  ok('22 control: safe-ish still not safe', r.includes('PAUSE UNKNOWN'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)
