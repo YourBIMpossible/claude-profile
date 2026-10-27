@@ -609,6 +609,13 @@ class DesktopConfigMerge(unittest.TestCase):
             with self.subTest(existing=raw):
                 self.assertEqual(self.plan(raw), {"mcpServers": self.servers})
 
+    def test_nested_mcp_servers_key_is_left_alone(self) -> None:
+        nested = {"other": {"mcpServers": {"x": {}}}, "preferences": {"a": 1}}
+        self.assertEqual(self.plan(json.dumps(nested, indent=2)), {"mcpServers": self.servers, **nested})
+        both = {"other": {"mcpServers": {"x": {}}}, "mcpServers": {"old": {}}}
+        self.assertEqual(self.plan(json.dumps(both, indent=2)),
+                         {"other": {"mcpServers": {"x": {}}}, "mcpServers": self.servers})
+
 
 class FixtureClone(Sandbox):
     """A committed copy of the profile in the sandbox: template edits, refusals, sync."""
