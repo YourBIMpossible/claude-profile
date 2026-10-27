@@ -19,7 +19,8 @@ platform, for startup|resume|clear|compact:
 
 Best effort, never blocks: every path exits 0. Record: ~/.claude/hooks/last-run.log
 (same vocabulary as before: "pull ok", "pull skipped (in flight)", "pull failed (exit
-N)", "git missing", "pull threw"; plus "settings synced" / "settings sync skipped").
+N)", "git missing", "pull threw"; plus "settings synced" / "settings sync skipped"). A
+failed pull or settings sync is also named under "Profile warnings" in the session.
 Opt-outs: CLAUDE_PROFILE_PULL=0 (no pull), CLAUDE_PROFILE_SYNC=0 (no settings sync).
 """
 from __future__ import annotations
@@ -93,20 +94,25 @@ def git(*args: str, timeout: float = GIT_TIMEOUT_S) -> subprocess.CompletedProce
                           encoding="utf-8", errors="replace", timeout=timeout)
 
 
-def pull() -> None:
+PULL_SEE_LOG = "this clone may be out of date - see ~/.claude/hooks/last-run.log"
+
+
+def pull() -> str | None:
+    """`git pull --ff-only` in this clone; returns a warning for the session, or None."""
     try:
         proc = git("pull", "--ff-only")
     except FileNotFoundError:
         log(f"git missing: git not found on PATH [{PROFILE_ROOT}]")
-        return
+        return f"the profile was not pulled: git was not found on PATH; {PULL_SEE_LOG}"
     except subprocess.TimeoutExpired:
         log(f"pull failed (exit 124): timed out after {GIT_TIMEOUT_S}s [{PROFILE_ROOT}]")
-        return
+        return f"the profile pull failed (exit 124): timed out after {GIT_TIMEOUT_S}s; {PULL_SEE_LOG}"
     out = " | ".join(l for l in (proc.stdout + proc.stderr).splitlines() if l.strip())
     if proc.returncode == 0:
         log(f"pull ok: {out}")
-    else:
-        log(f"pull failed (exit {proc.returncode}): {out} [{PROFILE_ROOT}]")
+        return None
+    log(f"pull failed (exit {proc.returncode}): {out} [{PROFILE_ROOT}]")
+    return f"the profile pull failed (exit {proc.returncode}); {PULL_SEE_LOG}"
 
 
 def sync_settings() -> str | None:
@@ -164,7 +170,9 @@ def main() -> int:
                 else:
                     try:
                         if os.environ.get("CLAUDE_PROFILE_PULL", "1") != "0":
-                            pull()
+                            warning = pull()
+                            if warning:
+                                notes.append(warning)
                         if os.environ.get("CLAUDE_PROFILE_SYNC", "1") != "0":
                             try:
                                 warning = sync_settings()
