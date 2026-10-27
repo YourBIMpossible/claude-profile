@@ -143,6 +143,57 @@ class InstallReaStubbed(unittest.TestCase):
                 self.assertIn("mcp remove --scope user rea", self.calls())
                 self.assertNotIn("mcp add", self.calls())
 
+    # CT-SLOP1026 / CP-23: every ending, skips included, reports one status on the success stream
+    # so bootstrap.ps1 can print it; skips still exit 0.
+    def status(self, shell: str, *args: str, **env: str) -> str:
+        script = str(SCRIPT).replace("'", "''")
+        command = f"$r = @(& '{script}' {' '.join(args)}); Write-Host ('STATUS=[' + ($r -join '|') + ']')"
+        proc = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                              env={**self.env, **env}, capture_output=True, text=True, timeout=120)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        lines = [line for line in proc.stdout.splitlines() if line.startswith("STATUS=")]
+        self.assertEqual(len(lines), 1, out)
+        return lines[0][len("STATUS=["):-1]
+
+    def test_status_when_node_is_missing(self) -> None:
+        (self.bin / "node.cmd").unlink()
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell), "skipped: Node.js/npm not on PATH")
+
+    def test_status_when_node_is_too_old(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell, STUB_NODE_VERSION="v18.0.0"),
+                                 "skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)")
+
+    def test_status_when_claude_is_missing(self) -> None:
+        (self.bin / "claude.cmd").unlink()
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell), "not registered: 'claude' CLI not on PATH")
+
+    def test_status_of_a_dry_run(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell, "-DryRun"), "dry run: no changes made")
+
+    def test_status_when_already_registered(self) -> None:
+        self.marker.write_text("", encoding="ascii")
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell), "already registered")
+
+    def test_status_after_registering(self) -> None:
+        for shell in SHELLS:
+            for reported, expected in (("Connected", "registered and connected"),
+                                       ("Failed to connect", "registered, not connected")):
+                with self.subTest(shell=shell, reported=reported):
+                    self.marker.unlink(missing_ok=True)
+                    self.assertEqual(self.status(shell, STUB_STATUS=reported), expected)
+                    self.assertTrue(self.marker.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,10 @@ What it does
   3. `claude mcp add --scope user rea -- node <global rea.mjs> --mcp` when no `rea` entry exists or
      its command differs. The registration points at the global install path, so `npm install -g`
      updates are picked up without re-registering.
+Output: exactly one status line on the success stream, and nothing else there; bootstrap.ps1
+prints it as its last line ("REA: <status>"). A skip still exits 0, because REA is optional:
+  skipped: <reason> | not registered: <reason> | dry run: no changes made |
+  already registered | registered and connected | registered, not connected
 The skill itself (skills/reverse-engineer-anything) ships in this repo and reaches
 ~/.claude/skills through the junction bootstrap creates, so no copy step is needed here.
 
@@ -63,12 +67,12 @@ if (-not $npm) { $npm = Get-Command npm -ErrorAction SilentlyContinue }
 $claude = Get-Command claude -ErrorAction SilentlyContinue
 if (-not $node -or -not $npm) {
     Write-Warning "[rea] Node.js/npm not on PATH - skipping REA install. Install Node 24 LTS and re-run tools\Install-Rea.ps1."
-    return
+    return 'skipped: Node.js/npm not on PATH'
 }
 $nodeVersion = (Invoke-NativeLines $node.Source @('--version')).Out | Select-Object -First 1
 if (-not (Test-NodeVersion $nodeVersion)) {
     Write-Warning "[rea] Node $nodeVersion is below REA's floor (22.19+/24.11+/26+) - skipping. Upgrade Node and re-run tools\Install-Rea.ps1."
-    return
+    return "skipped: Node $nodeVersion is below REA's floor (22.19+/24.11+/26+)"
 }
 if (-not $claude) {
     Write-Warning "[rea] 'claude' CLI not on PATH - will install the package but cannot register the MCP server."
@@ -91,7 +95,7 @@ if ($installed -and -not $Update) {
     $spec = if ($Update) { "$package@latest" } else { $package }
     Write-Step "npm install --global $spec"
     if (-not $DryRun) {
-        & $npm.Source install --global $spec
+        & $npm.Source install --global $spec | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "npm install --global $spec failed (exit $LASTEXITCODE)" }
         if (-not (Test-Path -LiteralPath $reaEntry)) { throw "Install finished but $reaEntry is missing" }
     }
@@ -108,7 +112,7 @@ function Get-McpServerInfo {
 }
 
 # 3. Claude Code user-scope MCP registration
-if (-not $claude) { return }
+if (-not $claude) { return "not registered: 'claude' CLI not on PATH" }
 $entryForward = $reaEntry -replace '\\', '/'
 $expectedArgs = "$entryForward --mcp"
 $info = Get-McpServerInfo $serverName
@@ -118,7 +122,7 @@ $matchesExpected = $registered -and ($current -match [regex]::Escape($entryForwa
 
 if ($matchesExpected) {
     Write-Step "MCP server '$serverName' already registered at user scope - left untouched"
-    return
+    return 'already registered'
 }
 if ($registered) {
     Write-Step "MCP server '$serverName' registered with a different command - re-registering"
@@ -130,12 +134,13 @@ if ($registered) {
     }
 }
 Write-Step "claude mcp add --scope user $serverName -- node $expectedArgs"
-if ($DryRun) { return }
-& claude mcp add --scope user $serverName -- node $entryForward --mcp
+if ($DryRun) { return 'dry run: no changes made' }
+& claude mcp add --scope user $serverName -- node $entryForward --mcp | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "claude mcp add failed (exit $LASTEXITCODE)" }
 $verify = (Get-McpServerInfo $serverName).Text
 if ($verify -notmatch 'Connected') {
     Write-Warning "[rea] Registered, but 'claude mcp get $serverName' does not report Connected:`n$verify"
-} else {
-    Write-Step "MCP server '$serverName' registered and connected. Restart Claude Code to load its tools."
+    return 'registered, not connected'
 }
+Write-Step "MCP server '$serverName' registered and connected. Restart Claude Code to load its tools."
+return 'registered and connected'
