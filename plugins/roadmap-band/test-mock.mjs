@@ -413,6 +413,28 @@ ${LINE}` })
   r = await (await safeLine({ env: { nullMtime: ['WORKLOG.md'] } })).render()
   ok('23 undated anchor named once', r.includes('UNVERIFIED') && r.split('age unavailable').length === 2 && r.includes('WORKLOG.md age unavailable'), r)
 }
+{ // 24 rev 3 R2-1: a repeated field makes the footer unparsed; an attention value among them still asks for the owner
+  const one = async (line) => (await safeLine({}, line)).render()
+  let r = await one('Roadmap: X [active] · pause: attention · pause: safe')
+  ok('24 pause: attention then pause: safe -> NEEDS YOU, never CHECKPOINT', r.includes('NEEDS YOU') && r.includes('did not parse') && !r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: X [active] · pause: safe · pause: attention')
+  ok('24 pause: safe then pause: attention -> NEEDS YOU', r.includes('NEEDS YOU') && !r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: X [active] · acceptance: lots · acceptance: 3/5 verified (s) · pause: safe')
+  ok('24 repeated acceptance -> malformed, junk not hidden', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · pause: safe · pause: safe')
+  ok('24 any repeated field -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+}
+{ // 25 rev 3: `blocker: none` / `n/a` is no blocker
+  const one = async (line) => (await safeLine({}, line)).render()
+  let r = await one('Roadmap: see notes above · blocker: none')
+  ok('25 malformed footer with blocker: none does not force NEEDS YOU', !r.includes('NEEDS YOU') && r.includes('did not parse'), r)
+  r = await one('Roadmap: see notes above · blocker:  N/A ')
+  ok('25 blocker: N/A (case, spaces) is no blocker', !r.includes('NEEDS YOU') && r.includes('did not parse'), r)
+  r = await one('Roadmap: see notes above · blocker: waiting on x')
+  ok('25 control: a real blocker on a malformed footer still shows NEEDS YOU', r.includes('NEEDS YOU') && r.includes('waiting on x'), r)
+  r = await one('Roadmap: X [active] · pause: safe · blocker: none')
+  ok('25 valid line with blocker: none shows no BLOCKER', r.includes('CHECKPOINT REPORTED') && !r.includes('BLOCKER'), r)
+}
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length
 console.log(`${results.length - fails}/${results.length} passed`)

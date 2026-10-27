@@ -60,8 +60,10 @@ function trailingFooter(text) {
 
 // Returns null when there is no usable footer, { malformed } when the footer exists but does not hold exactly one
 // [status] after a non-empty milestone, or carries an acceptance that is not n/N with 0 <= n <= N, N >= 1.
-// A malformed footer that still reads `pause: attention` or has a blocker keeps that signal ({ attention, blocker }).
+// A field named twice also makes it malformed. A malformed footer that still reads `pause: attention` (in any of
+// its pause values) or has a blocker keeps that signal ({ attention, blocker }).
 const STATUS = /\[(proposed|active|blocked|complete)\]/gi
+const NO_BLOCKER = /^(?:none|n\/a)$/i
 const ACCEPTANCE = /^(\d+)\/(\d+)(?!\S)/
 function parseRoadmap(text) {
   if (typeof text !== 'string') return null
@@ -71,22 +73,34 @@ function parseRoadmap(text) {
   const parts = body.split(FIELD_SPLIT)
   const head = parts.shift() || ''
   const fields = {}
+  const seen = new Set()
+  let repeated = false // a field named twice: no value may silently win, so the footer is malformed
+  let anyAttention = false // any pause value of attention, even one a repeat would have overwritten
+  const blockers = []
   for (const p of parts) {
     const kv = p.match(FIELD)
     if (!kv) continue
     const key = kv[1].toLowerCase()
+    if (seen.has(key)) repeated = true
+    seen.add(key)
+    const v = kv[2].trim()
     if (key === 'pause') {
       // the first word: `safe` only as a whole word (`safe — reason` is safe, `safe-ish` is not);
       // any word starting `attention` (`attention-needed`) still asks for the owner
-      const w = kv[2].trim().split(/[\s—–]+/)[0].toLowerCase()
+      const w = v.split(/[\s—–]+/)[0].toLowerCase()
       fields.pause = w.startsWith('attention') ? 'attention' : ['safe', 'unknown'].includes(w) ? w : 'unknown'
-    } else fields[key] = kv[2].trim()
+      if (fields.pause === 'attention') anyAttention = true
+    } else if (key === 'blocker') {
+      // `blocker: none` / `n/a` says there is no blocker
+      if (!NO_BLOCKER.test(v)) { fields.blocker = v; blockers.push(v) }
+    } else fields[key] = v
   }
   const malformed = () => {
     const out = { malformed: true, raw: body }
-    if (fields.pause === 'attention' || fields.blocker) Object.assign(out, { attention: true, blocker: fields.blocker || '' })
+    if (anyAttention || blockers.length) Object.assign(out, { attention: true, blocker: blockers.join('; ') })
     return out
   }
+  if (repeated) return malformed()
   const tags = [...head.matchAll(STATUS)]
   if (tags.length !== 1) return malformed()
   const sm = tags[0]
