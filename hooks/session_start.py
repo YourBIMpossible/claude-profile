@@ -106,7 +106,9 @@ def pull() -> str | None:
         return f"the profile was not pulled: git was not found on PATH; {PULL_SEE_LOG}"
     except subprocess.TimeoutExpired:
         log(f"pull failed (exit 124): timed out after {GIT_TIMEOUT_S}s [{PROFILE_ROOT}]")
-        return f"the profile pull failed (exit 124): timed out after {GIT_TIMEOUT_S}s; {PULL_SEE_LOG}"
+        # Not "failed": the kill stops `git pull` but not the git processes it started, so the pull may still finish.
+        return (f"the profile pull timed out after {GIT_TIMEOUT_S}s and may still complete in the background; "
+                f"{PULL_SEE_LOG}")
     out = " | ".join(l for l in (proc.stdout + proc.stderr).splitlines() if l.strip())
     if proc.returncode == 0:
         log(f"pull ok: {out}")

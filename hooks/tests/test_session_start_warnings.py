@@ -52,6 +52,10 @@ class PullWarnings(HookWithFakeGit):
         self.assertIsNotNone(warning)
         self.assertIn("timed out", warning)
         self.assertIn("last-run.log", warning)
+        # A timed-out pull is not a failed one: killing `git pull` leaves its child processes running, and the
+        # pull can still finish after the hook returns (PR #62 triage probe), so the session must not hear "failed".
+        self.assertNotIn("failed", warning)
+        self.assertIn("may still complete", warning)
 
     def test_missing_git_returns_a_session_warning(self) -> None:
         def handler(args):
