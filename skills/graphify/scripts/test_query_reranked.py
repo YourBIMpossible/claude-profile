@@ -351,6 +351,20 @@ class TestMissingBinary(unittest.TestCase):
         proc = self._run_script("--rerank")
         self._assert_clear_failure(proc.returncode, proc.stderr)
 
+    def test_bare_graphify_exe_with_a_file_of_that_name_in_the_folder_is_the_plain_not_found(self):
+        # #65 review N1, end to end: GRAPHIFY_EXE=graphify, graphify not on PATH, and a file called graphify in the
+        # current folder is the plain not-found line, never "resolved graphify no longer exists".
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as empty_path_dir:
+            (Path(td) / "graphify").write_text("")
+            env = dict(os.environ, GRAPHIFY_EXE="graphify", PATH=empty_path_dir, GRAPHIFY_QUERY_LOG_DISABLE="1")
+            proc = subprocess.run(
+                [sys.executable, str(self.SCRIPT), "find foo", "--no-rerank"],
+                cwd=td, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+        self._assert_clear_failure(proc.returncode, proc.stderr)
+        self.assertIn("graphify not found (GRAPHIFY_EXE=graphify", proc.stderr)
+        self.assertNotIn("no longer exists", proc.stderr)
+
     def test_missing_graphify_exe_no_rerank(self):
         proc = self._run_script("--no-rerank")
         self._assert_clear_failure(proc.returncode, proc.stderr)
@@ -418,6 +432,39 @@ class TestGraphifyExeResolution(unittest.TestCase):
             missing = Path(td) / "no" / "graphify.exe"
             with mock.patch.dict(os.environ, {"GRAPHIFY_EXE": str(missing)}):
                 self.assertIsNone(qr._find_graphify())
+
+    def _in_folder_with_a_graphify_file(self, override: str, path_dir: str):
+        """_find_graphify() for GRAPHIFY_EXE=override, run from a folder that holds a file named `graphify`."""
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "graphify").write_text("")
+            before = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch.dict(os.environ, {"GRAPHIFY_EXE": override, "PATH": path_dir}):
+                    return qr._find_graphify()
+            finally:
+                os.chdir(before)
+
+    def test_a_bare_name_is_not_taken_as_a_file_in_the_current_folder(self):
+        # #65 review N1: `GRAPHIFY_EXE=graphify` names a command, resolved like a shell would (PATH). A file of that
+        # name in the current folder is not it; accepting it gave a relative path that "vanished" on the next cd.
+        with tempfile.TemporaryDirectory() as empty_path_dir:
+            self.assertIsNone(self._in_folder_with_a_graphify_file("graphify", empty_path_dir))
+
+    def test_a_bare_name_still_resolves_on_path_when_a_file_of_that_name_is_in_the_folder(self):
+        with tempfile.TemporaryDirectory() as td:
+            bin_dir = self._fake_bin_dir(td)
+            found = self._in_folder_with_a_graphify_file("graphify", str(bin_dir))
+            self.assertIsNotNone(found)
+            self.assertEqual(found.parent.resolve(), bin_dir.resolve())
+
+    def test_a_relative_path_with_a_separator_is_still_a_file_check(self):
+        # either spelling of the separator: the native one, and the forward slash Windows accepts too
+        for spelling in (os.path.join(".", "graphify"), "./graphify"):
+            with self.subTest(spelling=spelling):
+                found = self._in_folder_with_a_graphify_file(spelling, "")
+                self.assertIsNotNone(found)
+                self.assertTrue(found.name.startswith("graphify"))
 
 
 @unittest.skipUnless(

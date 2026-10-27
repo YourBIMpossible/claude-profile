@@ -68,12 +68,15 @@ import resolve_graph  # noqa: E402
 
 def _find_graphify() -> Path | None:
     """GRAPHIFY_EXE overrides (a file path, or a command name / extensionless path that
-    shutil.which resolves); else `graphify` on PATH; else the graphify script installed
+    shutil.which resolves; a bare name is a command, never a file in the current folder);
+    else `graphify` on PATH; else the graphify script installed
     beside this interpreter (scripts dir, then the per-user scripts dir). None when the
     GRAPHIFY_EXE override does not resolve or nothing is found."""
     override = os.environ.get("GRAPHIFY_EXE")
     if override:
-        if Path(override).is_file():
+        # The file check is only for a value that names a path: a bare `graphify` is a command, resolved
+        # through PATH as a shell would, not a file that happens to sit in the current folder.
+        if (os.sep in override or (os.altsep and os.altsep in override)) and Path(override).is_file():
             return Path(override)
         resolved = shutil.which(override)
         return Path(resolved) if resolved else None
