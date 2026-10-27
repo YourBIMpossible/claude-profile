@@ -67,12 +67,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import resolve_graph  # noqa: E402
 
 def _find_graphify() -> Path | None:
-    """GRAPHIFY_EXE overrides; else `graphify` on PATH; else the graphify script installed
+    """GRAPHIFY_EXE overrides (a file path, or a command name / extensionless path that
+    shutil.which resolves); else `graphify` on PATH; else the graphify script installed
     beside this interpreter (scripts dir, then the per-user scripts dir). None when the
-    GRAPHIFY_EXE override is not a file or nothing is found."""
-    if os.environ.get("GRAPHIFY_EXE"):
-        exe = Path(os.environ["GRAPHIFY_EXE"])
-        return exe if exe.is_file() else None
+    GRAPHIFY_EXE override does not resolve or nothing is found."""
+    override = os.environ.get("GRAPHIFY_EXE")
+    if override:
+        if Path(override).is_file():
+            return Path(override)
+        resolved = shutil.which(override)
+        return Path(resolved) if resolved else None
     found = shutil.which("graphify")
     if found:
         return Path(found)
@@ -94,9 +98,12 @@ class GraphifyNotFoundError(RuntimeError):
     """The graphify binary is missing at startup or vanished before a query ran."""
 
 
-def _not_found_message() -> str:
+def _not_found_message(vanished: Path | None = None) -> str:
+    """The one stderr line for a missing binary; `vanished` names a resolved binary that
+    disappeared after startup."""
     exe = os.environ.get("GRAPHIFY_EXE") or "unset"
-    return f"graphify not found (GRAPHIFY_EXE={exe}, PATH, scripts dirs)"
+    gone = f"; resolved {vanished} no longer exists" if vanished is not None else ""
+    return f"graphify not found (GRAPHIFY_EXE={exe}, PATH, scripts dirs{gone})"
 
 # Same ladder as rerank_bm25.py: ask for a lot, retry bigger only if still
 # truncated. Total pool size varies wildly by query (hundreds to thousands
@@ -187,7 +194,7 @@ def run_query_raw(cwd: Path, question: str, budget: int, extra_args: list[str]) 
             errors="replace",
         )
     except FileNotFoundError as exc:
-        raise GraphifyNotFoundError(_not_found_message()) from exc
+        raise GraphifyNotFoundError(_not_found_message(GRAPHIFY)) from exc
     if proc.returncode != 0:
         raise RuntimeError(
             f"graphify query failed ({proc.returncode}) for {question!r}: "
@@ -442,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
                 cwd,
             )
         except FileNotFoundError:
-            print(_not_found_message(), file=sys.stderr)
+            print(_not_found_message(GRAPHIFY), file=sys.stderr)
             return 2
         if rc == 0:
             _log_wrapped(
