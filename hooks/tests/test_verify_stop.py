@@ -112,20 +112,20 @@ class VerifyStop(unittest.TestCase):
         self.assertEqual(self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)]), SILENT)
 
     def test_doc_only_changes_are_silent(self) -> None:
-        for entry in (tool("Write", file_path="F:/reports/2026-10-27-audit.md", content="x"),
+        for entry in (tool("Write", file_path="reports/2026-10-27-audit.md", content="x"),
                       tool("Edit", file_path="notes/handover.MD", old_string="a", new_string="b"),
                       tool("Bash", command='cat "$SP/r7.md" >> RESULTS.md && echo posted'),
-                      tool("Bash", command="echo '| row |' >> /f/reports/stage-a.md; grep -n x notes.txt"),
-                      tool("Edit", file_path="F:/Claude-Tools/state/queue.yaml", old_string="a", new_string="b"),
-                      tool("Write", file_path="C:/Temp/claude/s1/scratchpad/closeq.py", content="x"),
-                      tool("Bash", command="sed -i 's/a/b/' C:/Temp/claude/s1/scratchpad/fix.py")):
+                      tool("Bash", command="echo '| row |' >> ../reports/stage-a.md; grep -n x notes.txt"),
+                      tool("Edit", file_path="tools/state/queue.yaml", old_string="a", new_string="b"),
+                      tool("Write", file_path="tmp/claude/s1/scratchpad/closeq.py", content="x"),
+                      tool("Bash", command="sed -i 's/a/b/' tmp/claude/s1/scratchpad/fix.py")):
             with self.subTest(entry=entry):
                 self.assertEqual(self.run_hook([prompt("go"), entry, result(), say(CLAIM)]), SILENT)
 
     def test_shell_writes_without_a_named_code_file_are_silent(self) -> None:
-        for cmd in ("mkdir -p /f/reports/run-1 && ls",
+        for cmd in ("mkdir -p reports/run-1 && ls",
                     "sed -i 's/a/b/' notes.md; python -c \"import sys; sys.path.insert(0, 'x'); s.replace('a', 'b')\"",
-                    'cp "$K/prod.css" "$K/check.css"', "git bundle create F:/backups/x.bundle --all; cp a.bundle b.bundle"):
+                    'cp "$K/prod.css" "$K/check.css"', "git bundle create backups/x.bundle --all; cp a.bundle b.bundle"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)]), SILENT)
 
@@ -135,7 +135,7 @@ class VerifyStop(unittest.TestCase):
         self.assert_warns(out)
 
     def test_redirecting_a_scripts_output_is_not_a_code_change(self) -> None:
-        for cmd in ('python state/next.py 7 > "C:/Temp/out.txt"', 'cat a.md >> "$R"; grep -n x "$R"',
+        for cmd in ('python state/next.py 7 > "tmp/out.txt"', 'cat a.md >> "$R"; grep -n x "$R"',
                     "dotnet --info > info.log 2>&1"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)]), SILENT)
@@ -176,7 +176,7 @@ class VerifyStop(unittest.TestCase):
         self.assertNotIn("decision", json.loads(out))
 
     def test_fail_open_on_bad_input(self) -> None:
-        for raw in (b"", b"not json", b"[]", json.dumps({"transcript_path": "Z:/nope/missing.jsonl"}).encode()):
+        for raw in (b"", b"not json", b"[]", json.dumps({"transcript_path": "no-such-dir/missing.jsonl"}).encode()):
             with self.subTest(raw=raw):
                 code, out, _ = self.run_hook(None, raw=raw)
                 self.assertEqual((code, out), (0, ""))
