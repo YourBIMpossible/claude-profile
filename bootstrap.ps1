@@ -69,5 +69,7 @@ if ($DryRun) {
 } elseif ($SkipRea) {
     Write-Host "Skipped REA install (-SkipRea)"
 } else {
-    & (Join-Path $PSScriptRoot 'tools\Install-Rea.ps1')
+    # Install-Rea returns one status line; a skip exits 0, so say what happened last.
+    $reaStatus = & (Join-Path $PSScriptRoot 'tools\Install-Rea.ps1') | Select-Object -Last 1
+    Write-Host "REA: $reaStatus"
 }

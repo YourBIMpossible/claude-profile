@@ -685,6 +685,29 @@ class Preflight(FixtureClone):
         self.assertIn("Skipped REA install", proc.stdout)
         self.assertTrue((self.appdata / "Claude" / "claude_desktop_config.json").is_file())
 
+    # CT-SLOP1026 / CP-23: a skipped REA install still exits 0 but ends with a visible summary.
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper")
+    def test_powershell_wrapper_ends_with_the_rea_status(self) -> None:
+        shells = [s for s in dict.fromkeys((POWERSHELL, "pwsh")) if shutil.which(s)]
+        self.assertTrue(shells, "no PowerShell found")
+        stubs = self.root / "stub-bin"
+        stubs.mkdir()
+        # Node below REA's floor: Install-Rea skips before npm or claude would run (both stubs fail).
+        (stubs / "node.cmd").write_text("@echo off\r\necho v18.0.0\r\n", encoding="ascii")
+        for name in ("npm", "claude"):
+            (stubs / f"{name}.cmd").write_text("@echo off\r\nexit /b 1\r\n", encoding="ascii")
+        path = f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"
+        for shell in shells:
+            with self.subTest(shell=shell):
+                proc = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                       str(self.repo / "bootstrap.ps1"), "-Yes", "-ReposRoot", str(self.repos)],
+                                      env=self.env(PATH=path), capture_output=True, text=True, encoding="utf-8",
+                                      errors="replace", timeout=180)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertEqual(proc.stdout.strip().splitlines()[-1],
+                                 "REA: skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)",
+                                 proc.stdout + proc.stderr)
+
 
 class SessionStartSync(FixtureClone):
     def test_template_change_reaches_settings_at_session_start_without_bootstrap(self) -> None:
