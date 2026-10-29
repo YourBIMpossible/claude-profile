@@ -99,6 +99,9 @@ This repo is the source of truth: change it here, commit, push, merge.
   `mcp/claude_desktop_config.template.json`.
 - **Machine-specific values** belong in `~/.claude/profile-machine.json`, never in the repo.
   Run `python .github/scripts/check_machine_paths.py` before pushing (CI runs it too).
+- **Before every push**: run `python tools/gate.py` from the repo (or its worktree) and push only on `GATE PASS`. It runs pytest over
+  `hooks/tests` and `tools/tests` (CI runs only part of `hooks/tests`), then the machine-paths guard (self-test and scan), runs every
+  step even when one fails, and ends with one verdict line; the exit status is 0 only for a pass. Needs `pytest` (`python -m pip install pytest==8.3.3`).
 
 ## Publishing a new ZIP snapshot
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+SCRIPT = HERE.parent / "scripts" / "grrp.py"
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
@@ -558,6 +560,95 @@ class ReReviewRegressions(Base):
                          [("F-1", "verification", "denied")])
         self.assertIn("conflicts with other evidence", h["decisions_now"][0]["ask"])
         self.assertEqual(h["open_work"], [])
+
+
+ACKED_TRANSFER = block("transfer", "id: T-1\nfindings: F-1\nreceiver: lane-x\nnext_action: fix the defect\n"
+                                   "acceptance: fix merged\nfollow_up: next sync\nack: lane-x took it 2026-10-26")
+
+
+class SlopAuditRegressions(Base):
+    """Slop audit 2026-10-26 (CT-SLOP1026): each case was reproduced before the fix."""
+
+    def transferred(self) -> Path:
+        return self.ledger(finding("F-1", classification="independent", resolution="open", owner="lane-x",
+                                   lane="external", requirement="n/a: independent defect"), ACKED_TRANSFER)
+
+    def test_failed_or_denied_transfer_is_never_closeable(self) -> None:  # CP-2
+        self.transferred()
+        self.assertTrue(grrp.gate(grrp.parse(self.path), self.queue)["closeable"])  # control: acked, accepted
+        for outcome, extra in (("failed", {}), ("denied", dict(operation="take over the fix"))):
+            with self.subTest(outcome):
+                self.transferred()
+                shutil.rmtree(grrp.inbox_dir(self.path), ignore_errors=True)
+                self.receipt("lane-x.md", dict(target="T-1", track="transfer", outcome=outcome,
+                                               at="2026-10-26T01:00:00Z", by="lane-x", evidence="lane-x report", **extra))
+                self.apply()
+                g = grrp.gate(grrp.parse(self.path), self.queue)
+                self.assertFalse(g["transfers_ok"], g)
+                self.assertFalse(g["closeable"], g)
+                self.assertTrue(any(x.startswith("T-1: ") and outcome in x for x in g["transfers_unacknowledged"]), g)
+
+    def test_unreadable_machine_config_refuses_init(self) -> None:  # CP-13
+        cfg = self.tmp / "cfg" / "profile-machine.json"
+        cfg.parent.mkdir()
+        cfg.write_text("{bad json", encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k not in {"GRRP_LEDGER_DIR", "GRRP_QUEUE"}}
+        env["CLAUDE_PROFILE_MACHINE_CONFIG"] = str(cfg)
+        for cmd in ("init", "batch-init"):
+            with self.subTest(cmd):
+                p = subprocess.run([sys.executable, str(SCRIPT), cmd, "--slug", "cp13"], env=env,
+                                   capture_output=True, text=True, timeout=60)
+                self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+                self.assertIn("not valid JSON", p.stderr)
+                self.assertEqual(list(cfg.parent.rglob("*cp13*")), [])
+        d = self.tmp / "explicit"
+        p = subprocess.run([sys.executable, str(SCRIPT), "init", "--slug", "cp13", "--dir", str(d)], env=env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)  # an explicit --dir needs no machine config
+
+    def test_usage_errors_exit_invalid_not_blocked(self) -> None:  # CP-14
+        for argv in (["gate"], ["nope"], ["init", "--slug", "Not_Kebab"], ["batch-init", "--slug", "Not_Kebab"]):
+            with self.subTest(argv):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                    grrp.main(argv)
+                self.assertEqual(cm.exception.code, grrp.EXIT["invalid"])
+
+    def test_unsafe_record_id_is_invalid(self) -> None:  # CP-16
+        self.ledger(finding("F 2<x>", obligations=FULL_DONE), finding("F 3<y>", obligations=FULL_DONE))
+        g = grrp.gate(grrp.parse(self.path), self.queue)
+        self.assertEqual(g["verdict"], "invalid")
+        self.assertEqual(sum("not a safe token" in e for e in g["validation_errors"]), 2, g["validation_errors"])
+
+    def test_finding_source_value_is_checked(self) -> None:  # CP-17
+        self.ledger(finding("F-1", source="orignal", obligations=FULL_DONE))
+        g = grrp.gate(grrp.parse(self.path), self.queue)
+        self.assertEqual(g["verdict"], "invalid")
+        self.assertTrue(any("source 'orignal' not in" in e for e in g["validation_errors"]), g["validation_errors"])
+        self.ledger(finding("F-1", source="", obligations=FULL_DONE))
+        errs = grrp.gate(grrp.parse(self.path), self.queue)["validation_errors"]
+        self.assertEqual(sum("source" in e for e in errs), 1, errs)  # an empty source is reported once
+
+    def test_continuing_obligation_does_not_hide_the_rest_of_its_finding(self) -> None:  # CP-18
+        self.ledger(finding("F-1", assessment="unassessed", resolution="open", obligations=FULL_PENDING_VERIFY))
+        h = self.handoff()
+        self.assertEqual(h["continuing"], {"lane:parent": ["F-1(verification)"]})
+        self.assertEqual(sorted(h["open_work"]), ["F-1: not assessed", "F-1: original finding still open"])
+
+    def test_receipt_that_applies_nothing_is_reported(self) -> None:  # CP-19
+        self.ledger(finding("F-1", obligations=FULL_PENDING_VERIFY))
+        prose = self.tmp / "prose.md"
+        prose.write_text("# lane receipt\nverification done, all green\n", encoding="utf-8")
+        rc, out = self.apply(prose)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("prose.md: no grrp-event block", out)
+        box = grrp.inbox_dir(self.path)
+        box.mkdir()
+        (box / "lane-a.txt").write_text(ev(**v("E-T", "done", "01:00")), encoding="utf-8")
+        (box / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="utf-8")  # unrelated: not a receipt
+        rc, out = self.apply()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("lane-a.txt: not a .md receipt", out)
+        self.assertNotIn("desktop.ini", out)
 
 
 if __name__ == "__main__":
