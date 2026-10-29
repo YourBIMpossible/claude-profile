@@ -76,8 +76,17 @@ def _find_graphify() -> Path | None:
     if override:
         # The file check is only for a value that names a path: a bare `graphify` is a command, resolved
         # through PATH as a shell would, not a file that happens to sit in the current folder.
-        if (os.sep in override or (os.altsep and os.altsep in override)) and Path(override).is_file():
-            return Path(override)
+        if os.sep in override or (os.altsep and os.altsep in override):
+            path = Path(override)
+            if path.is_file():
+                return path
+            # Python 3.11's shutil.which does not try PATHEXT for a value with a folder in it (3.12 does),
+            # so complete an extensionless Windows path here.
+            if os.name == "nt" and not path.suffix:
+                for ext in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep):
+                    candidate = Path(str(path) + ext.lower())
+                    if ext and candidate.is_file():
+                        return candidate
         resolved = shutil.which(override)
         return Path(resolved) if resolved else None
     found = shutil.which("graphify")
