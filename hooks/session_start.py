@@ -18,9 +18,10 @@ platform, for startup|resume|clear|compact:
      prompt - or when either check could not run (origin/HEAD unset, git failed).
 
 Best effort, never blocks: every path exits 0. Record: ~/.claude/hooks/last-run.log
-(same vocabulary as before: "pull ok", "pull skipped (in flight)", "pull failed (exit
-N)", "git missing", "pull threw"; plus "settings synced" / "settings sync skipped"). A
-failed pull or settings sync is also named under "Profile warnings" in the session.
+("pull ok", "pull skipped (in flight)", "pull failed (exit N)", "pull timed out (exit 124)",
+"git missing", "pull threw"; plus "settings synced" / "settings sync skipped"). A failed or
+timed-out pull or settings sync is also named under "Profile warnings" in the session. Each
+git call is bounded by its timeout even when git leaves child processes running.
 Opt-outs: CLAUDE_PROFILE_PULL=0 (no pull), CLAUDE_PROFILE_SYNC=0 (no settings sync).
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -89,9 +91,25 @@ def log(message: str) -> None:
         pass
 
 
+def _read_text(f) -> str:
+    f.seek(0)
+    return f.read().decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def run_bounded(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """subprocess.run with output in temp files, not pipes, so `timeout` bounds the whole call.
+
+    On a timeout the kill stops the process but not the ones it started (git's fetch, remote helpers),
+    and those keep its stdout/stderr open; reading a pipe then waits for them (a 3 s timeout returned
+    after 20.5 s, near the hook's 25 s limit). A file needs no reader, so this returns at the deadline.
+    """
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, _read_text(out), _read_text(err))
+
+
 def git(*args: str, timeout: float = GIT_TIMEOUT_S) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(PROFILE_ROOT), *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout)
+    return run_bounded(["git", "-C", str(PROFILE_ROOT), *args], timeout)
 
 
 PULL_SEE_LOG = "this clone may be out of date - see ~/.claude/hooks/last-run.log"
@@ -105,7 +123,7 @@ def pull() -> str | None:
         log(f"git missing: git not found on PATH [{PROFILE_ROOT}]")
         return f"the profile was not pulled: git was not found on PATH; {PULL_SEE_LOG}"
     except subprocess.TimeoutExpired:
-        log(f"pull failed (exit 124): timed out after {GIT_TIMEOUT_S}s [{PROFILE_ROOT}]")
+        log(f"pull timed out (exit 124) after {GIT_TIMEOUT_S}s; it may still complete [{PROFILE_ROOT}]")
         # Not "failed": the kill stops `git pull` but not the git processes it started, so the pull may still finish.
         return (f"the profile pull timed out after {GIT_TIMEOUT_S}s and may still complete in the background; "
                 f"{PULL_SEE_LOG}")
