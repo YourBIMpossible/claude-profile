@@ -767,6 +767,47 @@ class SessionStartSync(FixtureClone):
         context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
         self.assertIn("is on 'feature'", context)
 
+    def clone_of_fixture(self) -> Path:
+        origin = self.root / "origin.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(self.repo), str(origin)], check=True, capture_output=True)
+        clone = self.root / "any" / "profile"
+        subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
+        return clone
+
+    def test_a_failed_pull_reaches_the_session(self) -> None:
+        # CP-11: a failed pull was written to last-run.log only; the session never heard of it.
+        clone = self.clone_of_fixture()
+        git(clone, "remote", "set-url", "origin", str(self.root / "no-such-origin.git"))
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_PULL="1", CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("pull failed (exit", self.log())
+        self.assertIn("Profile warnings:", context)
+        self.assertIn("the profile pull failed (exit", context)
+        self.assertIn("last-run.log", context)
+
+    def test_a_clean_clone_on_its_default_branch_adds_no_clone_warning(self) -> None:
+        clone = self.clone_of_fixture()
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_PULL="1", CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("pull ok", self.log())
+        for unexpected in ("pull failed", "could not check", "origin/HEAD", "is on '"):
+            self.assertNotIn(unexpected, context)
+
+    def test_unset_origin_head_is_reported_not_skipped(self) -> None:
+        # CP-26: with origin/HEAD unset the branch check was skipped silently, even on a feature branch.
+        clone = self.clone_of_fixture()
+        git(clone, "switch", "-q", "-c", "feature")
+        git(clone, "remote", "set-head", "origin", "-d")
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("origin/HEAD is not set", context)
+        self.assertIn("remote set-head origin -a", context)
+
+    def test_a_failed_git_status_is_not_read_as_clean(self) -> None:
+        # CP-26: a nonzero `git status` left stdout empty, which read as "no uncommitted changes".
+        clone = self.clone_of_fixture()
+        (clone / ".git" / "index").write_bytes(b"not an index")
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("could not check the profile clone", context)
+        self.assertIn("git status exit", context)
+
 
 @unittest.skipUnless(os.name == "nt" and shutil.which(POWERSHELL), "Show-AuditAlerts.ps1 is Windows-only")
 class AuditAlertsHook(Sandbox):
