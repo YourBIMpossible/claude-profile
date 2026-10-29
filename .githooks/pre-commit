@@ -7,8 +7,9 @@
 #
 # Behavior:
 #   - A finding BLOCKS the commit (exit 1). Output is redacted; the value is never printed.
-#   - gitleaks missing or failing to run: loud warning on stderr, commit proceeds (the pre-push /
-#     PR scan is the backstop). It is never a silent skip.
+#   - gitleaks missing or failing to run: the commit is BLOCKED (exit 1) with a message naming the
+#     fix (install gitleaks / set GITLEAKS_BIN) and the audited bypass. An unscanned commit never
+#     goes through silently or with only a warning (CP-4, owner decision 2026-10-29).
 #   - Emergency bypass, explicit and audited:  BIMP_SECRETS_BYPASS="<reason>" git commit ...
 #     appends a line to <git-common-dir>/secrets-bypass.log. `--no-verify` skips all hooks and
 #     leaves no trail; prefer the variable.
@@ -25,11 +26,18 @@ if [ -n "${BIMP_SECRETS_BYPASS:-}" ]; then
     exit 0
 fi
 
+# Block when the scan cannot run (gitleaks missing or broken), naming the fix and the audited bypass.
+cannot_scan() {
+    echo "pre-commit: BLOCKED - $1; the staged-secret scan could not run, so the commit is stopped." >&2
+    echo "pre-commit: fix: install gitleaks on PATH, or set GITLEAKS_BIN to a working gitleaks binary." >&2
+    echo "pre-commit: emergency only: BIMP_SECRETS_BYPASS=\"<reason>\" git commit ...  (logged to secrets-bypass.log)" >&2
+    exit 1
+}
+
 gl="${GITLEAKS_BIN:-}"
 [ -n "$gl" ] || gl=$(command -v gitleaks 2>/dev/null || command -v gitleaks.exe 2>/dev/null || true)
 if [ -z "$gl" ]; then
-    echo "pre-commit: WARNING gitleaks not found (GITLEAKS_BIN or PATH) - staged-secret scan SKIPPED" >&2
-    exit 0
+    cannot_scan "gitleaks not found (GITLEAKS_BIN or PATH)"
 fi
 
 # gitleaks >= 8.19 spells it `git --staged`; the 8.18.x line (pinned by the BIMpossible repos)
@@ -47,6 +55,5 @@ case "$rc" in
         echo "pre-commit: vetted false positive -> add a value-scoped allowlist entry to .gitleaks.toml, not a bypass." >&2
         exit 1 ;;
     *)
-        echo "pre-commit: WARNING gitleaks failed to run (exit $rc) - staged-secret scan SKIPPED" >&2
-        exit 0 ;;
+        cannot_scan "gitleaks failed to run (exit $rc)" ;;
 esac

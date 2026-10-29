@@ -37,7 +37,7 @@ live entirely inside settings.json.
 | `session_start.py` | SessionStart (`startup\|resume\|clear\|compact`; runs first) | convenience — `git pull --ff-only` of this clone under a non-blocking lock (losers log `pull skipped (in flight)`), then the settings re-sync, then the machine roots and clone warnings as session context; compact only re-prints the roots. Never blocks, always exit 0; record `~/.claude/hooks/last-run.log`. Opt-outs `CLAUDE_PROFILE_PULL=0`, `CLAUDE_PROFILE_SYNC=0`. Replaces `session-start-pull.ps1` and the Linux `session-start-pull.sh` port. | clone |
 | `ctxdex_autoindex.py` | PostToolUse Bash | convenience | clone |
 | `decay_reminder.py` | UserPromptSubmit | **advisory** reminder (C2) | clone |
-| `protect_paths_gate.py` | PreToolUse Write\|Edit | **control** — fail-closed (C3; live `NORTHSTAR*.md` edits raise an owner approval prompt, `*.draft.md` free) | clone |
+| `protect_paths_gate.py` | PreToolUse Write\|Edit\|MultiEdit\|NotebookEdit | **control** — fail-closed (C3; live `NORTHSTAR*.md` edits raise an owner approval prompt, `*.draft.md` free) | clone |
 | `northstar_inject.py` | SessionStart (`startup\|resume\|clear`) + UserPromptSubmit | **advisory** — injects the active locked mission(s) at session start and re-injects them each turn (scope-governor v3, multi-star) | clone |
 | `skill-detection-hook.json` | PostToolUse (Revit MCP) | prompt-type, enabled 2026-08-08 | n/a (JSON in settings.json) |
 | `evidence_evacuate.py` | Stop + SessionEnd | **convenience** — Evidence Compiler measurement plan S0.1: copies any EC packet in `$CLAUDE_PROJECT_DIR`/payload `cwd` `.evidence-compiler/packets/` that `{repos}/Evidence-Archive/EC-LIVE` lacks, via `{tools}/evidence-archive/evacuate_worktree.py --apply` (sha256-verified, never deletes/overwrites, local-only). A packet counts as archived only when a byte-identical copy is in `packets/` or the evacuator's quarantine (a partial copy is retried). No-op = one listing + one stat per packet (a packet is hashed only against a same-size archive copy). One shared 25 s budget covers the pre-check hashing and evacuator calls across checkouts (a checkout it cannot finish checking is a surfaced deferral); one checkout's failure never skips the rest. Always exit 0 (a Stop hook exiting 2 would block the stop); any failure is surfaced as a `systemMessage`, not just logged; a SessionEnd failure is also appended as its own entry under `evidence_evacuate.pending/` and shown by the next Stop, which deletes only the entries it has printed (an interrupted Stop keeps them; an unreadable entry is shown, never dropped). SessionEnd also sweeps the repo root + every `<root>/.claude/worktrees/*` (the `--sweep` backstop's caller); `--sweep <repo-root>...` exits 1 on failure. Opt-out `EVIDENCE_EVACUATE=0`. Self-test: `python hooks/tests/test_evidence_evacuate.py` or `pytest hooks/tests` (needs the real evacuator; `EVIDENCE_TEST_EVACUATOR` overrides its path, a missing one fails). | clone |
@@ -83,13 +83,14 @@ removed on 2026-08-07 (`docs/adr/0002-defer-context-budget-automation.md`).
 ## Control vs advisory (from the fail-open lesson)
 
 One **control**, fail-closed (block on its own failure — malformed payload, missing
-field, any exception → exit 2): `protect_paths_gate.py` (protected paths on Write/Edit,
+field, any exception → exit 2): `protect_paths_gate.py` (protected paths on Write/Edit/MultiEdit/NotebookEdit,
 plus an owner-approval prompt on every live north-star mission file — `NORTHSTAR.md` and
 `NORTHSTAR.<slug>.md`; `*.draft.md` is free; since 2026-10-10, see below). Everything else is advisory or
 convenience — a failure there changes nothing about safety.
 
 Scope honesty:
-- **protect_paths_gate**: covers only Write/Edit. **The Bash channel (`sed -i`,
+- **protect_paths_gate**: covers only the file-writing tools Write, Edit, MultiEdit and
+  NotebookEdit (one matcher in `settings.template.json`). **The Bash channel (`sed -i`,
   redirection, `tee`, `Set-Content`, `python -c`) is NOT covered and is advisory-only** —
   never describe Bash-side protection as a control.
 - **northstar_inject** (scope-governor v3, multi-star — 2026-08-15; full model in

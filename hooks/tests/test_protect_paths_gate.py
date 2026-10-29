@@ -76,6 +76,26 @@ BLOCKED += [
 ]
 ASKED += [payload(NS, "acceptEdits"), payload(NS, "plan"), payload(NS, "auto")]
 
+
+# MultiEdit and NotebookEdit write files the same way Edit does (CP-10): same verdicts.
+def tool_payload(tool: str, key: str, path: str, mode: "str | None" = "default") -> str:
+    body = {"tool_name": tool, "tool_input": {key: path}}
+    if mode is not None:
+        body["permission_mode"] = mode
+    return json.dumps(body)
+
+
+BLOCKED += [
+    tool_payload("MultiEdit", "file_path", "X:/fixture/BIMpossible/.env"),
+    tool_payload("MultiEdit", "file_path", "X:/fixture/BIMpossible/backend/guard.py"),
+    tool_payload("MultiEdit", "file_path", NS, "bypassPermissions"),
+    tool_payload("NotebookEdit", "notebook_path", "secrets/google-credentials.ipynb"),
+    tool_payload("NotebookEdit", "notebook_path", "X:/fixture/BIMpossible/.env.local"),
+    json.dumps({"tool_name": "MultiEdit", "tool_input": {"edits": []}}),          # no file_path
+    json.dumps({"tool_name": "NotebookEdit", "tool_input": {"new_source": "x"}}),  # no notebook_path
+]
+ASKED += [tool_payload("MultiEdit", "file_path", NS)]
+
 ALLOWED = [
     payload("proj/NORTHSTAR.draft.md"),                            # drafts stay free
     payload("proj/NORTHSTAR.draft.md", "bypassPermissions"),       # ... in every mode
@@ -94,6 +114,8 @@ ALLOWED = [
     payload("X:/fixture/claude-profile/hooks/README.md"),
     json.dumps({"tool_name": "NotebookEdit",
                 "tool_input": {"notebook_path": "analysis/run.ipynb"}}),
+    json.dumps({"tool_name": "MultiEdit",
+                "tool_input": {"file_path": "X:/fixture/BIMpossible/backend/main.py", "edits": []}}),
 ]
 
 
