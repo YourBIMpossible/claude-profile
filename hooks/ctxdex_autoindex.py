@@ -64,22 +64,32 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-def _ctxdex_dir() -> Path:
+def _ctxdex_dir() -> tuple[Path, str]:
     """CTXDEX_DIR overrides; else <tools_root>/ctxdex from the machine config
     (tools/machine_config.py). An unset or unreadable config yields a path that
-    does not exist, which the preflight below reports once and skips."""
+    does not exist, which the preflight below reports once and skips; the second
+    value is the config's error text ("" when it loaded) for that report."""
     if os.environ.get("CTXDEX_DIR"):
-        return Path(os.environ["CTXDEX_DIR"])
+        return Path(os.environ["CTXDEX_DIR"]), ""
+    tools = ""
+    error = ""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
         import machine_config
-        tools = machine_config.load().get("tools_root") or ""
-    except Exception:
-        tools = ""
-    return Path(tools) / "ctxdex" if tools else Path.home() / ".claude" / "no-claude-tools-clone" / "ctxdex"
+    except Exception as exc:  # fail-open: runs at import, before main's guard
+        error = f"cannot import machine_config: {type(exc).__name__}: {exc}"
+    else:
+        try:
+            tools = machine_config.load().get("tools_root") or ""
+        except machine_config.ConfigError as exc:
+            error = str(exc)
+        except Exception as exc:  # fail-open: any other config failure also falls back
+            error = f"{type(exc).__name__}: {exc}"
+    path = Path(tools) / "ctxdex" if tools else Path.home() / ".claude" / "no-claude-tools-clone" / "ctxdex"
+    return path, error
 
 
-CTXDEX_DIR = _ctxdex_dir()
+CTXDEX_DIR, CONFIG_ERROR = _ctxdex_dir()
 MIN_BYTES = 100 * 1024
 # Runtime state stays under ~/.claude/hooks, never in the clone the hook runs from.
 LOG_PATH = Path.home() / ".claude" / "hooks" / "ctxdex_autoindex.log"
@@ -225,8 +235,9 @@ def _ctxdex_preflight(log: logging.Logger) -> bool:
     if not script.is_file():
         log.error(
             "preflight: ctxdex.py not found at %s - auto-capture disabled until "
-            "it is restored (see skills/ctxdex/SKILL.md for the pinned version)",
+            "it is restored (see skills/ctxdex/SKILL.md for the pinned version)%s",
             script,
+            f" (machine config: {CONFIG_ERROR})" if CONFIG_ERROR else "",
         )
         return False
     return True

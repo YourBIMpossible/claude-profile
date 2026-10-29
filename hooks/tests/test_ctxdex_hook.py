@@ -36,13 +36,15 @@ def check(name, cond, detail=""):
     print(f"{'PASS' if cond else 'FAIL'}: {name}" + (f" -- {detail}" if detail and not cond else ""))
 
 
-def run_hook(payload, env_extra=None):
+def run_hook(payload, env_extra=None, drop=(), hook=HOOK):
     import os
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
+    for name in drop:
+        env.pop(name, None)
     p = subprocess.run(
-        [sys.executable, HOOK],
+        [sys.executable, str(hook)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -362,6 +364,43 @@ def run_checks() -> list:
         TOOL_RESULTS_DIR2.parent.rmdir()
     except OSError:
         pass
+
+    # --- Scenario 10: malformed machine config is named in the preflight log -----
+    # CP-28: the config error must reach the "ctxdex.py not found" line instead of
+    # being swallowed. HOME/USERPROFILE point into a temp dir so neither the real
+    # machine config nor the real hook log is touched.
+    with tempfile.TemporaryDirectory(prefix="ctxdex-hook-badcfg-") as tmp:
+        bad_config = Path(tmp) / "profile-machine.json"
+        bad_config.write_text("{bad json", encoding="utf-8")
+        home = Path(tmp) / "home"
+        p = run_hook(base_payload, drop=("CTXDEX_DIR",), env_extra={
+            "CLAUDE_PROFILE_MACHINE_CONFIG": str(bad_config), "HOME": str(home), "USERPROFILE": str(home)})
+        hook_log = home / ".claude" / "hooks" / "ctxdex_autoindex.log"
+        logged = hook_log.read_text(encoding="utf-8") if hook_log.is_file() else ""
+        check("10a hook exits 0 with a malformed machine config", p.returncode == 0,
+              f"returncode={p.returncode} stderr={p.stderr[:300]}")
+        check("10b preflight still reports ctxdex.py not found", "ctxdex.py not found" in logged, logged[:500])
+        check("10c preflight log names the machine config error",
+              "machine config:" in logged and "not valid JSON" in logged, logged[:500])
+
+    # --- Scenario 11: machine_config.py that fails to import must not crash the hook
+    # The import runs at module load, outside main's guard. A scratch copy of the hook
+    # beside a scratch tools/machine_config.py with a syntax error: exit 0, cause logged.
+    with tempfile.TemporaryDirectory(prefix="ctxdex-hook-badmod-") as tmp:
+        scratch_hook = Path(tmp) / "profile" / "hooks" / "ctxdex_autoindex.py"
+        scratch_hook.parent.mkdir(parents=True)
+        scratch_hook.write_bytes(Path(HOOK).read_bytes())
+        (Path(tmp) / "profile" / "tools").mkdir()
+        (Path(tmp) / "profile" / "tools" / "machine_config.py").write_text("def broken(:\n", encoding="utf-8")
+        home = Path(tmp) / "home"
+        p = run_hook(base_payload, hook=scratch_hook, drop=("CTXDEX_DIR",),
+                     env_extra={"HOME": str(home), "USERPROFILE": str(home)})
+        hook_log = home / ".claude" / "hooks" / "ctxdex_autoindex.log"
+        logged = hook_log.read_text(encoding="utf-8") if hook_log.is_file() else ""
+        check("11a hook exits 0 when machine_config.py fails to import",
+              p.returncode == 0 and "Traceback" not in p.stderr, f"returncode={p.returncode} stderr={p.stderr[-300:]}")
+        check("11b preflight log names the import error",
+              "machine config: cannot import machine_config: SyntaxError" in logged, logged[:500])
     clean_db()
     return list(results)
 
