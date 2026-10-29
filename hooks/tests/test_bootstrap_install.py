@@ -311,6 +311,16 @@ class MachineConfigReruns(Sandbox):
         self.assertIn("profile-machine.json", proc.stdout + proc.stderr)
         self.assertEqual(sorted(p.name for p in self.claude.iterdir()), ["profile-machine.json"])
 
+    def test_explicit_root_that_is_not_a_folder_is_refused_before_any_write(self) -> None:
+        (self.root / "a-file").write_text("x", encoding="utf-8")
+        for flag, value in (("--repos-root", self.root / "no-such-repos"),
+                            ("--tools-root", self.root / "no-such-tools"),
+                            ("--tools-root", self.root / "a-file")):
+            with self.subTest(flag=flag, value=value.name):
+                proc = self.run_bootstrap(flag, str(value), expect_ok=False)
+                self.assertIn(f"{flag} is not a folder", proc.stdout + proc.stderr)
+                self.assertFalse(self.claude.exists())
+
     def test_dry_run_writes_nothing(self) -> None:
         proc = self.run_bootstrap("--dry-run")
         self.assertIn("DRY RUN - nothing written", proc.stdout)
@@ -586,6 +596,35 @@ class RefusalLeavesProfileUntouched(Sandbox):
     def test_unusable_desktop_config_is_refused_before_any_write(self) -> None:
         self.plant_profile("{}", desktop="{not json")
         self.assert_refused_untouched("claude_desktop_config.json")
+
+
+class DesktopConfigMerge(unittest.TestCase):
+    """plan_desktop_config on hand-planted configs; plans only, nothing is written."""
+
+    def setUp(self) -> None:
+        self.appdata = Path(tempfile.mkdtemp(prefix="desktop-merge-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.appdata, True)
+        (self.appdata / "Claude").mkdir()
+        fresh = ps.plan_desktop_config(self.appdata / "empty", REPO)
+        self.servers = json.loads(fresh.text)["mcpServers"]
+
+    def plan(self, existing: str) -> dict:
+        (self.appdata / "Claude" / "claude_desktop_config.json").write_text(existing, encoding="utf-8")
+        plan = ps.plan_desktop_config(self.appdata, REPO)
+        self.assertTrue(plan.changed)
+        return json.loads(plan.text)
+
+    def test_empty_object_gains_mcp_servers(self) -> None:
+        for raw in ("{}", "{ }", "\n{\n}\n"):
+            with self.subTest(existing=raw):
+                self.assertEqual(self.plan(raw), {"mcpServers": self.servers})
+
+    def test_nested_mcp_servers_key_is_left_alone(self) -> None:
+        nested = {"other": {"mcpServers": {"x": {}}}, "preferences": {"a": 1}}
+        self.assertEqual(self.plan(json.dumps(nested, indent=2)), {"mcpServers": self.servers, **nested})
+        both = {"other": {"mcpServers": {"x": {}}}, "mcpServers": {"old": {}}}
+        self.assertEqual(self.plan(json.dumps(both, indent=2)),
+                         {"other": {"mcpServers": {"x": {}}}, "mcpServers": self.servers})
 
 
 class FixtureClone(Sandbox):

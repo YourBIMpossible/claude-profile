@@ -83,16 +83,24 @@ def make_dir_link(link: Path, target: Path) -> str:
     return "symlink"
 
 
+def given_folder(flag: str, value: str) -> str:
+    """An explicitly passed root, resolved; a typo must not be stored as a root."""
+    path = Path(value).expanduser().resolve()
+    if not path.is_dir():
+        raise Refuse(f"{flag} is not a folder: {path}\nCheck the path, then run bootstrap again.")
+    return str(path)
+
+
 def build_config(opts: argparse.Namespace, stored: dict) -> dict:
     given = dict(stored)
     if opts.repos_root:
-        new_root = str(Path(opts.repos_root).expanduser().resolve())
+        new_root = given_folder("--repos-root", opts.repos_root)
         if stored.get("repos_root") and os.path.normcase(stored["repos_root"]) != os.path.normcase(new_root):
             for key in ("tools_root", "reports_dir", "evidence_archive", "additional_directories"):
                 given.pop(key, None)  # re-detect under the new repos root
         given["repos_root"] = new_root
     if opts.tools_root:
-        given["tools_root"] = str(Path(opts.tools_root).expanduser().resolve())
+        given["tools_root"] = given_folder("--tools-root", opts.tools_root)
     if opts.no_collab_mailbox:
         given["collab_mailbox"] = ""
     elif opts.collab_mailbox is not None:

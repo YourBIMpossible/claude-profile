@@ -354,14 +354,13 @@ def write_settings(plan: SettingsPlan, rolling_backup: bool = False) -> Path | N
 # ---- Claude Desktop config (Windows) -------------------------------------------------
 
 def find_object_span(text: str, key: str) -> tuple[int, int] | None:
-    """(index of '{', index of its matching '}') for a top-level key's object value."""
-    m = re.search(r'"' + re.escape(key) + r'"\s*:\s*\{', text)
-    if not m:
-        return None
-    start = m.end() - 1
-    depth, in_str, esc = 0, False, False
-    for i in range(start, len(text)):
-        c = text[i]
+    """(index of '{', index of its matching '}') for a top-level key's object value.
+    A key of the same name inside a nested object never matches."""
+    quoted = '"' + key + '"'
+    value_opens = re.compile(r"\s*:\s*\{")
+    start: int | None = None
+    depth, in_str, esc, str_start = 0, False, False, 0
+    for i, c in enumerate(text):
         if in_str:
             if esc:
                 esc = False
@@ -369,14 +368,18 @@ def find_object_span(text: str, key: str) -> tuple[int, int] | None:
                 esc = True
             elif c == '"':
                 in_str = False
+                if start is None and depth == 1 and text[str_start:i + 1] == quoted:
+                    m = value_opens.match(text, i + 1)
+                    if m:
+                        start = m.end() - 1
             continue
         if c == '"':
-            in_str = True
+            in_str, str_start = True, i
         elif c == "{":
             depth += 1
         elif c == "}":
             depth -= 1
-            if depth == 0:
+            if start is not None and depth == 1:
                 return start, i
     return None
 
@@ -430,7 +433,8 @@ def plan_desktop_config(appdata: Path, profile_root: Path = PROFILE_ROOT) -> Des
         merged = existing_raw[:dst[0]] + block + existing_raw[dst[1] + 1:]
     else:
         brace = existing_raw.find("{")
-        merged = existing_raw[:brace + 1] + '\n  "mcpServers": ' + block + "," + existing_raw[brace + 1:]
+        sep = "," if existing else "\n"  # an empty object takes no separator after the new key
+        merged = existing_raw[:brace + 1] + '\n  "mcpServers": ' + block + sep + existing_raw[brace + 1:]
     try:
         merged_obj = json.loads(merged)
     except ValueError as exc:
