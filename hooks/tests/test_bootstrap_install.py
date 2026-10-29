@@ -208,7 +208,7 @@ class CleanInstall(Sandbox):
         probe = ("import json, sys; sys.path.insert(0, sys.argv[1]); import pipeline, screen; "
                  "print(json.dumps([pipeline.tool_identity()[1], screen.__file__, sys.modules['shell_paths'].__file__]))")
         proc = subprocess.run([sys.executable, "-I", "-c", probe, str(unit)], capture_output=True, text=True,
-                              timeout=60, cwd=self.root)
+                              timeout=60, env=self.env(), cwd=self.root)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         sha, screen_file, shell_paths_file = json.loads(proc.stdout)
         self.assertEqual(sha, CAPTURE_TOOL_SHA256, "vendor/README.md tool_sha256 is stale or the unit changed")
@@ -216,6 +216,10 @@ class CleanInstall(Sandbox):
             self.assertTrue(Path(loaded).resolve().is_relative_to((REPO / "vendor").resolve()), loaded)
 
     def test_vendored_capture_hooks_capture_synthetic_episodes(self) -> None:
+        # capture.py dry refuses any output path with a "scratchpad" part (dryrun.check_out_dir), and
+        # the sandbox must stay under TEMP (see env()), so a session whose TEMP is a scratchpad can't run it.
+        if any(part.lower() == "scratchpad" for part in self.root.parts):
+            self.skipTest(f"TEMP is inside a scratchpad ({self.root.parent}); capture.py dry refuses scratchpad output")
         out = self.root / "dry"
         out.mkdir()
         env = {k: v for k, v in self.env().items() if not k.startswith(("EC_CAPTURE", "EVIDENCE_CAPTURE"))}
@@ -271,7 +275,8 @@ class CleanInstall(Sandbox):
         locked = {"hook_event_name": "PreToolUse", "tool_name": "Write",
                   "tool_input": {"file_path": str(self.root / "NORTHSTAR.md"), "content": "x"}}
         for stdin in (json.dumps(locked), "not json"):
-            proc = subprocess.run([sys.executable, str(gate)], input=stdin, capture_output=True, text=True, timeout=30)
+            proc = subprocess.run([sys.executable, str(gate)], input=stdin, capture_output=True, text=True, timeout=30,
+                                  env=self.env())
             self.assertEqual(proc.returncode, 2, f"gate did not block: {stdin!r}")
 
     def test_second_run_changes_nothing(self) -> None:
@@ -310,6 +315,16 @@ class MachineConfigReruns(Sandbox):
         proc = self.run_bootstrap(expect_ok=False)
         self.assertIn("profile-machine.json", proc.stdout + proc.stderr)
         self.assertEqual(sorted(p.name for p in self.claude.iterdir()), ["profile-machine.json"])
+
+    def test_explicit_root_that_is_not_a_folder_is_refused_before_any_write(self) -> None:
+        (self.root / "a-file").write_text("x", encoding="utf-8")
+        for flag, value in (("--repos-root", self.root / "no-such-repos"),
+                            ("--tools-root", self.root / "no-such-tools"),
+                            ("--tools-root", self.root / "a-file")):
+            with self.subTest(flag=flag, value=value.name):
+                proc = self.run_bootstrap(flag, str(value), expect_ok=False)
+                self.assertIn(f"{flag} is not a folder", proc.stdout + proc.stderr)
+                self.assertFalse(self.claude.exists())
 
     def test_dry_run_writes_nothing(self) -> None:
         proc = self.run_bootstrap("--dry-run")
@@ -588,6 +603,35 @@ class RefusalLeavesProfileUntouched(Sandbox):
         self.assert_refused_untouched("claude_desktop_config.json")
 
 
+class DesktopConfigMerge(unittest.TestCase):
+    """plan_desktop_config on hand-planted configs; plans only, nothing is written."""
+
+    def setUp(self) -> None:
+        self.appdata = Path(tempfile.mkdtemp(prefix="desktop-merge-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.appdata, True)
+        (self.appdata / "Claude").mkdir()
+        fresh = ps.plan_desktop_config(self.appdata / "empty", REPO)
+        self.servers = json.loads(fresh.text)["mcpServers"]
+
+    def plan(self, existing: str) -> dict:
+        (self.appdata / "Claude" / "claude_desktop_config.json").write_text(existing, encoding="utf-8")
+        plan = ps.plan_desktop_config(self.appdata, REPO)
+        self.assertTrue(plan.changed)
+        return json.loads(plan.text)
+
+    def test_empty_object_gains_mcp_servers(self) -> None:
+        for raw in ("{}", "{ }", "\n{\n}\n"):
+            with self.subTest(existing=raw):
+                self.assertEqual(self.plan(raw), {"mcpServers": self.servers})
+
+    def test_nested_mcp_servers_key_is_left_alone(self) -> None:
+        nested = {"other": {"mcpServers": {"x": {}}}, "preferences": {"a": 1}}
+        self.assertEqual(self.plan(json.dumps(nested, indent=2)), {"mcpServers": self.servers, **nested})
+        both = {"other": {"mcpServers": {"x": {}}}, "mcpServers": {"old": {}}}
+        self.assertEqual(self.plan(json.dumps(both, indent=2)),
+                         {"other": {"mcpServers": {"x": {}}}, "mcpServers": self.servers})
+
+
 class FixtureClone(Sandbox):
     """A committed copy of the profile in the sandbox: template edits, refusals, sync."""
 
@@ -645,6 +689,29 @@ class Preflight(FixtureClone):
         self.assertEqual(Path(self.machine_config()["collab_mailbox"]), self.root / "mb")
         self.assertIn("Skipped REA install", proc.stdout)
         self.assertTrue((self.appdata / "Claude" / "claude_desktop_config.json").is_file())
+
+    # CT-SLOP1026 / CP-23: a skipped REA install still exits 0 but ends with a visible summary.
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper")
+    def test_powershell_wrapper_ends_with_the_rea_status(self) -> None:
+        shells = [s for s in dict.fromkeys((POWERSHELL, "pwsh")) if shutil.which(s)]
+        self.assertTrue(shells, "no PowerShell found")
+        stubs = self.root / "stub-bin"
+        stubs.mkdir()
+        # Node below REA's floor: Install-Rea skips before npm or claude would run (both stubs fail).
+        (stubs / "node.cmd").write_text("@echo off\r\necho v18.0.0\r\n", encoding="ascii")
+        for name in ("npm", "claude"):
+            (stubs / f"{name}.cmd").write_text("@echo off\r\nexit /b 1\r\n", encoding="ascii")
+        path = f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"
+        for shell in shells:
+            with self.subTest(shell=shell):
+                proc = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                       str(self.repo / "bootstrap.ps1"), "-Yes", "-ReposRoot", str(self.repos)],
+                                      env=self.env(PATH=path), capture_output=True, text=True, encoding="utf-8",
+                                      errors="replace", timeout=180)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertEqual(proc.stdout.strip().splitlines()[-1],
+                                 "REA: skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)",
+                                 proc.stdout + proc.stderr)
 
 
 class SessionStartSync(FixtureClone):
@@ -727,6 +794,47 @@ class SessionStartSync(FixtureClone):
         git(clone, "switch", "-q", "-c", "feature")
         context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
         self.assertIn("is on 'feature'", context)
+
+    def clone_of_fixture(self) -> Path:
+        origin = self.root / "origin.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(self.repo), str(origin)], check=True, capture_output=True)
+        clone = self.root / "any" / "profile"
+        subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
+        return clone
+
+    def test_a_failed_pull_reaches_the_session(self) -> None:
+        # CP-11: a failed pull was written to last-run.log only; the session never heard of it.
+        clone = self.clone_of_fixture()
+        git(clone, "remote", "set-url", "origin", str(self.root / "no-such-origin.git"))
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_PULL="1", CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("pull failed (exit", self.log())
+        self.assertIn("Profile warnings:", context)
+        self.assertIn("the profile pull failed (exit", context)
+        self.assertIn("last-run.log", context)
+
+    def test_a_clean_clone_on_its_default_branch_adds_no_clone_warning(self) -> None:
+        clone = self.clone_of_fixture()
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_PULL="1", CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("pull ok", self.log())
+        for unexpected in ("pull failed", "could not check", "origin/HEAD", "is on '"):
+            self.assertNotIn(unexpected, context)
+
+    def test_unset_origin_head_is_reported_not_skipped(self) -> None:
+        # CP-26: with origin/HEAD unset the branch check was skipped silently, even on a feature branch.
+        clone = self.clone_of_fixture()
+        git(clone, "switch", "-q", "-c", "feature")
+        git(clone, "remote", "set-head", "origin", "-d")
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("origin/HEAD is not set", context)
+        self.assertIn("remote set-head origin -a", context)
+
+    def test_a_failed_git_status_is_not_read_as_clean(self) -> None:
+        # CP-26: a nonzero `git status` left stdout empty, which read as "no uncommitted changes".
+        clone = self.clone_of_fixture()
+        (clone / ".git" / "index").write_bytes(b"not an index")
+        context = self.run_session_start(repo=clone, CLAUDE_PROFILE_SYNC="0")
+        self.assertIn("could not check the profile clone", context)
+        self.assertIn("git status exit", context)
 
 
 @unittest.skipUnless(os.name == "nt" and shutil.which(POWERSHELL), "Show-AuditAlerts.ps1 is Windows-only")
