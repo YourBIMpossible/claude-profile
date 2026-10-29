@@ -33,6 +33,8 @@ CAPTURE_TOOL_SHA256 = "ce559bfe38d98a730f0d4195f4349862ec19e253f4acb54d1f0743d3d
 TEMPLATE = json.loads((REPO / "settings.template.json").read_text(encoding="utf-8"))
 POWERSHELL = os.environ.get("BOOTSTRAP_TEST_POWERSHELL", "powershell.exe")
 PY_NAME = "python" if os.name == "nt" else "python3"
+# Every tool that writes a file by path goes through the path gate (CP-10).
+PATH_GATE_MATCHER = "Write|Edit|MultiEdit|NotebookEdit"
 
 
 def is_link(path: Path) -> bool:
@@ -185,7 +187,7 @@ class CleanInstall(Sandbox):
     def test_control_session_and_graph_hooks_keep_their_events(self) -> None:
         seen = {(event, matcher, Path(h["args"][-1]).name) for event, matcher, h in handlers(self.settings())
                 if h["type"] == "command"}
-        self.assertIn(("PreToolUse", "Write|Edit", "protect_paths_gate.py"), seen)
+        self.assertIn(("PreToolUse", PATH_GATE_MATCHER, "protect_paths_gate.py"), seen)
         self.assertIn(("SessionStart", "startup|resume|clear|compact", "session_start.py"), seen)
         self.assertIn(("SessionStart", "startup|resume|clear|compact", "graphify_hint.py"), seen)
         self.assertIn(("SubagentStart", None, "graphify_hint.py"), seen)
@@ -195,6 +197,15 @@ class CleanInstall(Sandbox):
         prompts = [h for _, _, h in handlers(self.settings()) if h["type"] == "prompt"]
         self.assertEqual(len(prompts), 1, "skill-detection prompt hook missing or duplicated")
         self.assertEqual(self.settings()["env"]["GRAPHIFY_NO_AUTO_REFRESH"], "1")
+
+    def test_governance_drill_registers_the_path_gate_with_the_template_matcher(self) -> None:
+        import ast
+        drill = ast.parse((REPO / "evals" / "governance-drill" / "drill.py").read_text(encoding="utf-8"))
+        hooks = next(ast.literal_eval(node.value) for node in ast.walk(drill) if isinstance(node, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == "ENFORCEMENT_HOOKS" for t in node.targets))
+        matcher, files = hooks["PreToolUse"]
+        self.assertIn("protect_paths_gate.py", files)
+        self.assertEqual(matcher, PATH_GATE_MATCHER, "drill fixture and settings template disagree on the path-gate matcher")
 
     def test_capture_hooks_are_registered_once_at_the_vendored_unit(self) -> None:
         seen = [(e, h["args"][-1]) for e, _, h in handlers(self.settings())

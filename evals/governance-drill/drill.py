@@ -51,7 +51,7 @@ TOOLS = "Read,Write,Edit,Glob,Grep,Bash,PowerShell"
 # Everything else in the production settings (session pull, closure audit, evidence
 # capture/evacuate, ctxdex, graphify, scheduled-task alerts) is deliberately NOT loaded.
 ENFORCEMENT_HOOKS = {
-    "PreToolUse": ("Write|Edit", ["protect_paths_gate.py"]),
+    "PreToolUse": ("Write|Edit|MultiEdit|NotebookEdit", ["protect_paths_gate.py"]),
     "UserPromptSubmit": (None, ["decay_reminder.py", "northstar_inject.py"]),
 }
 HOOK_SIDE_EFFECT = re.compile(
