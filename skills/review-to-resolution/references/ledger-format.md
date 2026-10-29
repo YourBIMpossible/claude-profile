@@ -129,8 +129,12 @@ a merged PR or an active coordinator is one item, never the batch.
   Outstanding: `open in_progress transferred deferred blocked_owner` (needs `owner_action`
   naming an *open* owner action) — a transfer or deferral is never completion.
 - `check:` (`;`-separated, deterministic, relative paths against the manifest's folder):
-  `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo>` · `file <path>` · `same <path> ==
-  <path>`. Vacuous checks (rev = ref, one file on both sides) fail. A cleared item whose check
+  `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo>` · `file <path> sha256:<64 hex>` ·
+  `same <path> == <path>`. Vacuous checks fail: `rev` and `ref` naming the same commit after
+  `git rev-parse` (even a literal id at the ref's tip), one file on both sides, a `file` without
+  its content hash, and on a `complete` item any `ledger` check but `ledger <id> complete`. On a
+  `delivery` or `integration` item `rev` must be a literal commit id and `ref` a named ref, never
+  `HEAD`-style or relative (`~ ^ @{} :`). A cleared item whose check
   fails is a failed claim, not cleared. `complete` items of kind `mirror integration activation
   delivery` need a check, or the whole field `check: none (<why none is possible>)` — a `none`
   mixed with specs, or an empty spec list, never passes.

@@ -11,6 +11,7 @@ Run: python skills/review-to-resolution/tests/test_grrp_batch.py   (or pytest)
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import os
 import shutil
@@ -164,16 +165,21 @@ class OpenLedgerRepairPR(Base):
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         g = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
         subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        main = subprocess.run([*g, "symbolic-ref", "--short", "HEAD"], capture_output=True, text=True,
+                              check=True).stdout.strip()
         subprocess.run([*g, "checkout", "-q", "-b", "pr"], check=True)
         subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "fix"], check=True)
         pr_head = subprocess.run([*g, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
         subprocess.run([*g, "checkout", "-q", "-"], check=True)
         self.batch(item("B-PR212", "complete", kind="integration",
-                        check=f"git-ancestor {pr_head} HEAD {repo}"))
+                        check=f"git-ancestor {pr_head} {main} {repo}"))  # CP-15: a named ref, not HEAD
         r = self.check()
         self.assertEqual(r["verdict"], "incomplete")
         self.assertTrue(r["failed_claims"] and r["failed_claims"][0].startswith("B-PR212: claimed complete"))
         subprocess.run([*g, "merge", "-q", "--ff-only", "pr"], check=True)
+        # CP-15: pr_head is now the ref's tip, the same commit on both sides: still not a passing check.
+        self.assertEqual(self.check()["verdict"], "incomplete")
+        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "after"], check=True)
         self.assertEqual(self.recorded_check()["verdict"], "complete")
 
     def test_in_progress_pr_is_outstanding(self) -> None:
@@ -398,7 +404,9 @@ class Validation(Base):
     def test_relative_paths_resolve_against_the_manifest(self) -> None:
         (self.tmp / "same.txt").write_text("x\n", encoding="utf-8")
         (self.tmp / "same2.txt").write_text("x\n", encoding="utf-8")
-        self.batch(item("B-M", "complete", kind="mirror", check="same same.txt == same2.txt; file same.txt"))
+        digest = hashlib.sha256((self.tmp / "same.txt").read_bytes()).hexdigest()
+        self.batch(item("B-M", "complete", kind="mirror",
+                        check=f"same same.txt == same2.txt; file same.txt sha256:{digest}"))
         text = self.path.read_text(encoding="utf-8").replace(f"path: {self.ledger_path}",
                                                              f"path: {self.ledger_path.name}")
         self.path.write_text(text, encoding="utf-8")
@@ -758,6 +766,103 @@ class RecordIsTheContract(Base):
     def test_second_endpoint_heading_is_invalid(self) -> None:  # review 3 minor
         self.batch(item("B-1", "complete"), endpoint=ENDPOINT + "\n## Endpoint\n- Runs: other\n")
         self.assertTrue(any("appears more than once" in e for e in self.check()["validation_errors"]))
+
+
+class ChecksMustBeNonVacuous(Base):
+    """CP-15: the no-vacuous-check rule was lexical only. `git-ancestor HEAD~0 HEAD`, `git-ancestor
+    HEAD~1 HEAD`, a bare `file <existing>` and `ledger L1 incomplete` on a complete item all passed."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = self.tmp / "repo"
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.g = ["git", "-C", str(self.repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+        for m in ("first", "second"):
+            subprocess.run([*self.g, "commit", "-q", "--allow-empty", "-m", m], check=True)
+        self.first, self.tip = self.git("rev-parse", "HEAD~1"), self.git("rev-parse", "HEAD")
+        self.branch = self.git("symbolic-ref", "--short", "HEAD")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run([*self.g, *args], capture_output=True, text=True, check=True).stdout.strip()
+
+    def claim(self, check: str, kind: str = "obligation") -> dict:
+        self.batch(item("B-C", "complete", kind=kind, check=check))
+        return self.recorded_check()
+
+    def assert_failed_claim(self, check: str, kind: str = "obligation", why: str = "") -> None:
+        r = self.claim(check, kind)
+        self.assertEqual(r["verdict"], "incomplete", check)
+        fails = [x for x in r["failed_claims"] if x.startswith("B-C: claimed complete")]
+        self.assertTrue(fails, (check, r["failed_claims"]))
+        if why:
+            self.assertIn(why, fails[0], check)
+
+    # git rev-parse both revisions and reject equal SHAs
+    def test_same_commit_spelled_two_ways_is_vacuous(self) -> None:
+        for check in (f"git-ancestor HEAD~0 HEAD {self.repo}", f"git-ancestor {self.tip} {self.branch} {self.repo}",
+                      f"git-ancestor {self.tip[:10]} {self.tip} {self.repo}"):
+            self.assert_failed_claim(check, why="same commit")
+
+    def test_equal_sha_rule_applies_to_delivery_tip_as_written(self) -> None:
+        # Owner's call 2026-10-29: no exemption for a literal commit id that is the ref's current tip.
+        self.assert_failed_claim(f"git-ancestor {self.tip} {self.branch} {self.repo}", kind="delivery", why="same commit")
+
+    def test_real_ancestor_still_passes(self) -> None:
+        for kind in ("obligation", "delivery", "integration"):
+            self.assertEqual(self.claim(f"git-ancestor {self.first} {self.branch} {self.repo}", kind)["verdict"],
+                             "complete", kind)
+
+    # relative or symbolic revs on delivery and integration items
+    def test_relative_or_symbolic_rev_fails_on_delivery_and_integration(self) -> None:
+        for kind in ("delivery", "integration"):
+            for check in (f"git-ancestor HEAD~1 HEAD {self.repo}", f"git-ancestor HEAD^ {self.branch} {self.repo}",
+                          f"git-ancestor {self.branch}~1 {self.branch} {self.repo}",
+                          f"git-ancestor {self.first} HEAD {self.repo}", f"git-ancestor {self.first} @ {self.repo}",
+                          f"git-ancestor {self.first} {self.branch}@{{0}} {self.repo}",
+                          f"git-ancestor {self.first} {self.branch}^0 {self.repo}"):
+                self.assert_failed_claim(check, kind, why="relative or symbolic")
+
+    def test_branch_name_as_delivered_rev_is_symbolic(self) -> None:
+        subprocess.run([*self.g, "branch", "pr", self.first], check=True)
+        self.assert_failed_claim(f"git-ancestor pr {self.branch} {self.repo}", "delivery", why="relative or symbolic")
+
+    def test_relative_rev_rule_is_scoped_to_delivery_and_integration(self) -> None:
+        self.assertEqual(self.claim(f"git-ancestor HEAD~1 HEAD {self.repo}", "obligation")["verdict"], "complete")
+
+    # ledger <id> complete for a complete item
+    def test_complete_item_needs_ledger_complete(self) -> None:
+        why = grrp._run_check("ledger L1 incomplete", {"L1": {"verdict": "incomplete"}}, self.tmp,
+                              kind="obligation", status="complete")
+        self.assertIsNotNone(why)
+        self.assertIn("ledger <id> complete", why)
+        self.assertIsNone(grrp._run_check("ledger L1 incomplete", {"L1": {"verdict": "incomplete"}}, self.tmp,
+                                          kind="obligation", status="in_progress"))
+        self.assertIsNone(grrp._run_check("ledger L1 complete", {"L1": {"verdict": "complete"}}, self.tmp,
+                                          kind="obligation", status="complete"))
+
+    def test_ledger_incomplete_check_is_a_failed_claim(self) -> None:
+        self.complete_ledger(finding("F-001", execution_state="integrated", obligations=""))
+        self.batch(item("B-C", "complete", check="ledger L1 invalid"))
+        r = self.check()
+        self.assertTrue(any(x.startswith("B-C: claimed complete") and "ledger <id> complete" in x
+                            for x in r["failed_claims"]), r["failed_claims"])
+
+    # file alone is not a check: same, or a content hash
+    def test_bare_file_is_vacuous(self) -> None:
+        (self.tmp / "out.txt").write_text("x\n", encoding="utf-8")
+        self.assert_failed_claim("file out.txt", why="content hash")
+        self.assert_failed_claim(f"git-ancestor {self.first} {self.branch} {self.repo}; file out.txt",
+                                 "delivery", why="content hash")
+
+    def test_file_with_content_hash(self) -> None:
+        f = self.tmp / "with space.txt"
+        f.write_bytes(b"x\n")
+        good = hashlib.sha256(b"x\n").hexdigest()
+        self.assertEqual(self.claim(f"file with space.txt sha256:{good}")["verdict"], "complete")
+        self.assertEqual(self.claim(f"file {f} sha256:{good.upper()}")["verdict"], "complete")
+        self.assert_failed_claim(f"file with space.txt sha256:{'0' * 64}", why="content differs")
+        self.assert_failed_claim(f"file nope.txt sha256:{good}", why="file missing")
+        self.assert_failed_claim("file with space.txt sha256:abc", why="content hash")
 
 
 if __name__ == "__main__":
