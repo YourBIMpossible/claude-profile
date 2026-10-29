@@ -1,7 +1,9 @@
 name: install-tests
 
-# The installer, the session-start sync and the machine config on Linux and Windows.
-# Every test runs in a sandboxed HOME/USERPROFILE; no secrets, read-only token.
+# The installer, the session-start sync, the machine config and the graphify scripts on Linux and Windows.
+# Every test runs in a sandboxed HOME/USERPROFILE; no secrets, read-only token. The graphify tests need no graphify:
+# the wrapper's own logic runs against stubbed graphify modules, and the tests that need the package, its binary or a
+# real graph skip themselves.
 on:
   pull_request:
   workflow_dispatch:
@@ -38,3 +40,6 @@ jobs:
 
       - name: Installer, session-start sync, vendored pins, tools
         run: python -m pytest hooks/tests/test_bootstrap_install.py hooks/tests/test_vendor_pins.py tools/tests -q -p no:cacheprovider
+
+      - name: Graphify scripts (the query wrapper and the graph resolver)
+        run: python -m pytest skills/graphify/scripts -q -p no:cacheprovider

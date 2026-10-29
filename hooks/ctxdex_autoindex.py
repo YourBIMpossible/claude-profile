@@ -64,22 +64,32 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-def _ctxdex_dir() -> Path:
+def _ctxdex_dir() -> tuple[Path, str]:
     """CTXDEX_DIR overrides; else <tools_root>/ctxdex from the machine config
     (tools/machine_config.py). An unset or unreadable config yields a path that
-    does not exist, which the preflight below reports once and skips."""
+    does not exist, which the preflight below reports once and skips; the second
+    value is the config's error text ("" when it loaded) for that report."""
     if os.environ.get("CTXDEX_DIR"):
-        return Path(os.environ["CTXDEX_DIR"])
+        return Path(os.environ["CTXDEX_DIR"]), ""
+    tools = ""
+    error = ""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
         import machine_config
-        tools = machine_config.load().get("tools_root") or ""
-    except Exception:
-        tools = ""
-    return Path(tools) / "ctxdex" if tools else Path.home() / ".claude" / "no-claude-tools-clone" / "ctxdex"
+    except Exception as exc:  # fail-open: runs at import, before main's guard
+        error = f"cannot import machine_config: {type(exc).__name__}: {exc}"
+    else:
+        try:
+            tools = machine_config.load().get("tools_root") or ""
+        except machine_config.ConfigError as exc:
+            error = str(exc)
+        except Exception as exc:  # fail-open: any other config failure also falls back
+            error = f"{type(exc).__name__}: {exc}"
+    path = Path(tools) / "ctxdex" if tools else Path.home() / ".claude" / "no-claude-tools-clone" / "ctxdex"
+    return path, error
 
 
-CTXDEX_DIR = _ctxdex_dir()
+CTXDEX_DIR, CONFIG_ERROR = _ctxdex_dir()
 MIN_BYTES = 100 * 1024
 # Runtime state stays under ~/.claude/hooks, never in the clone the hook runs from.
 LOG_PATH = Path.home() / ".claude" / "hooks" / "ctxdex_autoindex.log"
@@ -106,15 +116,25 @@ _PERSISTED_OUTPUT_RE = re.compile(
 )
 _TOOL_RESULTS_ROOT = Path.home() / ".claude" / "projects"
 
+# scheme://user:pass@host. The scheme must start where a word starts: without the lookbehind `\w+` was tried from every position of a
+# long run of letters or digits and each try scanned to the end of the run, so the scan was quadratic (CT-SLOP1026 / N-2). Any string
+# the old pattern matched still matches: the run it matched in starts at a word start, and the rest of the pattern is unchanged.
+_CREDENTIAL_URL_RE = re.compile(r"(?<!\w)\w+://[^\s/:@]+:[^\s/@]+@")
+
 _OUTPUT_PATTERNS = [
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bBearer\s+[A-Za-z0-9\-._~+/]{20,}=*"),
-    re.compile(r"\w+://[^\s/:@]+:[^\s/@]+@"),  # scheme://user:pass@host
-    re.compile(r"(?is)\bserver\s*=.*?;\s*password\s*="),  # ODBC-style connection string
+    _CREDENTIAL_URL_RE,
 ]
+
+# ODBC-style connection string: a `server=` followed, later, by `;password=`. Written as two searches because the one-pattern form
+# `server=.*?;password=` rescanned the whole tail for every `server=` it found (quadratic, N-2). The earliest `server=` leaves the
+# longest tail, so it is enough to look for `;password=` after the first one.
+_ODBC_SERVER_RE = re.compile(r"(?i)\bserver\s*=")
+_ODBC_PASSWORD_RE = re.compile(r"(?i);\s*password\s*=")
 
 
 def _logger() -> logging.Logger:
@@ -158,8 +178,13 @@ def _command_invokes_ctxdex(command: str) -> bool:
     return bool(_SELF_INDEX_PY_RE.search(command) or _SELF_INDEX_EXE_RE.search(command))
 
 
+def _looks_like_odbc_secret(text: str) -> bool:
+    server = _ODBC_SERVER_RE.search(text)
+    return bool(server and _ODBC_PASSWORD_RE.search(text, server.end()))
+
+
 def _output_looks_sensitive(text: str) -> bool:
-    return any(p.search(text) for p in _OUTPUT_PATTERNS)
+    return any(p.search(text) for p in _OUTPUT_PATTERNS) or _looks_like_odbc_secret(text)
 
 
 def _read_if_safe(path_str) -> str | None:
@@ -225,8 +250,9 @@ def _ctxdex_preflight(log: logging.Logger) -> bool:
     if not script.is_file():
         log.error(
             "preflight: ctxdex.py not found at %s - auto-capture disabled until "
-            "it is restored (see skills/ctxdex/SKILL.md for the pinned version)",
+            "it is restored (see skills/ctxdex/SKILL.md for the pinned version)%s",
             script,
+            f" (machine config: {CONFIG_ERROR})" if CONFIG_ERROR else "",
         )
         return False
     return True

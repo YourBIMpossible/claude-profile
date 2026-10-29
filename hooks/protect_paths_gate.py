@@ -1,4 +1,4 @@
-"""PreToolUse fail-closed protected-path gate for Write|Edit (C3, 2026-08-08).
+"""PreToolUse fail-closed protected-path gate for Write|Edit|MultiEdit|NotebookEdit (C3, 2026-08-08).
 
 Converts the protected-file rule from instruction to control. Reads the hook
 payload as JSON on STDIN (never an env var - the fail-open lesson from the
@@ -12,7 +12,9 @@ exception to "exit 0 = plain allow" is the approval class below: exit 0 with a
 permissionDecision "ask" JSON on stdout, which makes the host stop and prompt
 the owner. Only a positively matched north-star path ever takes that route.
 
-SCOPE HONESTY: this covers only the Write and Edit tools. The Bash channel
+SCOPE HONESTY: this covers only the file-writing tools Write, Edit, MultiEdit and
+NotebookEdit (MultiEdit sends file_path, NotebookEdit sends notebook_path; matcher
+added for the last two by CP-10, 2026-10-29). The Bash channel
 (sed -i, redirection, tee, Set-Content, python -c ...) is NOT covered and is
 documented as advisory-only in hooks/README.md. Do not extend claims beyond
 that.

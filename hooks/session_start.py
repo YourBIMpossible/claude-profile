@@ -15,11 +15,13 @@ platform, for startup|resume|clear|compact:
   3. Print the machine roots ({profile}, {repos}, {tools}, {reports}, {mailbox}) as
      session context, plus a warning when this clone is not on its default branch or
      has uncommitted hook code - hooks run from here, so that state runs on every
-     prompt.
+     prompt - or when either check could not run (origin/HEAD unset, git failed).
 
 Best effort, never blocks: every path exits 0. Record: ~/.claude/hooks/last-run.log
-(same vocabulary as before: "pull ok", "pull skipped (in flight)", "pull failed (exit
-N)", "git missing", "pull threw"; plus "settings synced" / "settings sync skipped").
+("pull ok", "pull skipped (in flight)", "pull failed (exit N)", "pull timed out (exit 124)",
+"git missing", "pull threw"; plus "settings synced" / "settings sync skipped"). A failed or
+timed-out pull or settings sync is also named under "Profile warnings" in the session. Each
+git call is bounded by its timeout even when git leaves child processes running.
 Opt-outs: CLAUDE_PROFILE_PULL=0 (no pull), CLAUDE_PROFILE_SYNC=0 (no settings sync).
 """
 from __future__ import annotations
@@ -28,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -88,25 +91,48 @@ def log(message: str) -> None:
         pass
 
 
+def _read_text(f) -> str:
+    f.seek(0)
+    return f.read().decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def run_bounded(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """subprocess.run with output in temp files, not pipes, so `timeout` bounds the whole call.
+
+    On a timeout the kill stops the process but not the ones it started (git's fetch, remote helpers),
+    and those keep its stdout/stderr open; reading a pipe then waits for them (a 3 s timeout returned
+    after 20.5 s, near the hook's 25 s limit). A file needs no reader, so this returns at the deadline.
+    """
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, _read_text(out), _read_text(err))
+
+
 def git(*args: str, timeout: float = GIT_TIMEOUT_S) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(PROFILE_ROOT), *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout)
+    return run_bounded(["git", "-C", str(PROFILE_ROOT), *args], timeout)
 
 
-def pull() -> None:
+PULL_SEE_LOG = "this clone may be out of date - see ~/.claude/hooks/last-run.log"
+
+
+def pull() -> str | None:
+    """`git pull --ff-only` in this clone; returns a warning for the session, or None."""
     try:
         proc = git("pull", "--ff-only")
     except FileNotFoundError:
         log(f"git missing: git not found on PATH [{PROFILE_ROOT}]")
-        return
+        return f"the profile was not pulled: git was not found on PATH; {PULL_SEE_LOG}"
     except subprocess.TimeoutExpired:
-        log(f"pull failed (exit 124): timed out after {GIT_TIMEOUT_S}s [{PROFILE_ROOT}]")
-        return
+        log(f"pull timed out (exit 124) after {GIT_TIMEOUT_S}s; it may still complete [{PROFILE_ROOT}]")
+        # Not "failed": the kill stops `git pull` but not the git processes it started, so the pull may still finish.
+        return (f"the profile pull timed out after {GIT_TIMEOUT_S}s and may still complete in the background; "
+                f"{PULL_SEE_LOG}")
     out = " | ".join(l for l in (proc.stdout + proc.stderr).splitlines() if l.strip())
     if proc.returncode == 0:
         log(f"pull ok: {out}")
-    else:
-        log(f"pull failed (exit {proc.returncode}): {out} [{PROFILE_ROOT}]")
+        return None
+    log(f"pull failed (exit {proc.returncode}): {out} [{PROFILE_ROOT}]")
+    return f"the profile pull failed (exit {proc.returncode}); {PULL_SEE_LOG}"
 
 
 def sync_settings() -> str | None:
@@ -129,21 +155,31 @@ def sync_settings() -> str | None:
 
 
 def clone_warnings() -> list[str]:
-    """Hooks run from this clone: say so when it is not the merged default branch."""
+    """Hooks run from this clone: say so when it is not the merged default branch, has
+    uncommitted hook code, or could not be checked (a check that fails is never "clean")."""
     out = []
+    unchecked = f"could not check the profile clone {PROFILE_ROOT}"
     try:
         branch = git("symbolic-ref", "--quiet", "--short", "HEAD", timeout=5).stdout.strip()
         default = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", timeout=5).stdout.strip()
         default = default.split("/", 1)[1] if "/" in default else default
-        if default and branch != default:
+        if not default:
+            out.append(f"{unchecked} for its default branch: origin/HEAD is not set - run "
+                       f"`git -C {PROFILE_ROOT.as_posix()} remote set-head origin -a`")
+        elif branch != default:
             out.append(f"the profile clone {PROFILE_ROOT} is on '{branch or 'a detached HEAD'}', not '{default}': "
                        "its hooks run on every prompt - do feature work in a worktree")
-        dirty = git("status", "--porcelain", "--", "hooks", "vendor", "tools", "settings.template.json",
-                    timeout=5).stdout.strip()
-        if dirty:
+    except (OSError, subprocess.SubprocessError) as exc:
+        out.append(f"{unchecked} for its default branch ({type(exc).__name__})")
+    try:
+        status = git("status", "--porcelain", "--", "hooks", "vendor", "tools", "settings.template.json",
+                     timeout=5)
+        if status.returncode != 0:
+            out.append(f"{unchecked} for uncommitted hook/tool changes (git status exit {status.returncode})")
+        elif status.stdout.strip():
             out.append(f"the profile clone {PROFILE_ROOT} has uncommitted hook/tool changes, which run on every prompt")
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        out.append(f"{unchecked} for uncommitted hook/tool changes ({type(exc).__name__})")
     return out
 
 
@@ -164,7 +200,9 @@ def main() -> int:
                 else:
                     try:
                         if os.environ.get("CLAUDE_PROFILE_PULL", "1") != "0":
-                            pull()
+                            warning = pull()
+                            if warning:
+                                notes.append(warning)
                         if os.environ.get("CLAUDE_PROFILE_SYNC", "1") != "0":
                             try:
                                 warning = sync_settings()

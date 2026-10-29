@@ -14,8 +14,11 @@ Usage:
   python check_machine_paths.py --self-test     # run the built-in rule cases
 
 What is scanned: every file ``git ls-files`` lists (tracked or staged), read from the
-working tree. Files with a NUL byte in their first 8 KiB are treated as binary and
-skipped (counted in the summary). Nothing else is exempt unless the allowlist says so.
+working tree; a symlink is scanned as its target text, read from the index. A listed
+file absent from the working tree is counted as missing in the summary. A file that starts with a byte-order mark is decoded with that codec
+(UTF-8, UTF-16 or UTF-32) and scanned; any other file with a NUL byte in its first
+8 KiB is treated as binary and skipped (counted in the summary). Nothing else is
+exempt unless the allowlist says so.
 
 Rules (each match is one finding):
   drive-path   a Windows drive-letter path: a letter, a colon, then either separator
@@ -33,8 +36,10 @@ override), a JSON list of entries::
 
 ``path`` is a glob over repo-relative POSIX paths (``*`` stays within one directory,
 ``**`` crosses directories). ``match``, when given, must be found in the offending
-line for the entry to apply; without it the entry covers every finding in the
-matched files. ``reason`` is required. An entry that covers no finding fails the
+path token (the run of characters around the hit up to whitespace, a quote or a
+bracket) for the entry to apply, so it never covers another path written on the
+same line; without it the entry covers every finding in the matched files.
+``reason`` is required. An entry that covers no finding fails the
 run, so the list cannot silently outlive what it was written for.
 
 Exit status: 0 clean, 1 findings or a stale allowlist entry, 2 usage/config error.
@@ -50,6 +55,9 @@ from pathlib import Path
 
 ALLOW_FILE = ".machine-paths-allow.json"
 BINARY_SNIFF = 8192
+# Longest first: the UTF-32LE mark begins with the UTF-16LE one. Each codec consumes its own mark.
+BOMS = [(b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
+        (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"), (b"\xef\xbb\xbf", "utf-8-sig")]
 
 SEP = r"[\\/]"
 RULES: list[tuple[str, re.Pattern[str], str]] = [
@@ -122,9 +130,11 @@ def load_allowlist(path: Path) -> list[dict]:
 
 
 REGEX_CLASS_LETTERS = set("dwsbDWSB")
+TOKEN_DELIMITERS = frozenset("\"'`,;()[]{}<>|=")
 
 
-def scan_line(line: str) -> list[tuple[str, str]]:
+def scan_line(line: str) -> list[tuple[str, str, int]]:
+    """Every rule hit on the line: (rule id, matched text, start offset)."""
     hits = []
     for rid, rx, _ in RULES:
         for m in rx.finditer(line):
@@ -132,51 +142,100 @@ def scan_line(line: str) -> list[tuple[str, str]]:
             if (rid == "drive-path" and m.start() > 0 and line[m.start() - 1] == "\\"
                     and line[m.start()] in REGEX_CLASS_LETTERS):
                 continue
-            hits.append((rid, m.group(0)))
+            hits.append((rid, m.group(0), m.start()))
     return hits
 
 
-def tracked_files(root: Path) -> list[str]:
+def token_span(line: str, pos: int) -> tuple[int, int]:
+    """The path token holding offset ``pos``: up to whitespace, a quote or a bracket on either side."""
+    def inside(c: str) -> bool:
+        return not c.isspace() and c not in TOKEN_DELIMITERS
+    start = pos
+    while start > 0 and inside(line[start - 1]):
+        start -= 1
+    end = pos
+    while end < len(line) and inside(line[end]):
+        end += 1
+    return start, max(end, pos + 1)
+
+
+def entry_covers(entry: dict, line: str, span: tuple[int, int]) -> bool:
+    if entry["match_re"] is None:
+        return True
+    start, end = span
+    return any(m.start() < end and max(m.end(), m.start() + 1) > start for m in entry["match_re"].finditer(line))
+
+
+SYMLINK_MODE = "120000"
+
+
+def tracked_files(root: Path) -> list[tuple[str, str, str]]:
+    """Every path in the index, once: (path, mode, blob id)."""
     try:
-        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "-s", "-z"],
+                             capture_output=True, check=True).stdout
     except FileNotFoundError as exc:
         raise ConfigError("git not found on PATH") from exc
     except subprocess.CalledProcessError as exc:
         raise ConfigError(f"not a git repository: {root} ({exc.stderr.decode(errors='replace').strip()})") from exc
-    return sorted(p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p)
+    entries: dict[str, tuple[str, str]] = {}
+    for record in out.decode("utf-8", errors="surrogateescape").split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        mode, sha, _stage = meta.split(" ")
+        entries.setdefault(path, (mode, sha))  # an unmerged path is listed once per stage
+    return [(path, mode, sha) for path, (mode, sha) in sorted(entries.items())]
+
+
+def read_blob(root: Path, sha: str) -> bytes:
+    proc = subprocess.run(["git", "-C", str(root), "cat-file", "blob", sha], capture_output=True)
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.decode(errors="replace").strip() or f"git cat-file blob {sha} failed")
+    return proc.stdout
+
+
+def decode_text(data: bytes) -> str | None:
+    """The file's text, or None for binary. A byte-order mark picks the codec, so UTF-16 and UTF-32 text
+    (PowerShell 5.1 writes UTF-16LE by default) is scanned rather than mistaken for binary by its NUL bytes."""
+    for bom, codec in BOMS:
+        if data.startswith(bom):
+            return data.decode(codec, errors="replace")
+    if b"\0" in data[:BINARY_SNIFF]:
+        return None
+    return data.decode("utf-8", errors="replace")
 
 
 def check(root: Path, allow_path: Path) -> int:
     allow = load_allowlist(allow_path)
-    findings, binary, scanned = [], 0, 0
-    for rel in tracked_files(root):
-        full = root / rel
+    findings, binary, scanned, missing = [], 0, 0, 0
+    for rel, mode, sha in tracked_files(root):
         try:
-            data = full.read_bytes()
+            if mode == SYMLINK_MODE:
+                # A symlink's content is its target text. Read it from the index: following the link would scan
+                # another file (or nothing, when it dangles or was checked out without symlink rights).
+                data = read_blob(root, sha)
+            else:
+                data = (root / rel).read_bytes()
         except FileNotFoundError:
-            continue  # deleted in the working tree but still in the index
-        except OSError as exc:
-            findings.append(f"{rel}: unreadable: {exc.strerror}")
+            missing += 1  # deleted in the working tree but still in the index
             continue
-        if b"\0" in data[:BINARY_SNIFF]:
+        except OSError as exc:
+            findings.append(f"{rel}: unreadable: {exc.strerror or exc}")
+            continue
+        text = decode_text(data)
+        if text is None:
             binary += 1
             continue
         scanned += 1
-        text = data.decode("utf-8", errors="replace")
         candidates = [e for e in allow if e["path_re"].match(rel)]
         for lineno, line in enumerate(text.splitlines(), 1):
-            hits = scan_line(line)
-            if not hits:
-                continue
-            covered = None
-            for e in candidates:
-                if e["match_re"] is None or e["match_re"].search(line):
-                    covered = e
-                    break
-            if covered is not None:
-                covered["used"] += len(hits)
-                continue
-            for rid, text_hit in hits:
+            for rid, text_hit, pos in scan_line(line):
+                span = token_span(line, pos)
+                covered = next((e for e in candidates if entry_covers(e, line, span)), None)
+                if covered is not None:
+                    covered["used"] += 1
+                    continue
                 excerpt = line.strip()
                 if len(excerpt) > 160:
                     excerpt = excerpt[:157] + "..."
@@ -187,7 +246,7 @@ def check(root: Path, allow_path: Path) -> int:
     for e in stale:
         print(f"{allow_path.name}: entry {e['n']} ({e['path']}) covers nothing - remove it")
     print(f"machine-paths: {scanned} text files scanned, {binary} binary skipped, "
-          f"{len(allow)} allowlist entries, {len(findings)} findings, {len(stale)} stale entries")
+          f"{missing} missing from the working tree, {len(allow)} allowlist entries, {len(findings)} findings, {len(stale)} stale entries")
     if findings or stale:
         print("FAIL: replace machine paths with paths derived at runtime (repo root, home folder, "
               "per-machine config) or add a justified allowlist entry.")
@@ -238,7 +297,7 @@ SELF_TEST = [
 def self_test() -> int:
     bad = 0
     for line, want in SELF_TEST:
-        got = [rid for rid, _ in scan_line(_expand(line))]
+        got = [rid for rid, _, _ in scan_line(_expand(line))]
         if got != want:
             bad += 1
             print(f"self-test FAIL: {line!r}: expected {want}, got {got}")
@@ -284,11 +343,25 @@ def _repo_cases() -> list[tuple[str, bool]]:
         allow = [{"path": "*.py", "match": "fixture", "reason": "synthetic fixture"}]
         (root / ALLOW_FILE).write_text(json.dumps(allow), encoding="utf-8")
         cases.append(("allowlisted finding passes", run(root) == 0))
+        (root / "fixture.py").write_text(_expand('P = "<D>/fixture/x"; Q = "<d>/real/y"\n'), encoding="utf-8")
+        cases.append(("allowlist entry does not cover another path on its line", run(root) == 1))
+        (root / "fixture.py").write_text(_expand('P = "<D>/fixture/x"\n'), encoding="utf-8")
         allow.append({"path": "docs/**", "reason": "covers nothing"})
         (root / ALLOW_FILE).write_text(json.dumps(allow), encoding="utf-8")
         cases.append(("stale entry fails the run", run(root) == 1))
         (root / ALLOW_FILE).write_text(json.dumps([{"path": "*.py"}]), encoding="utf-8")
         cases.append(("entry without reason is a config error", run(root) == 2))
+        (root / ALLOW_FILE).write_text(json.dumps(allow[:1]), encoding="utf-8")
+        (root / "out16.ps1").write_bytes(_expand("$p = '<D>/real/y'\r\n").encode("utf-16"))
+        subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+        cases.append(("UTF-16 text with a byte-order mark is scanned", run(root) == 1))
+        (root / "out16.ps1").unlink()
+        subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+        target = subprocess.run(["git", "-C", str(root), "hash-object", "-w", "--stdin"], capture_output=True,
+                                input=_expand("<H>/someone/y").encode()).stdout.decode().strip()
+        subprocess.run(["git", "-C", str(root), "update-index", "--add", "--cacheinfo", f"120000,{target},link"],
+                       capture_output=True)
+        cases.append(("symlink target text is scanned, even with nothing on disk", run(root) == 1))
     return cases
 
 
