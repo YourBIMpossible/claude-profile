@@ -1203,16 +1203,48 @@ def _resolve(base: Path, p: str) -> Path:
     return q if q.is_absolute() else (base / q)
 
 
-def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path(".")) -> str | None:
+# CP-15: a check must be able to fail. On a delivery or integration item the delivered revision is a
+# literal commit id, and the ref it must be in is never relative (`~`, `^`, `@{...}`, `:`) or a HEAD-style
+# pointer; `file` names the bytes it expects (`same`, or a content hash).
+ANCESTOR_LITERAL_KINDS = {"delivery", "integration"}
+COMMIT_ID_RE = re.compile(r"[0-9a-fA-F]{7,64}")
+RELATIVE_REV_RE = re.compile(r"[~^:]|@\{|(?:^|/)(?:@|HEAD|FETCH_HEAD|ORIG_HEAD|MERGE_HEAD|CHERRY_PICK_HEAD|"
+                             r"REVERT_HEAD|REBASE_HEAD|BISECT_HEAD)$")
+FILE_HASH_RE = re.compile(r"sha256:([0-9a-fA-F]{64})")
+
+
+def _commit_of(repo: Path, rev: str) -> str | None:
+    """The full commit id `rev` names in `repo`, or None when git cannot resolve it to a commit."""
+    r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+                       capture_output=True, text=True, timeout=30)
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path("."), *, kind: str = "",
+               status: str = "") -> str | None:
     """One deterministic check; None = passed, else why it failed. Specs (space-separated):
-    `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo path>` · `file <path>` ·
+    `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo path>` · `file <path> sha256:<hex>` ·
     `same <path> == <path>` (byte-identical, e.g. a published mirror). Relative paths resolve
-    against `base` (the manifest's folder). Vacuous forms (`rev == ref`, a path compared with
-    itself) and option-like revisions fail."""
+    against `base` (the manifest's folder). `kind` and `status` are the item's. Vacuous forms fail:
+    `rev` and `ref` naming the same commit (after `git rev-parse`), a path compared with itself, a
+    `file` without a content hash, and `ledger <id> <verdict>` other than `complete` on a complete
+    item. On a delivery or integration item `rev` must be a literal commit id and `ref` must not be
+    relative or a HEAD-style pointer. Option-like revisions fail."""
     parts = spec.split()
     op = parts[0] if parts else ""
     try:
         if op == "ledger" and len(parts) == 3:
+            if status == "complete" and parts[2] != "complete":
+                return f"a complete item needs 'ledger <id> complete', not {_q(parts[2])}"
             g = ledgers.get(parts[1])
             if g is None:
                 return f"unknown ledger {_q(parts[1])}"
@@ -1223,13 +1255,28 @@ def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path(".")) -> s
                 return "revision must not start with '-'"
             if rev == ref:
                 return "vacuous check (revision compared with itself)"
-            r = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", rev, ref],
+            if kind in ANCESTOR_LITERAL_KINDS and (not COMMIT_ID_RE.fullmatch(rev) or RELATIVE_REV_RE.search(ref)):
+                return (f"relative or symbolic revision on a {kind} item (rev {_q(rev)} must be a literal "
+                        f"commit id; ref {_q(ref)} must not be HEAD-style or use ~ ^ @{{}} :)")
+            rev_sha, ref_sha = _commit_of(repo, rev), _commit_of(repo, ref)
+            if rev_sha is None or ref_sha is None:
+                return f"git cannot resolve {_q(rev)} or {_q(ref)}"
+            if rev_sha == ref_sha:
+                return f"vacuous check ({_q(rev)} and {_q(ref)} are the same commit)"
+            r = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", rev_sha, ref_sha],
                                capture_output=True, text=True, timeout=30)
             if r.returncode == 0:
                 return None
             return f"{_q(rev)} is not in {_q(ref)}" if r.returncode == 1 else f"git cannot resolve {_q(rev)} or {_q(ref)}"
         if op == "file" and len(parts) >= 2:
-            return None if _resolve(base, " ".join(parts[1:])).is_file() else "file missing"
+            m = FILE_HASH_RE.fullmatch(parts[-1]) if len(parts) >= 3 else None
+            if m is None:
+                return ("vacuous check (a file's existence proves nothing): add its content hash "
+                        "`file <path> sha256:<64 hex>`, or compare it with `same`")
+            path = _resolve(base, " ".join(parts[1:-1]))
+            if not path.is_file():
+                return "file missing"
+            return None if _sha256_file(path) == m.group(1).lower() else "file content differs from its sha256"
         if op == "same" and "==" in parts:
             i = parts.index("==")
             a, b = _resolve(base, " ".join(parts[1:i])), _resolve(base, " ".join(parts[i + 1:]))
@@ -1511,7 +1558,8 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
                 errors.append(f"item {q}: covers '{_q(lid)}:{_q(ref)}' names no listed ledger")
             covered_by.setdefault((lid, ref), []).append((iid, st))
         # A claim is only as good as its check: a cleared item whose check fails is not cleared.
-        fails = [f"{_q(spec.split()[0])}: {why}" for spec in specs for why in [_run_check(spec, ledgers, base)] if why]
+        fails = [f"{_q(spec.split()[0])}: {why}" for spec in specs
+                 for why in [_run_check(spec, ledgers, base, kind=kind, status=st)] if why]
         label = f"{q}: {st} ({_q(kind)}, owner {_q(it.get('owner'))})"
         if st in ITEM_CLEARED and st != "owner_accepted" and fails:
             failed_claims.append(f"{q}: claimed {st}, check failed ({'; '.join(fails)})")
