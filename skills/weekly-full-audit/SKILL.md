@@ -61,7 +61,7 @@ is the RESULTS.md path plus the run log and the GRRP ledger. Root names inside R
 | Tier | May touch | Steps |
 |---|---|---|
 | Inspection | nothing under any target root is created, modified, moved or deleted | 2–8 |
-| Artifact writes | `--out` report · `--ledger-dir` · `--state-dir` · `--watchdog-dir` heartbeat · `<workspace-root>/01_BuildLog/` run log · Checklist rows (append) | 0–1, 9–14 |
+| Artifact writes | `--out` report · `--ledger-dir` · `--state-dir` (incl. the step-0a isolated checkouts) · `--watchdog-dir` heartbeat · `--run-log-dir` run log · Checklist rows (append) | 0–1, 9–14 |
 | Remediation (default off) | `--handoff`: `audit-resolution` on the published report (`--autofix` dropped, D1) | 15 |
 
 Protected, never written by any tier: `.env`, `backend/guard.py`, any `99_Archive/`, alembic
@@ -83,6 +83,19 @@ only when no required root is reachable does `start` fail. Then, per started roo
 every target root as found. The `preflight` and `personas` subcommands are diagnostics only (`start` embeds both). Evidence dir: `RUN evidence-dir --run-id <rid> --state-dir <sd>` creates and prints
 `<sd>/weekly-full-audit/<rid>_evidence/`; it holds every lens's evidence, findings and checker output for
 this run (never reused across runs). The `check` subcommand refuses evidence or artifacts outside it.
+
+**0a. Isolate the source (after `start`, before any baseline).** Per started root:
+`RUN isolate --root <name>=<path> [--rev <rev>] --run-id <rid> --state-dir <sd>` (default `--rev HEAD`).
+It resolves the revision to one SHA and makes a detached checkout of it under
+`<sd>/weekly-full-audit/<rid>/src/<name>` (origin set to the source's origin, so identity matches);
+the live tree is never touched. Keep its printed `checkout` path and `sha`. From here on every child
+(lens, refuter, checker, nested skill) is dispatched against the `checkout` path, not the live root,
+and step 2's `baseline` records that SHA as `head_rev` — the report front matter carries it and G4 is
+measured at it. `isolate` is refused after that root's baseline, for an unknown root, or twice.
+Live-only checks — they read host or live state and cannot run on a checkout, so they run against
+the live path and the report says so per check: the Add-Ins build (`addins-build`, approval-gated),
+any perf measurement against a running app (`perf-live`; no such check exists today — PERF is static
+review), and reads under `~/.claude` (HYG-8 live root, persona discovery, scheduled tasks).
 
 **1. Ledger.** `GRRP init --slug <slug> --dir <ledger-dir> --objective "weekly full audit <rid>"`
 then `GRRP batch-init --slug <slug> --dir <ledger-dir>`. Take each path from that command's own
@@ -130,6 +143,18 @@ resolved files, the foundation audit and `security-review-full_*.md` under `--wo
 dispatch and convergence for SEC/RE/ARCH/CQ/FE/PERF; no Workflow tool). Before dispatch register every
 required child: `RUN record --require sec re arch cq fe perf hyg slop ws [addins] --run-id <rid> --state-dir <sd>`.
 Declare every child before it starts: `RUN dispatch --key <k> --shard <id> --method <ref file> … --output <evd>/<file> … --run-id <rid> --state-dir <sd>` (methods hashed at dispatch; outputs create-only under the evidence dir — a child never picks its own location). Dispatch picks a random non-blank line k per method and prints the lines in `child_must_attest`. The child's brief names those exact outputs and methods and copies `child_must_attest` verbatim, and each Markdown output carries, per declared method, one `method-sha256: <path> <sha256 of the file>` line and one `method-line: <path> <k> <sha256 of line k, stripped of surrounding whitespace>` line (the file hash proves it was hashed; the line hash proves line k was read; the transcript stays the secondary proof). `RUN check --key <k> --state returned` is refused while any shard of the key lacks a declared output, an attestation, a matching file hash, or a matching line-k hash, or when evidence/artifact/findings is not a declared output.
+Child rules — copy into every child brief verbatim (1a4-5 breaches):
+- no `cd`: every command uses absolute paths, and git runs as `git -C <checkout path> …`, never after a `cd`.
+- Outputs are written once. A correction after writing goes to a new `<output>.addendum-N.md` beside it
+  (declared at dispatch like any output), never by editing the original; the `check` subcommand records each output's
+  sha256 and a later change is a `defect:output-modified-after-collect` (degraded run).
+- The method-line attestation is hash-only: `method-line: <path> <k> <sha256>`. If you add the quoted text
+  after the hash, it must be exactly line k (RUN refuses any other line's text).
+- Exclude protected paths from every search. git: append
+  `-- . ':(exclude,glob)**/99_Archive/**' ':(exclude,glob)**/_backups/**' ':(exclude,glob)**/alembic/versions/**'`
+  (the `**/` form also matches a top-level `99_Archive`); rg: add
+  `--glob '!**/99_Archive/**' --glob '!**/_backups/**' --glob '!**/alembic/versions/**'`. Never open `.env` or
+  `backend/guard.py`.
 Each child returns through `RUN check --key <k> --state returned --inspected … --remaining … --why <why> --evidence <evd>/<k>.md --artifact <evd>/<file> --findings <evd>/<k>.findings.json`
 (`--remaining`/`--why`/`--artifact`/`--findings` optional; arguments, so paths are
 serialized by RUN, never hand-written JSON; `--completion-file` is accepted only if written by a serializer and
@@ -181,22 +206,22 @@ HYPOTHESIS, never upgraded. One `qa-engineer` pass over the survivors → "requi
 Breach-chain overlay: nested `<repo-root>/.claude/skills/bimpossible-breach-chain` when present, its
 own artifact. Hygiene: `RUN hygiene-line --run-id <rid> --state-dir <sd>` runs G3/G4 in the repo and workspace
 roots (cwd = each root) and prints the exact `**Docs-hygiene (HYG-13):**` line — copy it verbatim;
-never hand-write the marks. `hygiene-line` measures each root at its inspected revision (the
-`head_rev` step 2 recorded): in place when the working tree is that revision, else in a temporary
-detached checkout of it; with no recorded revision it measures the working tree and says so in the
-result's `note`. This supersedes the "working tree at HEAD" wording in part (2) below for the
-checker run itself; part (2)'s ban on re-running against an older commit for a baseline stands.
+never hand-write the marks. G4 is measured at the exact inspected revision of each root — the
+`head_rev` SHA step 2 recorded (the step-0a isolated SHA): in place when the working tree is that
+revision, else in a temporary detached checkout of it; with no recorded revision it measures the
+working tree and says so in the result's `note`. The report records that SHA per row-set.
 `## G4 docs-control`: all 7 parts, the Add-Ins row-set when `addins`
-started, HYG-14 lag and duplicate entries, and removal evidence for every dropped row. The parts, verbatim from the live prompt:
+started, HYG-14 lag and duplicate entries, and removal evidence for every dropped row. The parts
+(from the live prompt, revised 2026-10-30 to the inspected-revision rule; the live prompt is updated at cutover):
 (1) Metrics table: totalDocWords / docFileCount / largestDocWords / docToCodeRatio, each as `value / ceiling (headroom %, headroom words, mode)`. Mark a metric whose headroom is below 2% as TIGHT. Mark ✗ only for a `mode: block` check over its ceiling. A report-mode check over its line shows `OVER (report)` and is never ✗.
-(2) Change since previous run: compare the current checker output with the previous `weekly-full-audit_*.md`'s `## G4 docs-control` metrics table (the previous recorded run is the ONLY baseline). Match each row-set to the same repo and config in that table. Runs before 2026-10-05 carry BIMpossible rows only. If no previous report carries a given row-set, write `baseline unavailable` for that row-set's delta and record only its current values — never reconstruct a historical value by recounting, checking out, or re-running the checker against an older commit; the checker measures the working tree at HEAD and nothing else. With a baseline: net delta in words and files and words/day; then gross added vs removed from `git log --numstat -M --format=%h -- '*.md'` over the window (line counts, not G4 words), naming the 3 largest additions and the 3 largest removals with whether each removal was a move into an excluded `_archive` path (rename) or a real deletion/trim.
+(2) Change since previous run: compare the current checker output with the previous `weekly-full-audit_*.md`'s `## G4 docs-control` metrics table (the previous recorded run is the ONLY baseline). Match each row-set to the same repo and config in that table. Runs before 2026-10-05 carry BIMpossible rows only. If no previous report carries a given row-set, write `baseline unavailable` for that row-set's delta and record only its current values — never reconstruct a historical value by recounting, checking out, or re-running the checker against an older commit; the checker measures each row-set at its exact inspected revision only, and the row-set's line names that SHA. With a baseline: net delta in words and files and words/day; then gross added vs removed from `git log --numstat -M --format=%h -- '*.md'` over the window (line counts, not G4 words), naming the 3 largest additions and the 3 largest removals with whether each removal was a move into an excluded `_archive` path (rename) or a real deletion/trim.
 (3) Largest-document outliers: top 5 counted files by words; any pair of files sharing a title prefix whose combined words exceed that row-set's largestDocWords ceiling (a ceiling dodged by splitting is reported, not accepted). Size signal is per configuration, never a fixed word count: read each row-set's own largestDocWords ceiling from its checker output (do not hardcode it), and classify every counted doc as `OVER` (> ceiling), `NEAR` (≥ 80% of ceiling) or OK, printed as `NEAR <path> <words> / <ceiling> (<pct>%)`. Separate informational growth signal: the counted doc with the largest word gain since the previous recorded run (same baseline rule as (2); `baseline unavailable` otherwise). OK/NEAR/OVER and the growth signal are informational only — no exit code, CI, receipt, merge or delivery effect; only the checker's own block-mode result (1) can be ✗. For each `NEAR` doc give a next action set by the kind of doc:
 - a ledger: "check its own retention rule ran (Checklist: HYG-14 lag)";
 - a `…_resolved-<period>.md` file: "start the next period file per HYG-14; never raise the cap";
 - a contract or runbook: "split by topic, leave a pointer".
 Never recommend "trim".
 (4) Metric-driven removal evidence: for every commit in the window whose `*.md` diff shrinks a COUNTED file by more than 30% or more than 100 words (from that commit's own diff, `git show <sha> -- <path>`), where that file carries no closed/superseded/archived status marker, report commit, file, words before → after, and quote the kinds of lines removed (paths, line numbers, test names, counts = evidence loss); treat a commit message mentioning budget/headroom/G4, or the previous recorded run having reported headroom below 2%, as confirming that the removal served the metric (no G4 value is ever attributed to a historical commit). Flag each as HYG- finding `HYG-G4-TRIM` (severity Medium: information loss caused by a control). Zero such commits is a required explicit statement, not silence.
-(5) Counterproductive-control signal: report the checker's CURRENT pass/fail at HEAD only, and whether the previous recorded run reported TIGHT or BREACHED; state whether any PR in the window was merged without a docs-hygiene-green receipt while G4 was the only failing lane (from the receipts and PR bodies, not from re-running the checker). Do not claim G4 state for any commit other than HEAD.
+(5) Counterproductive-control signal: report the checker's CURRENT pass/fail at each row-set's inspected revision only (name the SHA), and whether the previous recorded run reported TIGHT or BREACHED; state whether any PR in the window was merged without a docs-hygiene-green receipt while G4 was the only failing lane (from the receipts and PR bodies, not from re-running the checker). Never claim G4 state for any commit other than the recorded inspected revision.
 (6) One-line verdict: HEALTHY / TIGHT / BREACHED / COUNTERPRODUCTIVE-BEHAVIOUR-OBSERVED. It is the worst across all row-sets; name the row-set that set it. Report (5)'s pass/fail per row-set. The verdict line comes with a `Drift:` line naming anything unusual: a growth step > 2× the prior 4-week average, a new top-level counted directory, or a new excludePath. BREACHED means a block-mode breach. A report-mode over drives TIGHT or a `Drift:` line, never BREACHED. The audit never turns a report-only metric into a red G4. Drift is REPORTED for the owner; this run never redesigns the control in response.
 (7) HYG-14 backstop. Scope: only the rows of the live Checklist's § Weekly security review findings, which is the section HYG-14 governs. Feature-verification and policy sections are out of scope. Classify each row by its status word (HYG-14's terminal list), never by its icon. Write two lines:
 - `HYG-14 lag: N terminal finding rows still in that section`. If N > 0 on this run and the previous recorded run, add a `Drift:` line naming the rows.
@@ -209,13 +234,14 @@ G4 and Startup context are report-only and never trigger a fix.
 **9. Report.** `RUN wait --phase report` must exit 0 (`write-report` enforces it). Write the body to a temp file under `<sd>`, then
 `RUN write-report --dir <out> --stem weekly-full-audit_<date> --body-file <body> --run-id <rid> --state-dir <sd>`
 (add `--in-root workspace` when `<out>` lies inside the workspace root). It prepends front matter
-(`task_id, run_id, roots{identity, path_arg, baseline_rev, head_rev, window}`) and exclusive-creates
+(`task_id, run_id, roots{identity, path_arg, baseline_rev, head_rev, window}`; `head_rev` = the SHA
+step 2 recorded, i.e. the isolated SHA) and exclusive-creates
 the `-N` name. Then `node <checker-dir>/check-audit-report-header.mjs --file <report>`; exit 1 →
 fix the body and write again (a new `-N` file; the bad one stays and is named in the report).
 Body: title prefix `DOCS DRIFT — ` on any ctxcheck FAIL and `RUN DEGRADED — ` on any lost lens;
 header lines `**ctxcheck:**` and `**Docs-hygiene (HYG-13):**` within the first 15 lines; sections
 executive summary (top findings, the top breach chain and its cheapest breaking control), CHANGE-SINCE-LAST-RUN (per root `baseline_rev..head_rev`), coverage gaps (every
-non-complete coverage entry, verbatim), findings by lens, `## ctxcheck drift`, `## G4 docs-control`,
+non-complete coverage entry, verbatim, plus each live-only check from step 0a and the path it ran on), findings by lens, `## ctxcheck drift`, `## G4 docs-control` (each row-set headed with its root and inspected SHA),
 `## Startup context`, state-machine gaps, required proving tests, what's solid.
 Prior reports are never moved, archived or deleted.
 
@@ -250,20 +276,31 @@ Three outcomes stay distinct: exit 3 `invalid` = an implementation failure (§Fa
 `incomplete` / 2 `blocked` = a valid batch with open findings or criteria (the normal result of a
 run that found defects — inspection complete ≠ remediation complete); exit 0 `complete`. Print the
 verdict verbatim; never soften it.
-Run log: `<run-log-dir>/<run_date>__weekly-full-audit-run[-N].md` (next free `-N`; `run_date` from the run record).
+Run log: write the body to a temp file under `<sd>`, then
+`RUN write-run-log --dir <run-log-dir> --stem <run_date>__weekly-full-audit-run --body-file <f> --run-id <rid> --state-dir <sd>`
+(create-only, next free `-N`; `run_date` from the run record; recorded as artifact `run-log`, so it
+needs no `--exclude`). The sweep writes its own the same way (slop-audit-sweep step 7).
 
-**12a. Outputs audit.** `RUN outputs-audit --scan-dir <repo-root> --scan-dir <workspace-root> [--scan-dir <addins-root>] --scan-dir <out> [--exclude <file>] --run-id <rid> --state-dir <sd>`
-(`--exclude` once per file the run legitimately wrote that is not on the record, e.g. the run log
-and batch manifest). It lists every file created or modified since run start that is not a
-dispatched output, a recorded artifact or ledger, the Checklist or under the evidence dir. Exit 1 →
-each hit is recorded `defect:undeclared-outputs` and the run can only be `degraded`; name the files
-in the run log. Run it before step 13 and before any finalize (§Failure).
+**12a. Outputs audit.** `RUN outputs-audit --scan-dir <out> [--scan-dir <other run-owned output dir> …] --run-id <rid> --state-dir <sd>`
+`--scan-dir` names only run-owned or declared output dirs (`--out`, a `--run-log-dir` outside every
+target); a live target root is refused as a scan dir. Live roots are compared instead by snapshot:
+`start` recorded each root's `git status`; any path changed since then that is not a declared output is
+listed under `## Unattributed target changes (informational)` in RESULTS.md — another session or a
+hook may have written it, so it is not a defect and does not move the run outcome; name the count in
+the final chat summary. The isolated checkouts are audited by their own `git status` (anything there
+is this run's write). Exit 1 → each undeclared hit in a scan dir or checkout, or any output modified
+after the `check` subcommand collected it, is a defect (`defect:undeclared-outputs` /
+`defect:output-modified-after-collect`) and the run can only be `degraded`; name the files in the run
+log. A scan-dir subtree holding its own `.git` is skipped and noted. Run it before step 13 and before
+any finalize (§Failure). Then `RUN release-src --run-id <rid> --state-dir <sd>` removes the step-0a
+checkouts (refused before `outputs-audit`, and for anything outside the run's `src` dir).
 
 **13. Run complete (rule 7).** `RUN record --run <ok|degraded>`; it refuses an outcome softer than
 the coverage implies. Then `RUN finish [--watchdog-dir …]` (heartbeat `finished`, remediation `not-run`).
 
 **Final chat summary** (after step 13): report path, ctxcheck line, severity counts, top 5 findings,
-change since last run, the biggest risk, and the GRRP batch verdict verbatim.
+change since last run, the biggest risk, the GRRP batch verdict verbatim, and the unattributed
+target-change count (informational).
 
 **14. Publish + deliver.** `RUN publish` (refused before run outcome and gate), then by mode:
 - `file` (D2, 2026-10-30): `RUN deliver-file --run-id <rid> --state-dir <sd> --run-log <run log path>`.

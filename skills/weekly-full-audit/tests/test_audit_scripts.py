@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -1989,3 +1990,388 @@ class G4RevisionTests(unittest.TestCase):
             self.assertEqual(L.dirty(repo), [])
             with self.assertRaises(L.AuditError):
                 L.checkout_revision(repo, "0" * 40, d / "bad")
+
+
+# --------------------------------------------------------------------------- 1a.iv cutover-readiness fixes
+
+
+class ChecklistReadableTests(Fixture):
+    """Fix b: a present Checklist is resolved, echoed as tools.checklist and proven readable;
+    `none` is recorded NOT RUN in the run record's coverage at start."""
+
+    def _args(self, *extra: str) -> list[str]:
+        repo, ws = self.repo("app", "https://github.com/O/App.git"), self.workspace()
+        self.ws = ws
+        return self.weekly_args(repo, ws, "--deliver", "none", *extra)
+
+    def test_unreadable_checklist_fails_preflight(self) -> None:
+        args = self._args()
+        target = (self.ws / R.CHECKLIST_REL).resolve()
+        real = Path.read_bytes
+
+        def guarded(p: Path) -> bytes:
+            if p.resolve() == target:
+                raise PermissionError(13, "Permission denied", str(p))
+            return real(p)
+
+        with unittest.mock.patch.object(Path, "read_bytes", guarded):
+            pf = R.run_preflight(R.build_parser().parse_args(["preflight", *args]))
+        self.assertFalse(pf.ok)
+        self.assertTrue(any("checklist unreadable" in f for f in pf.failures), pf.failures)
+
+    def test_non_utf8_checklist_fails_preflight(self) -> None:
+        bad = self.tmp / "bad" / "C.md"
+        bad.parent.mkdir()
+        bad.write_bytes(b"\x80\x81 not utf-8")
+        pf = R.run_preflight(R.build_parser().parse_args(["preflight", *self._args("--checklist", str(bad))]))
+        self.assertTrue(any("checklist unreadable" in f for f in pf.failures), pf.failures)
+
+    def test_present_checklist_echoed(self) -> None:
+        pf = R.run_preflight(R.build_parser().parse_args(["preflight", *self._args()]))
+        self.assertTrue(pf.ok, pf.failures)
+        self.assertEqual(pf.as_dict()["tools"]["checklist"], str(self.ws / R.CHECKLIST_REL))
+
+    def test_none_recorded_not_run_at_start(self) -> None:
+        code, out, err = run_cli("start", *self._args("--checklist", "none"), "--state-dir", str(self.state),
+                                 "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 0, err)
+        cov = json.loads(out)["coverage"]["checklist"]
+        self.assertEqual(cov["status"], "not-run-optional")
+        self.assertIn("NOT RUN", cov["note"])
+
+
+class IsolatedSourceTests(_StartedRun):
+    """Fix c: children read a detached checkout of the exact revision, never the live tree."""
+
+    def test_isolate_checks_out_exact_revision_without_touching_source(self) -> None:
+        base = self._start()
+        repo = self.tmp / "app"
+        head = commit(repo, "src/a.py", "print('a')\n")
+        (repo / "README.md").write_text("dirty edit\n", encoding="utf-8")
+        (repo / "untracked.txt").write_text("u\n", encoding="utf-8")
+        before = sh(repo, "status", "--porcelain=v1", "--untracked-files=all")
+        worktrees_before = sh(repo, "worktree", "list", "--porcelain")
+        code, out, err = run_cli("isolate", *base, "--root", f"repo={repo}")
+        self.assertEqual(code, 0, err)
+        res = json.loads(out)
+        self.assertEqual(res["sha"], head)
+        checkout = Path(res["checkout"])
+        run_dir = (self.state / "weekly-full-audit" / base[1]).resolve()
+        self.assertEqual(checkout.resolve(), (run_dir / "src" / "repo").resolve())
+        self.assertEqual((checkout / "README.md").read_text(encoding="utf-8"), "seed\n")
+        self.assertFalse((checkout / "untracked.txt").exists())
+        self.assertTrue((checkout / "src" / "a.py").is_file())
+        self.assertEqual(sh(checkout, "rev-parse", "HEAD"), head)
+        self.assertEqual(L.root_info("repo", checkout).identity, L.root_info("repo", repo).identity)
+        self.assertEqual(sh(repo, "status", "--porcelain=v1", "--untracked-files=all"), before)
+        self.assertEqual(sh(repo, "worktree", "list", "--porcelain"), worktrees_before)
+        entry = self._rec(base)["isolated"]["repo"]
+        self.assertEqual({k: entry[k] for k in ("name", "path_arg", "sha")},
+                         {"name": "repo", "path_arg": ".", "sha": head})
+        self.assertEqual(entry["checkout"], checkout.resolve().as_posix())
+        code, _, err = run_cli("isolate", *base, "--root", f"repo={repo}")
+        self.assertEqual(code, 2)
+        self.assertIn("already isolated", err)
+        ws = self.tmp / "ws"
+        code, out, err = run_cli("isolate", *base, "--root", f"workspace={ws}", "--rev", "HEAD~1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["sha"], sh(ws, "rev-parse", "HEAD~1"))
+
+    def test_baseline_and_report_use_isolated_sha(self) -> None:
+        base = self._start()
+        repo = self.tmp / "app"
+        iso = json.loads(run_cli("isolate", *base, "--root", f"repo={repo}")[1])["sha"]
+        commit(repo, "later.txt", "moved on\n")  # live HEAD moves after isolation
+        code, _, err = run_cli("baseline", *base, "--root", f"repo={repo}", "--report-dir", str(self.tmp / "r"),
+                               "--pattern", "*.md")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self._rec(base)["roots"]["repo"]["head_rev"], iso)
+
+    def test_isolate_refused_after_baseline_and_for_unknown_root(self) -> None:
+        base = self._start()
+        repo = self.tmp / "app"
+        code, _, err = run_cli("isolate", *base, "--root", f"nope={repo}")
+        self.assertEqual(code, 2)
+        self.assertIn("not a preflighted root", err)
+        self.assertEqual(run_cli("baseline", *base, "--root", f"repo={repo}", "--report-dir", str(self.tmp / "r"),
+                                 "--pattern", "*.md")[0], 0)
+        code, _, err = run_cli("isolate", *base, "--root", f"repo={repo}")
+        self.assertEqual(code, 2)
+        self.assertIn("before its baseline", err)
+
+    def test_release_src_removes_only_run_created_dirs(self) -> None:
+        base = self._start()
+        repo = self.tmp / "app"
+        checkout = Path(json.loads(run_cli("isolate", *base, "--root", f"repo={repo}")[1])["checkout"])
+        code, _, err = run_cli("release-src", *base)
+        self.assertEqual(code, 2)
+        self.assertIn("outputs-audit", err)
+        self.assertEqual(run_cli("outputs-audit", *base)[0], 0)
+        code, _, err = run_cli("release-src", *base)
+        self.assertEqual(code, 0, err)
+        self.assertFalse(checkout.exists())
+        self.assertTrue((repo / ".git").is_dir())
+        self.assertTrue(self._rec(base)["isolated"]["repo"]["released"])
+
+    def test_release_src_refuses_dest_outside_run_dir(self) -> None:
+        base = self._start()
+        self.assertEqual(run_cli("isolate", *base, "--root", f"repo={self.tmp / 'app'}")[0], 0)
+        self.assertEqual(run_cli("outputs-audit", *base)[0], 0)
+        outside = self.tmp / "keep-me"
+        outside.mkdir()
+        rp = Path(base[3]) / "weekly-full-audit" / f"{base[1]}.json"
+        rec = L.load_record(rp)
+        rec["isolated"]["repo"]["dest"] = outside.as_posix()
+        L.save_record(rp, rec)
+        code, _, err = run_cli("release-src", *base)
+        self.assertEqual(code, 2)
+        self.assertIn("outside", err)
+        self.assertTrue(outside.is_dir())
+
+
+class OutputsAttributionTests(_StartedRun):
+    """Fix e: run-owned dirs are audited strictly; live target roots are only observed."""
+
+    def test_unrelated_live_root_writer_is_unattributed_not_defect(self) -> None:
+        base = self._start()
+        app = self.tmp / "app"
+        (app / "notes.txt").write_text("another session\n", encoding="utf-8")
+        (app / "README.md").write_text("edited by a hook\n", encoding="utf-8")
+        scan = self.tmp / "scan"
+        scan.mkdir()
+        code, out, err = run_cli("outputs-audit", *base, "--scan-dir", str(scan))
+        self.assertEqual(code, 0, err)
+        res = json.loads(out)
+        self.assertFalse(res["defect"])
+        paths = sorted(x["path"] for x in res["unattributed"])
+        self.assertEqual(paths, sorted([(app / "notes.txt").resolve().as_posix(),
+                                        (app / "README.md").resolve().as_posix()]))
+        rec = self._rec(base)
+        self.assertIn("observed:unattributed-target-changes", [e["event"] for e in rec["events"]])
+        self.assertNotIn("undeclared_outputs", rec)
+        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        rec = self._rec(base)
+        without = {k: v for k, v in rec.items() if k != "unattributed_target_changes"}
+        self.assertEqual(L.derive_run(rec), L.derive_run(without))  # observation never moves the floor
+        md = L.results_markdown(self._rec(base), None)
+        self.assertIn("Unattributed target changes (informational)", md)
+        self.assertIn("notes.txt", md)
+
+    def test_preexisting_dirty_state_is_not_reported(self) -> None:
+        base = self._start()
+        app = self.tmp / "app"
+        (app / "README.md").write_text("dirty before the second run\n", encoding="utf-8")
+        self.assertIn("repo", self._rec(base)["target_snapshots"])
+        sd2 = self.tmp / "s2"
+        code, out, err = run_cli("start", *self.weekly_args(app, self.tmp / "ws", "--deliver", "none"),
+                                 "--state-dir", str(sd2), "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 0, err)
+        base2 = ["--run-id", json.loads(out)["run_id"], "--state-dir", str(sd2)]
+        code, out, err = run_cli("outputs-audit", *base2)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["unattributed"], [])
+
+    def test_undeclared_file_in_isolated_checkout_is_defect(self) -> None:
+        base = self._start()
+        checkout = Path(json.loads(run_cli("isolate", *base, "--root", f"repo={self.tmp / 'app'}")[1])["checkout"])
+        (checkout / "scratch.py").write_text("x\n", encoding="utf-8")
+        code, out, _ = run_cli("outputs-audit", *base)
+        self.assertEqual(code, 1)
+        res = json.loads(out)
+        self.assertTrue(res["defect"])
+        self.assertEqual(res["undeclared"], [(checkout / "scratch.py").resolve().as_posix()])
+        self.assertIn("defect:undeclared-outputs", [e["event"] for e in self._rec(base)["events"]])
+
+    def test_nested_checkout_skipped_with_note(self) -> None:
+        base = self._start()
+        scan = self.tmp / "scan"
+        nested = scan / "wt"
+        nested.mkdir(parents=True)
+        (nested / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        (nested / "busy.txt").write_text("other session\n", encoding="utf-8")
+        code, out, err = run_cli("outputs-audit", *base, "--scan-dir", str(scan))
+        self.assertEqual(code, 0, err)
+        res = json.loads(out)
+        self.assertEqual(res["undeclared"], [])
+        self.assertEqual(res["skipped_nested"], [nested.resolve().as_posix()])
+
+    def test_declared_outputs_pass_and_live_root_scan_refused(self) -> None:
+        base = self._start()
+        audits = self.tmp / "app" / "audits"
+        audits.mkdir()
+        report = audits / "r.md"
+        report.write_text("r\n", encoding="utf-8")
+        self.assertEqual(run_cli("record", *base, "--artifact", f"report={report}")[0], 0)
+        code, out, err = run_cli("outputs-audit", *base, "--scan-dir", str(audits))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), {"undeclared": [], "defect": False, "unattributed": [],
+                                           "skipped_nested": [], "modified_after_collect": []})
+        code, _, err = run_cli("outputs-audit", *base, "--scan-dir", str(self.tmp))
+        self.assertEqual(code, 2)
+        self.assertIn("live target root", err)
+
+
+class ChildRuleToolingTests(_StartedRun):
+    """Fix g: a quoted method line must be line k; outputs are frozen at collect."""
+
+    def _returned(self, base: list[str]) -> tuple[Path, int, Path]:
+        self.assertEqual(run_cli("record", *base, "--require", "sec")[0], 0)
+        evd = Path(run_cli("evidence-dir", *base)[1].strip())
+        meth = self.tmp / "m.md"
+        meth.write_text("alpha rule\nbeta rule\ngamma rule\ndelta rule\n", encoding="utf-8")
+        ev = evd / "S1.md"
+        code, out, err = dispatch(base, "sec", "S1", meth, ev)
+        self.assertEqual(code, 0, err)
+        return meth, json.loads(out)["methods"][0]["line"], ev
+
+    @staticmethod
+    def _body(meth: Path, k: int, quote: str = "") -> str:
+        line = L.method_lines(meth)[k - 1]
+        tail = f" {quote}" if quote else ""
+        return (f"method-sha256: {meth.as_posix()} {L.file_sha256(meth)}\n"
+                f"method-line: {meth.as_posix()} {k} {L.line_sha256(line)}{tail}\n")
+
+    def test_quoted_text_must_be_line_k(self) -> None:
+        base = self._start()
+        meth, k, ev = self._returned(base)
+        lines = L.method_lines(meth)
+        other = lines[k % 4]  # a different non-blank line
+        check = ("check", *base, "--key", "sec", "--state", "returned", "--inspected", "x/", "--evidence", str(ev))
+        ev.write_text(self._body(meth, k, f'"{other}"'), encoding="utf-8")
+        code, _, err = run_cli(*check)
+        self.assertEqual(code, 2)
+        self.assertIn("quoted text does not match line", err)
+        ev.write_text(self._body(meth, k, f"`{lines[k - 1]}`"), encoding="utf-8")
+        code, _, err = run_cli(*check)
+        self.assertEqual(code, 0, err)
+
+    def _collect(self, base: list[str]) -> Path:
+        meth, k, ev = self._returned(base)
+        ev.write_text(self._body(meth, k), encoding="utf-8")
+        code, _, err = run_cli("check", *base, "--key", "sec", "--state", "returned", "--inspected", "x/",
+                               "--evidence", str(ev))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self._rec(base)["checks"]["sec"]["output_sha256"],
+                         {ev.resolve().as_posix(): L.file_sha256(ev)})
+        return ev
+
+    def test_output_modified_after_collect_is_defect(self) -> None:
+        base = self._start()
+        ev = self._collect(base)
+        self.assertEqual(run_cli("outputs-audit", *base)[0], 0)
+        with ev.open("a", encoding="utf-8") as fh:
+            fh.write("self-edit after collect\n")
+        code, out, _ = run_cli("outputs-audit", *base)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out)["modified_after_collect"], [ev.resolve().as_posix()])
+        rec = self._rec(base)
+        self.assertIn("defect:output-modified-after-collect", [e["event"] for e in rec["events"]])
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
+        code, _, err = run_cli("record", *base, "--run", "ok")
+        self.assertEqual(code, 2)
+        self.assertIn("softer", err)
+        self.assertEqual(run_cli("record", *base, "--run", "degraded")[0], 0)
+
+    def test_set_run_detects_modification_without_outputs_audit(self) -> None:
+        base = self._start()
+        ev = self._collect(base)
+        ev.write_text("replaced\n", encoding="utf-8")
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
+        code, _, _ = run_cli("record", *base, "--run", "ok")
+        self.assertEqual(code, 2)
+        self.assertEqual(run_cli("record", *base, "--run", "degraded")[0], 0)
+        rec = self._rec(base)
+        self.assertEqual(rec["modified_after_collect"], [ev.resolve().as_posix()])
+        self.assertIn("modified after collect", L.results_markdown(rec, None))
+
+
+class SweepRunLogTests(Fixture):
+    """Fix d: the sweep writes a create-only run log and RESULTS.md names it."""
+
+    def test_run_log_written_create_only_and_in_results(self) -> None:
+        repo = self.repo("app", "https://github.com/O/App.git")
+        code, out, err = run_cli("start", "--task", "slop-audit-sweep", "--root", f"app={repo}",
+                                 "--tools-root", str(self.tools), "--grrp", str(self.grrp), "--deliver", "file",
+                                 "--state-dir", str(self.state), "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 0, err)
+        base = ["--run-id", json.loads(out)["run_id"], "--state-dir", str(self.state)]
+        body = self.tmp / "log-body.md"
+        body.write_text("# sweep run log\n- step 0 ok\n", encoding="utf-8")
+        logs = self.tmp / "01_BuildLog"
+        made = []
+        for _ in range(2):
+            code, out, err = run_cli("write-run-log", *base, "--dir", str(logs),
+                                     "--stem", "2026-10-30__slop-audit-sweep-run", "--body-file", str(body))
+            self.assertEqual(code, 0, err)
+            made.append(Path(out.strip()))
+        self.assertEqual([p.name for p in made], ["2026-10-30__slop-audit-sweep-run.md",
+                                                  "2026-10-30__slop-audit-sweep-run-2.md"])
+        self.assertEqual(run_cli("record", *base, "--coverage", "app=complete", "--inspection", "complete")[0], 0)
+        self.assertEqual(run_cli("record", *base, "--run", "ok")[0], 0)
+        gate = self.tmp / "gate.json"
+        gate.write_text("{}", encoding="utf-8")
+        self.assertEqual(run_cli("record", *base, "--gate-file", str(gate))[0], 0)
+        self.assertEqual(run_cli("publish", *base)[0], 0)
+        code, out, err = run_cli("deliver-file", *base)
+        self.assertEqual(code, 0, err)
+        results = Path(json.loads(out)["ref"]).read_text(encoding="utf-8")
+        self.assertIn(f"- run log: {made[1]}", results)
+        self.assertNotIn("not recorded", results)
+
+    def test_sweep_skill_documents_run_log(self) -> None:
+        text = (SKILLS / "slop-audit-sweep" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## Outputs", text)
+        self.assertIn("--run-log-dir", text)
+        self.assertIn("RUN write-run-log", text)
+
+
+ARCHIVE_PATHSPECS = ("':(exclude,glob)**/99_Archive/**'", "':(exclude,glob)**/_backups/**'",
+                     "':(exclude,glob)**/alembic/versions/**'")
+ARCHIVE_RG = ("--glob '!**/99_Archive/**'", "--glob '!**/_backups/**'", "--glob '!**/alembic/versions/**'")
+
+
+class ArchivePathspecTests(unittest.TestCase):
+    """Fix f: the documented exclusions also cover a top-level 99_Archive (1a4-5 miss)."""
+
+    def test_skills_carry_the_pathspecs(self) -> None:
+        for skill in ("slop-audit-sweep", "weekly-full-audit"):
+            text = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8")
+            for spec in (*ARCHIVE_PATHSPECS, *ARCHIVE_RG):
+                with self.subTest(skill=skill, spec=spec):
+                    self.assertIn(spec, text)
+
+    def test_pathspecs_exclude_top_level_and_nested_archives(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="archive-spec-", ignore_cleanup_errors=True) as d:
+            repo = make_repo(Path(d), "r")
+            for rel in ("99_Archive/x.txt", "a/99_Archive/y.txt", "_backups/z.txt",
+                        "backend/alembic/versions/v1.py", "src/keep.txt"):
+                commit(repo, rel, "needle\n")
+            specs = [shlex.split(s)[0] for s in ARCHIVE_PATHSPECS]
+            listed = sh(repo, "ls-files", "--", *specs).splitlines()
+            grepped = sh(repo, "grep", "-l", "needle", "--", *specs).splitlines()
+            self.assertEqual(sorted(listed), ["README.md", "src/keep.txt"])
+            self.assertEqual(grepped, ["src/keep.txt"])
+            rg = shutil.which("rg")
+            if rg is None:
+                self.skipTest("rg not on PATH (git pathspecs verified)")
+            globs = [x for s in ARCHIVE_RG for x in shlex.split(s)]
+            cp = subprocess.run([rg, "-l", "needle", *globs, "."], cwd=repo, capture_output=True, text=True)
+            names = [n.replace("\\", "/").removeprefix("./") for n in cp.stdout.splitlines()]
+            self.assertEqual(names, ["src/keep.txt"])
+
+
+class ChildRuleBriefTests(unittest.TestCase):
+    """Fix g (brief text) and fix a (G4 wording) are documented in the SKILLs."""
+
+    def test_child_rules_in_both_briefs(self) -> None:
+        for skill in ("slop-audit-sweep", "weekly-full-audit"):
+            text = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8")
+            for phrase in ("no `cd`", "git -C", ".addendum-N.md", "hash-only"):
+                with self.subTest(skill=skill, phrase=phrase):
+                    self.assertIn(phrase, text)
+
+    def test_g4_wording_is_inspected_revision(self) -> None:
+        text = (SKILLS / "weekly-full-audit" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("the working tree at HEAD and nothing else", text)
+        self.assertNotIn("Do not claim G4 state for any commit other than HEAD", text)
+        self.assertIn("exact inspected revision", text)

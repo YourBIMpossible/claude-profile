@@ -724,6 +724,8 @@ def derive_run(rec: Mapping[str, Any]) -> str:
         return "failed"
     if rec.get("undeclared_outputs"):
         return "degraded"  # outputs-audit defect: something wrote outside the declared outputs
+    if rec.get("modified_after_collect"):
+        return "degraded"  # a collected output changed before finalize
     return "degraded" if any(c["status"] in DEGRADING for c in rec["coverage"].values()) else "ok"
 
 
@@ -735,6 +737,7 @@ def set_run(rec: dict[str, Any], run: str) -> None:
         raise AuditError("run outcome is declared only after inspection ends")
     if rec["run"] is not None:
         raise AuditError(f"run outcome already declared: {rec['run']}")
+    verify_collected_outputs(rec)
     floor = derive_run(rec)
     if RUN_SEVERITY[run] < RUN_SEVERITY[floor]:
         raise AuditError(f"run {run} is softer than coverage implies ({floor})")
@@ -881,7 +884,10 @@ def _str_list(v: Any, what: str) -> list[str]:
 
 
 _ATTEST = re.compile(r"^method-sha256: (?P<path>.+) (?P<sha>[0-9a-f]{64})\s*$", re.M)
-_ATTEST_LINE = re.compile(r"^method-line: (?P<path>.+) (?P<k>\d+) (?P<sha>[0-9a-f]{64})\s*$", re.M)
+# Attestation is hash-only; a child that also quotes the line must quote line k exactly (a quoted
+# neighbour line with the right hash is how 1a4-5's addins child misattested 106 as 104).
+_ATTEST_LINE = re.compile(
+    r"^method-line: (?P<path>.+?) (?P<k>\d+) (?P<sha>[0-9a-f]{64})(?:[ \t]+(?P<quote>.*?))?[ \t\r]*$", re.M)
 
 # Brief fields that must be filled before any child is dispatched (GRRP brief, `ENROLL brief`).
 BRIEF_REQUIRED: tuple[str, ...] = ("Scope", "Boundaries", "Done means", "Authority")
@@ -998,7 +1004,7 @@ def verify_dispatch(rec: Mapping[str, Any], key: str) -> list[str]:
                 continue
             body = decode_text(op.read_bytes(), o)
             attested = {_norm(m.group("path").strip()): m.group("sha") for m in _ATTEST.finditer(body)}
-            lines_att = {(_norm(m.group("path").strip()), int(m.group("k"))): m.group("sha")
+            lines_att = {(_norm(m.group("path").strip()), int(m.group("k"))): (m.group("sha"), m.group("quote"))
                          for m in _ATTEST_LINE.finditer(body)}
             for meth in d["methods"]:
                 got = attested.get(_norm(meth["path"]))
@@ -1015,19 +1021,86 @@ def verify_dispatch(rec: Mapping[str, Any], key: str) -> list[str]:
                 if got_line is None:
                     raise AuditError(f"check {key!r}: shard {shard!r} output {o} does not attest line {k} "
                                      f"of method {meth['path']} (`method-line: <path> {k} <sha256>`)")
-                if got_line != line_sha256(method_lines(Path(meth["path"]))[k - 1]):
+                line_k = method_lines(Path(meth["path"]))[k - 1]
+                sha_k, quote = got_line
+                if sha_k != line_sha256(line_k):
                     raise AuditError(f"check {key!r}: shard {shard!r} attests line {k} of {meth['path']} "
                                      "with a wrong line hash")
+                if quote and quote.strip().strip("\"'`").strip() != line_k.strip():
+                    raise AuditError(f"check {key!r}: shard {shard!r} quoted text does not match line {k} "
+                                     f"of {meth['path']} (attestation is hash-only; drop the quote or quote line {k})")
     return declared
 
 
+def verify_collected_outputs(rec: dict[str, Any]) -> list[str]:
+    """Outputs whose sha256 changed (or that vanished) since `RUN check` collected them. Each new
+    hit is recorded `defect:output-modified-after-collect`; the run can then only be degraded.
+    A child's edits before collect are invisible here: hashing starts at collect."""
+    hits: list[str] = []
+    for c in rec.get("checks", {}).values():
+        for p, sha in (c.get("output_sha256") or {}).items():
+            fp = Path(p)
+            if not fp.is_file() or file_sha256(fp) != sha:
+                hits.append(p)
+    new = sorted(set(hits) - set(rec.get("modified_after_collect", [])))
+    if new:
+        rec["modified_after_collect"] = sorted(set(rec.get("modified_after_collect", [])) | set(new))
+        add_event(rec, "defect:output-modified-after-collect", new)
+    return sorted(set(hits))
+
+
+def status_snapshot(toplevel: Path) -> dict[str, dict[str, str | None]]:
+    """`git status --porcelain=v1 -z --untracked-files=all` of a live checkout: {rel path: {xy, blob}}.
+    blob = git blob SHA of the bytes now (None when deleted or not a regular file)."""
+    raw = git(toplevel, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
+    toks = raw.split("\0")
+    out: dict[str, dict[str, str | None]] = {}
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        i += 1
+        if len(tok) < 4:
+            continue
+        xy, rel = tok[:2], tok[3:]
+        if xy[0] in "RC" or xy[1] in "RC":
+            i += 1  # the rename/copy source path follows as its own token
+        fp = toplevel / rel
+        blob = blob_sha_bytes(fp.read_bytes()) if fp.is_file() else None
+        out[rel] = {"xy": xy, "blob": blob}
+    return out
+
+
+def _under(n: str, prefix: str) -> bool:
+    return n == prefix or n.startswith(prefix.rstrip("/") + "/")
+
+
 def outputs_audit(rec: dict[str, Any], scan_dirs: Sequence[Path], evidence_root: Path,
-                  exclude: Sequence[Path] = (), exclude_prefixes: Sequence[str] = ()) -> list[str]:
-    """Files created or modified since run start under `scan_dirs` that the run never declared:
-    not a dispatched output, artifact, ledger or the checklist, not under the evidence dir and
-    not in `exclude`. Any hit is recorded as a defect (it degrades the run)."""
+                  exclude: Sequence[Path] = (), exclude_prefixes: Sequence[str] = ()) -> dict[str, Any]:
+    """Attribute every write the run can see, in two strictly separate scopes.
+
+    Run-owned (defects): files created or modified since run start under `scan_dirs` (declared
+    output dirs) that the run never declared — not a dispatched output, artifact, ledger or the
+    checklist, not under the evidence dir, not in `exclude` — plus anything `git status --ignored`
+    shows in an isolated checkout (`RUN isolate`). A nested git checkout inside a scan dir belongs to
+    another session: it is skipped and noted, never walked. Any hit is `defect:undeclared-outputs`.
+
+    Live target roots (observed only): the start-time `git status` snapshot of each root is
+    compared with now (status code + blob). Differences not declared by the run are
+    `observed:unattributed-target-changes` — listed, never a defect, because concurrent sessions
+    and hooks write there. A scan dir equal to or containing a live root is refused (it would
+    blame those writers). Also re-verifies collected outputs (`verify_collected_outputs`)."""
     started = _dt.datetime.strptime(rec["started_at"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(
         tzinfo=_dt.timezone.utc).timestamp()
+    snaps = rec.get("target_snapshots", {})
+    live_tops = {_norm(s["toplevel"]) for s in snaps.values()}
+    for d in scan_dirs:
+        if not d.is_dir():
+            raise AuditError(f"outputs-audit: scan dir {d} is not a directory")
+        nd = _norm(str(d))
+        for top in sorted(live_tops):
+            if _under(top, nd):
+                raise AuditError(f"outputs-audit: scan dir {d} contains live target root {top}; scan only "
+                                 "run-owned dirs (declared output dirs); live roots are compared by snapshot")
     declared = {_norm(o) for d in rec.get("dispatch", {}).values() for o in d["outputs"]}
     declared |= {_norm(a["path"]) for a in rec["artifacts"]}
     declared |= {_norm(x) for x in rec["ledgers"]}
@@ -1038,11 +1111,19 @@ def outputs_audit(rec: dict[str, Any], scan_dirs: Sequence[Path], evidence_root:
     ev = _norm(str(evidence_root))
     prefixes = [_norm(x) for x in exclude_prefixes]  # the run's own state files: <sd>/<task>/<run_id>*
     found: list[str] = []
+    nested: list[str] = []
     for d in scan_dirs:
-        if not d.is_dir():
-            raise AuditError(f"outputs-audit: scan dir {d} is not a directory")
         for cur, dirs, files in os.walk(d):
-            dirs[:] = [x for x in dirs if x != ".git" and _norm(os.path.join(cur, x)) != ev]
+            keep = []
+            for x in dirs:
+                nx = _norm(os.path.join(cur, x))
+                if x == ".git" or nx == ev or any(_under(nx, p) for p in prefixes):
+                    continue
+                if (Path(cur) / x / ".git").exists():
+                    nested.append((Path(cur) / x).resolve().as_posix())
+                    continue
+                keep.append(x)
+            dirs[:] = keep
             for f in files:
                 fp = Path(cur) / f
                 n = _norm(str(fp))
@@ -1054,16 +1135,60 @@ def outputs_audit(rec: dict[str, Any], scan_dirs: Sequence[Path], evidence_root:
                 except OSError:
                     continue
                 found.append(fp.resolve().as_posix())
+    for iso in rec.get("isolated", {}).values():
+        if iso.get("released"):
+            continue
+        dest = Path(iso["dest"])
+        raw = git(dest, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored").stdout
+        toks = raw.split("\0")
+        i = 0
+        while i < len(toks):
+            tok = toks[i]
+            i += 1
+            if len(tok) < 4:
+                continue
+            if tok[0] in "RC" or tok[1] in "RC":
+                i += 1
+            fp = (dest / tok[3:]).resolve()
+            if _norm(str(fp)) not in declared:
+                found.append(fp.as_posix())
+        iso["audited"] = True
     found = sorted(set(found))
+    nested = sorted(set(nested))
+    modified = verify_collected_outputs(rec)
+    scan_norm = [_norm(str(x)) for x in scan_dirs]
+    unattributed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name, snap in snaps.items():
+        top = Path(snap["toplevel"])
+        if _norm(str(top)) in seen:
+            continue
+        seen.add(_norm(str(top)))
+        before, after = snap["status"], status_snapshot(top)
+        for rel in sorted(set(before) | set(after)):
+            if before.get(rel) == after.get(rel):
+                continue
+            ap = (top / rel).resolve().as_posix()
+            n = _norm(ap)
+            if n in declared or any(_under(n, s) for s in scan_norm):
+                continue
+            unattributed.append({"root": name, "path": ap, "before": before.get(rel), "after": after.get(rel)})
     rec.setdefault("outputs_audit", []).append(
-        {"at": iso_utc(utcnow()), "scanned": [Path(x).resolve().as_posix() for x in scan_dirs], "undeclared": found})
+        {"at": iso_utc(utcnow()), "scanned": [Path(x).resolve().as_posix() for x in scan_dirs], "undeclared": found,
+         "skipped_nested": nested, "unattributed": len(unattributed)})
+    rec["unattributed_target_changes"] = unattributed
+    if nested:
+        add_event(rec, "outputs-audit-skipped-nested", nested)
+    if unattributed:
+        add_event(rec, "observed:unattributed-target-changes", [u["path"] for u in unattributed])
     if found:
         rec.setdefault("undeclared_outputs", [])
         rec["undeclared_outputs"] = sorted(set(rec["undeclared_outputs"]) | set(found))
         add_event(rec, "defect:undeclared-outputs", found)
-    else:
+    elif not modified:
         add_event(rec, "outputs-audit-clean", len(scan_dirs))
-    return found
+    return {"undeclared": found, "defect": bool(found or modified), "unattributed": unattributed,
+            "skipped_nested": nested, "modified_after_collect": modified}
 
 
 def results_markdown(rec: Mapping[str, Any], run_log: str | None) -> str:
@@ -1088,6 +1213,15 @@ def results_markdown(rec: Mapping[str, Any], run_log: str | None) -> str:
         "## Ledgers",
         "",
         *([f"- {x}" for x in rec["ledgers"]] or ["- none"]),
+        "",
+        *(["## Outputs modified after collect (defect)", "",
+           *[f"- {x}" for x in rec["modified_after_collect"]], ""] if rec.get("modified_after_collect") else []),
+        "## Unattributed target changes (informational)",
+        "",
+        "Live target-root changes since run start that this run did not declare (concurrent sessions,",
+        "hooks); not a defect.",
+        "",
+        *([f"- {u['root']}: {u['path']}" for u in rec.get("unattributed_target_changes", [])] or ["- none"]),
         "",
         "## Gate verdict (verbatim)",
         "",
@@ -1156,7 +1290,9 @@ def report_check(rec: dict[str, Any], key: str, state: str, completion: Mapping[
             n_findings = len(validate_findings(require_artifact(findings, evidence_root, f"check {key!r}: findings file")))
         entry.update(state="returned", inspected=inspected, remaining=remaining, why=why,
                      evidence=evidence, artifacts=artifacts, findings=findings or None,
-                     findings_count=n_findings, returned_at=iso_utc(utcnow()))
+                     findings_count=n_findings, returned_at=iso_utc(utcnow()),
+                     output_sha256={o: file_sha256(Path(o)) for d in rec.get("dispatch", {}).values()
+                                    if d["key"] == key for o in d["outputs"]})
         if remaining:
             set_coverage(rec, key, "lost", f"partial: {len(remaining)} remaining ({why})")
         else:

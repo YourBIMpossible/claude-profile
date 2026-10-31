@@ -18,7 +18,10 @@ Subcommands
   brief-done    a recorded ledger's brief (Scope, Boundaries, Done means, Authority) is filled
   dispatch      declare one child: method files (hash + random line k) and create-only outputs
   check         one required check's return (completion plan) or failure
-  outputs-audit files written since run start under scan dirs that no step declared (defect)
+  isolate       detached checkout of one root's exact revision under the run dir; children read it
+  outputs-audit undeclared writes in run-owned dirs (defect); live-root changes (observed only)
+  release-src   remove the run's isolated checkouts after outputs-audit
+  write-run-log create-only run log, recorded as artifact kind run-log
   wait          barrier: exit 1 while any required check is still pending
   hygiene-line  run G3/G4 in the repo and workspace roots; print the HYG-13 header line
   reuse-check   may the weekly reuse a sweep report for a root? (rule 4)
@@ -35,6 +38,7 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import shutil
@@ -239,6 +243,11 @@ def _checklist(pf: Preflight, arg: str | None, ws: L.RootInfo | None) -> None:
     if "_backups" in path.parts:
         pf.fail(f"checklist under _backups/ is never written: {path}")
         return
+    try:  # proven readable as UTF-8 now, not at step 10
+        L.decode_text(path.read_bytes(), str(path))
+    except (OSError, L.AuditError) as exc:
+        pf.fail(f"checklist unreadable: {path}: {exc}")
+        return
     pf.tools["checklist"] = str(path)
 
 
@@ -347,6 +356,7 @@ def cmd_start(a: argparse.Namespace) -> int:
         _print({"run_id": run_id, "ok": False, "record": str(path), "failures": pf.failures})
         return 2
     L.set_inspection(rec, "running")
+    rec["target_snapshots"] = _target_snapshots(pf)
     for name, err in pf.access.items():
         L.set_coverage(rec, f"root-{name}", "lost", f"Access: {err}")
     for name, opt in pf.optional.items():
@@ -369,6 +379,111 @@ def cmd_start(a: argparse.Namespace) -> int:
     return 0
 
 
+def _target_snapshots(pf: Preflight) -> dict[str, dict[str, Any]]:
+    """Start-time `git status` of every reachable live root, for outputs-audit attribution."""
+    out: dict[str, dict[str, Any]] = {}
+    for name, meta in pf.roots.items():
+        if name in pf.access:
+            continue
+        top = Path(L.git(meta["path"], "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+        out[name] = {"toplevel": top.as_posix(), "at": L.iso_utc(L.utcnow()), "status": L.status_snapshot(top)}
+    return out
+
+
+def _iso_root(rec: dict[str, Any], name: str, path: str) -> dict[str, Any]:
+    if rec["states"]["inspection"] != "running":
+        raise L.AuditError("isolate runs while inspection is running")
+    meta = rec["preflight"]["roots"].get(name)
+    if meta is None:
+        raise L.AuditError(f"--root {name!r} is not a preflighted root")
+    if name in rec.get("isolated", {}):
+        raise L.AuditError(f"root {name!r} already isolated at {rec['isolated'][name]['sha'][:12]}")
+    if name in rec["roots"]:
+        raise L.AuditError(f"isolate a root before its baseline ({name!r} already has one)")
+    return meta
+
+
+def cmd_isolate(a: argparse.Namespace) -> int:
+    """Detached checkout of the exact revision under <sd>/<task>/<rid>/src/<name>; the live tree,
+    its index, worktree list and dirty/untracked files are never touched or copied."""
+    name, _, path = a.root.partition("=")
+    rid = L.parse_run_id(a.run_id)
+    run_dir = (Path(a.state_dir) / rid.task_id / a.run_id).resolve()
+    rec = L.load_record(_rec_path(a))
+    meta = _iso_root(rec, name, path)
+    info = L.root_info(name, path)
+    if info.identity != meta["identity"] or info.path_arg != meta["path_arg"]:
+        raise L.AuditError(f"--root {name}={path} is not the preflighted root ({meta['identity']} {meta['path_arg']})")
+    sha = L.git(info.path, "rev-parse", "--verify", f"{a.rev}^{{commit}}").stdout.strip()
+    dest = run_dir / "src" / name
+    if dest.exists():
+        raise L.AuditError(f"isolate: {dest} already exists")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    L.checkout_revision(info.toplevel, sha, dest)
+    origin = L.git(info.toplevel, "config", "--get", "remote.origin.url", check=False).stdout.strip()
+    if origin:  # identity of the checkout = identity of the source, not the source's local path
+        L.git(dest, "remote", "set-url", "origin", origin)
+    checkout = (dest / info.path_arg).resolve() if info.path_arg != "." else dest.resolve()
+    entry = {"name": name, "path": info.path.as_posix(), "path_arg": info.path_arg, "sha": sha,
+             "checkout": checkout.as_posix(), "dest": dest.resolve().as_posix(),
+             "created_at": L.iso_utc(L.utcnow()), "released": False}
+
+    def apply(r: dict[str, Any]) -> None:
+        _iso_root(r, name, path)
+        r.setdefault("isolated", {})[name] = entry
+        L.add_event(r, "isolated", f"{name}@{sha}")
+
+    _mutate(a, apply)
+    _print(entry)
+    return 0
+
+
+def cmd_release_src(a: argparse.Namespace) -> int:
+    """Remove the isolated checkouts this run created, only after outputs-audit has audited them."""
+    rid = L.parse_run_id(a.run_id)
+    src_root = (Path(a.state_dir) / rid.task_id / a.run_id / "src").resolve()
+
+    def onexc(fn: Callable[..., Any], p: str, _exc: BaseException) -> None:
+        os.chmod(p, 0o700)  # git pack files are read-only on Windows
+        fn(p)
+
+    def apply(rec: dict[str, Any]) -> list[str]:
+        todo = {n: e for n, e in rec.get("isolated", {}).items() if not e.get("released")}
+        for n, e in todo.items():
+            if not e.get("audited"):
+                raise L.AuditError(f"release-src: {n!r} not yet audited; run `RUN outputs-audit` first")
+            dest = Path(e["dest"]).resolve()
+            if not L._inside(dest, src_root) or dest == src_root:
+                raise L.AuditError(f"release-src: {dest} is outside this run's src dir {src_root}; refused")
+        released = []
+        for n, e in todo.items():
+            dest = Path(e["dest"]).resolve()
+            if dest.exists():
+                shutil.rmtree(dest, onexc=onexc)
+            e["released"] = True
+            released.append(n)
+        L.add_event(rec, "src-released", released)
+        return released
+
+    _print({"released": _mutate(a, apply)})
+    return 0
+
+
+def cmd_write_run_log(a: argparse.Namespace) -> int:
+    """Create-only run log (-N on collision), recorded as artifact kind run-log."""
+    L.load_record(_rec_path(a))
+    body = L.decode_text(Path(a.body_file).read_bytes(), a.body_file)
+    path = L.create_exclusive(Path(a.dir), a.stem, ".md", body)
+
+    def apply(rec: dict[str, Any]) -> None:
+        rec["artifacts"].append({"kind": "run-log", "path": str(path)})
+        L.add_event(rec, "run-log-written", str(path))
+
+    _mutate(a, apply)
+    print(path)
+    return 0
+
+
 def cmd_slug(a: argparse.Namespace) -> int:
     print(L.grrp_slug(a.run_id, a.prefix))
     return 0
@@ -377,6 +492,10 @@ def cmd_slug(a: argparse.Namespace) -> int:
 def cmd_baseline(a: argparse.Namespace) -> int:
     name, _, path = a.root.partition("=")
     info = L.root_info(name, path)
+    if a.run_id:  # an isolated root was inspected at its recorded SHA, not the live HEAD
+        iso = L.load_record(_rec_path(a)).get("isolated", {}).get(name)
+        if iso is not None:
+            info = dataclasses.replace(info, head_rev=iso["sha"])
     overrides = dict(o.split("=", 1) for o in a.override or [])
     bl = L.select_baseline(info, a.task_id or L.parse_run_id(a.run_id).task_id,
                            [Path(d) for d in a.report_dir], a.pattern, overrides.get(name),
@@ -508,14 +627,14 @@ def cmd_outputs_audit(a: argparse.Namespace) -> int:
     rec_path = _rec_path(a)
     prefix = (sd / rid.task_id / a.run_id).as_posix()
 
-    def apply(rec: dict[str, Any]) -> list[str]:
-        return L.outputs_audit(rec, [Path(d) for d in a.scan_dir], root,
+    def apply(rec: dict[str, Any]) -> dict[str, Any]:
+        return L.outputs_audit(rec, [Path(d) for d in a.scan_dir or []], root,
                                exclude=[rec_path, *(Path(x) for x in a.exclude or [])],
                                exclude_prefixes=[prefix])
 
-    found = _mutate(a, apply)
-    _print({"undeclared": found, "defect": bool(found)})
-    return 1 if found else 0
+    res = _mutate(a, apply)
+    _print(res)
+    return 1 if res["defect"] else 0
 
 
 def cmd_dispatch(a: argparse.Namespace) -> int:
@@ -629,10 +748,11 @@ def hygiene_results(roots: dict[str, Path], node: str, fallback_dir: Path | None
 
 
 def _inspected_revs(rec: dict[str, Any], names: Sequence[str]) -> dict[str, str | None]:
-    """The revision each root was inspected at: the baseline step's head_rev, else preflight's."""
+    """The revision each root was inspected at: its isolated SHA, else the baseline step's head_rev,
+    else preflight's."""
     out: dict[str, str | None] = {}
     for n in names:
-        rev = rec.get("roots", {}).get(n, {}).get("head_rev")
+        rev = rec.get("isolated", {}).get(n, {}).get("sha") or rec.get("roots", {}).get(n, {}).get("head_rev")
         out[n] = rev or rec.get("preflight", {}).get("roots", {}).get(n, {}).get("head_rev")
     return out
 
@@ -873,9 +993,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ledger", required=True, help="a ledger already recorded with `record --ledger`")
     p.set_defaults(fn=cmd_brief_done)
     p = sub.add_parser("outputs-audit"); run_args(p)
-    p.add_argument("--scan-dir", action="append", required=True, help="directory to scan (target roots, report dir)")
+    p.add_argument("--scan-dir", action="append", default=[],
+                   help="run-owned dir to scan (declared output dir); never a live target root")
     p.add_argument("--exclude", action="append", help="a file the run legitimately wrote outside the record")
     p.set_defaults(fn=cmd_outputs_audit)
+    p = sub.add_parser("isolate"); run_args(p); p.add_argument("--root", required=True, help="name=path")
+    p.add_argument("--rev", default="HEAD", help="revision to inspect (default HEAD)")
+    p.set_defaults(fn=cmd_isolate)
+    p = sub.add_parser("release-src"); run_args(p); p.set_defaults(fn=cmd_release_src)
+    p = sub.add_parser("write-run-log"); run_args(p); p.add_argument("--dir", required=True)
+    p.add_argument("--stem", required=True); p.add_argument("--body-file", required=True)
+    p.set_defaults(fn=cmd_write_run_log)
     p = sub.add_parser("dispatch"); run_args(p); p.add_argument("--key", required=True)
     p.add_argument("--shard", required=True)
     p.add_argument("--method", action="append", required=True, help="method file the child must load")
