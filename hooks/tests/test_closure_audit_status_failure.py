@@ -33,7 +33,7 @@ def check(name, cond, detail=""):
 def run_checks() -> list:
     """Exercise the status-failure paths. Returns the (name, ok, detail) result tuples."""
     results.clear()
-    REPO = "F:/BIMpossible"
+    REPO = "X:/fixture/BIMpossible"
     WT = {"path": REPO, "branch": "main", "detached": False}
 
     # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ def run_checks() -> list:
 
     check(
         "run_git on a nonexistent repo path -> None (failure), not []",
-        sca.run_git("F:/definitely-not-a-repo-xyz", "status") is None,
+        sca.run_git("X:/definitely-not-a-repo-xyz", "status") is None,
     )
 
     # ---------------------------------------------------------------------------

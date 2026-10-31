@@ -29,7 +29,7 @@ Ledger format: `references/ledger-format.md`.
 
 `grrp.py init --slug <run-slug> [--objective "..."]`. Existing ledger for the slug
 → it prints the checkpoint and known finding IDs: **resume from those, do not
-rediscover.** Ledgers live in `F:\Claude-Tools\reports\grrp\`; a governed run that
+rediscover.** Ledgers live in `{reports}\grrp\`; a governed run that
 already has a repo anchor puts the same sections in that anchor instead.
 
 Fill the **Run brief** from the current request / scheduled-workflow instructions:
@@ -95,7 +95,7 @@ rule; governance state stays in this one ledger.
 
 Independent work needs a `grrp-transfer` block: receiver, next action, acceptance,
 follow-up. Accepted when:
-- `receiver: queue:<ID>` — the `/next` store (`F:\Claude-Tools\state\queue.yaml`)
+- `receiver: queue:<ID>` — the `/next` store (`{tools}\state\queue.yaml`)
   holds that item with an active status and a reference to this ledger's filename
   (the gate checks this itself — no owner check-in needed);
 - any other receiver — `ack:` cites the receiving executor's acceptance. This is a

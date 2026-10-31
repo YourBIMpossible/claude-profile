@@ -1,7 +1,7 @@
 """Tests for tools/context_weight.py (schema v2, scenario-aware).
 
 Every case builds a throwaway estate under tempfile and passes it in — the
-real ~/.claude, F:\\Claude-Profile and F:\\BIMpossible are never touched.
+real ~/.claude, the profile clone and the BIMpossible checkout are never touched.
 
 Carries forward the v1 regression this tool exists to prevent (2026-08-31
 slop audit, MEDIUM-1; b640675): a missing/unreadable required input must
@@ -407,6 +407,35 @@ def test_plugin_allowlist_flags_unlisted_enabled_plugin():
     assert "some-new-plugin@some-marketplace" in result["plugin_allowlist_warns"]
     assert result["exit_code"] == 0
     assert result["advisory"] is True
+
+
+# WIP-F-097: adopted deliberately by the owner ("add hookify, plugin-dev, pr-review-toolkit and roadmap-band to the
+# context-weight allowlist"). Ids are name@marketplace: the first three as enabled in settings.template.json, the last
+# as named by this repo's own marketplace manifest (plugins/.claude-plugin/marketplace.json, marketplace "owner-local").
+ADOPTED_PLUGINS = (
+    "hookify@claude-plugins-official",
+    "plugin-dev@claude-code-plugins",
+    "pr-review-toolkit@claude-code-plugins",
+    "roadmap-band@owner-local",
+)
+
+
+def test_adopted_plugins_are_allowlisted_and_not_flagged():
+    result, report = run(enabled_plugins=list(ADOPTED_PLUGINS))
+    assert result["plugin_allowlist_warns"] == [], result["plugin_allowlist_warns"]
+    for plugin_id in ADOPTED_PLUGINS:
+        assert plugin_id in cw.PLUGIN_ALLOWLIST, plugin_id
+    assert result["exit_code"] == 0, report
+
+
+def test_allowlist_ids_match_the_repo_marketplace_manifest():
+    """roadmap-band's id comes from the manifest, so a rename there fails here instead of silently re-flagging."""
+    import json
+    manifest = json.loads((Path(cw.__file__).resolve().parent.parent / "plugins" / ".claude-plugin" / "marketplace.json")
+                          .read_text(encoding="utf-8"))
+    ids = {f"{p['name']}@{manifest['name']}" for p in manifest["plugins"]}
+    assert "roadmap-band@owner-local" in ids, ids
+    assert ids <= set(ADOPTED_PLUGINS), ids
 
 
 def test_plugin_with_no_skill_is_not_applicable_not_unmeasured():

@@ -1,7 +1,7 @@
 # 2026-10-13 — GRRP audit coordinator repair (anchor)
 
 Authority: owner chat grant "GRANT — durable audit coordinator repair" (2026-10-13).
-Lane: `claude/grrp-coordinator-repair`, worktree `F:\Claude-Profile\.claude\worktrees\grrp-coordinator`, from origin/HEAD be58bda.
+Lane: `claude/grrp-coordinator-repair`, worktree `{profile}\.claude\worktrees\grrp-coordinator`, from origin/HEAD be58bda.
 
 ## Milestone
 Repair the existing coordinator (GRRP / review-to-resolution, engine `grrp.py`) so it ingests
@@ -11,27 +11,27 @@ merged by PR; shadow replay of the 2026-10-12/13 reports yields one reconciled h
 active revision verified or the activation blocker stated exactly.
 
 ## Phase 0 — located implementation (verified)
-- Versioned source: `F:\Claude-Profile\skills\review-to-resolution\` (SKILL.md, references/*.md,
+- Versioned source: `{profile}\skills\review-to-resolution\` (SKILL.md, references/*.md,
   scripts/grrp.py, tests/). Remote YourBIMpossible/claude-profile, default `master`, no protection, no CI.
 - Entry point: scheduled task `bimpossible-weekly-full-audit`
-  (`C:\Users\Zeria\.claude\scheduled-tasks\bimpossible-weekly-full-audit\SKILL.md`) — GRRP entry/exit
+  (`~\.claude\scheduled-tasks\bimpossible-weekly-full-audit\SKILL.md`) — GRRP entry/exit
   blocks call `python ~/.claude/skills/review-to-resolution/scripts/grrp.py init|gate` and follow
   `references/enrollment.md`. `slop-audit-weekly` enrolls through `slop-audit`.
 - Load path: `~/.claude/skills/review-to-resolution` is a junction to the MAIN checkout
-  `F:\Claude-Profile\skills\review-to-resolution` (not a worktree, not origin).
+  `{profile}\skills\review-to-resolution` (not a worktree, not origin).
 - Activation procedure: hook `~/.claude/hooks/session-start-pull.ps1` runs `git pull --ff-only` in
-  F:\Claude-Profile at each session start.
+  {profile} at each session start.
 - **Activation drift (observed):** main checkout `master` is ahead 3 (d4cf99d, b46276a, 3bc0c71 —
   another session's unpushed /close,/next Stage A work) / behind 10, plus foreign dirty CLAUDE.md.
   Pull has failed "Not possible to fast-forward" since 2026-10-12 22:18:47 (last-run.log), so the
   running engine lacks #42 (SA-5) already.
-- State: ledger `F:\BIMpossible-Workspace\02_Reference\Audit and Scan Info\grrp\2026-10-12-weekly-full-audit-2026-10-12.ledger.md`
-  (90 findings, T-1..T-16, gate `complete`), queue `F:\Claude-Tools\state\queue.yaml`.
+- State: ledger `{repos}\BIMpossible-Workspace\02_Reference\Audit and Scan Info\grrp\2026-10-12-weekly-full-audit-2026-10-12.ledger.md`
+  (90 findings, T-1..T-16, gate `complete`), queue `{tools}\state\queue.yaml`.
 
 ## Phase 1 — trace → root causes
 - Mandate/authority: run brief `Authority` + per-finding `action_approval`/`owner_action` (free-text attestations).
 - Workers: lens sub-agents and later lanes (audit-resolution, deploy lane) — results come back as prose
-  reports in `F:\Claude-Tools\reports`; nothing machine-reads them.
+  reports in `{reports}`; nothing machine-reads them.
 - R1 No receipt ingestion: the parent hand-edits finding blocks; any lane outside the parent session
   (deploy lane 2026-10-13) never reaches the ledger → owner relays and reconciles reports.
 - R2 No history/ordering: fields are overwritten in place (a `.pre-completion` .bak was the only history);
@@ -64,7 +64,7 @@ active revision verified or the activation blocker stated exactly.
 - Independent review of de7fb90: C1, C2, I1–I4 + 2 minor → fixed in c27fc8f (+11 tests, red on de7fb90).
 - Re-review of c27fc8f: N1 (open work hidden by a deferred/failed track), N2 (denial in conflict
   never asked) → fixed in 95b8e8e (+2 tests, red on c27fc8f). Suite 115 passed / 37 subtests.
-- Review record: F:\Claude-Tools\reports\2026-10-13__grrp-repair-review.md.
+- Review record: {reports}\2026-10-13__grrp-repair-review.md.
 - Activation: main checkout master cannot ff (another session's 3 unpushed commits + dirty CLAUDE.md);
   the installed engine stays stale until that lane is integrated and session-start-pull fast-forwards.
 ## Phase 5 — shadow replay of 2026-10-12/13 reports

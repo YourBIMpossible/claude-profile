@@ -1,4 +1,4 @@
-# Slop audit — F:\Claude-Profile
+# Slop audit — {profile}
 
 **Run:** 2026-08-31 (scheduled weekly, incremental)
 **Window:** commits since the previous report `audits/2026-08-24__slop-audit.md` — 12 commits (`79f22c2`..`0c9052c`)
@@ -43,7 +43,7 @@ exit code: 0
 budget silently contributed 0 for an unknown period while the tool kept reporting clean. The path
 was fixed; the *silence* that hid it was not. The tool's entire job is catching drift, and its
 inputs are absolute Windows paths in a repo estate that was re-rooted twice this month
-(`F:\AI-Dev` extraction, `F:\Claude-Tools` split).
+(`{repos}\AI-Dev` extraction, `{tools}` split).
 
 **Current state is healthy** — the live run reports 48104 bytes / 24 skills and all three
 `CLAUDE.md` paths resolve — so this is a latent hole, not an active miss.

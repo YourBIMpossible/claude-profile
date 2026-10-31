@@ -44,3 +44,10 @@ Scanned every active skill under `skills/` (audit, close, context-budget, conver
 - `ui-ux-pro-max` — real divergence both directions (your hardening vs. their new capability); user decision: **leave as-is**.
 - All 10 parked ClaudeKit/elite-family skills — not active, not worth chasing.
 - All other active skills — proprietary, no upstream.
+
+## reverse-engineer-anything (vendored 2026-10-17, unmodified)
+- **Upstream:** [morluto/rea](https://github.com/morluto/rea), npm `rea-agents` 6.5.0, MIT. Copied verbatim from `<npm prefix -g>/node_modules/rea-agents/skills/reverse-engineer-anything/` (skill metadata version "42", tool_count 207).
+- **Pairing:** the skill describes the `rea` MCP server's tools, so it must track the installed package. Refresh both together: `tools\Install-Rea.ps1 -Update`, then re-copy the skill directory from the new package and commit. Do not hand-edit the skill.
+- **Register/install per machine:** `bootstrap.ps1` step 6 (`tools/Install-Rea.ps1`). Runbook with rationale (why not `rea setup`): `{reports}\2026-10-17__rea-install\REA-INSTALL-RUNBOOK.md`.
+eports6-10-17__rea-install\REA-INSTALL-RUNBOOK.md`.
+

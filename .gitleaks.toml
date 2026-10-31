@@ -1,0 +1,19 @@
+# gitleaks configuration for claude-profile.
+# Extends the default ruleset; one value-scoped allowlist entry for a vetted synthetic fixture.
+# Value-scoped (not path-scoped) so a different secret in the same file is still detected.
+#
+# ADDING AN ENTRY: only for a vetted non-credential, with the exact captured `Secret` value
+# (run `gitleaks git . --redact=0 -f json` and read the field), fully anchored ^...$, regex
+# metacharacters escaped. A path or rule exclusion is not acceptable here.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vetted synthetic false positives, scoped to exact secret values (not files/rules)"
+regexTarget = "secret"
+regexes = [
+  # hooks/tests/test_ctxdex_hook.py:128 - a truncated PEM stub ("MIIEow...") the hook test
+  # feeds to prove tool output containing a private key is NOT indexed. Not a key: three
+  # characters of base64 then literal dots. Vetted 2026-10-13.
+  '''^-----BEGIN RSA PRIVATE KEY-----\\nMIIEow\.\.\.\\n-----END RSA PRIVATE KEY-----$''',
+]

@@ -22,14 +22,14 @@ written up first because it changes what the other tracks are worth.
 The actual install is **pip**, not uv:
 
 ```
-C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\Scripts\graphify.exe   (on PATH)
-C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\graphify\
+~\AppData\Local\Python\pythoncore-3.14-64\Scripts\graphify.exe   (on PATH)
+~\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\graphify\
                                                        ...\graphifyy-0.8.35.dist-info
 graphify --version → graphify 0.8.35
 ```
 
 `AI-Brain-Data\graphify-out\.graphify_python` confirms it:
-`C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\python.exe`.
+`~\AppData\Local\Python\pythoncore-3.14-64\python.exe`.
 
 **This inverts the risk recorded in the `graphify-cycle-detection-artifacts` memory.** That memory
 flags "silent unpinned `uv tool install --upgrade graphifyy`" as an auto-update hazard. That line
@@ -47,9 +47,9 @@ exposure is the opposite of what was recorded — staleness, not drift. Upgradin
 `& $graphify update ".\backend"`. The result splits across two folders:
 
 ```
-F:\AI-Dev\BIMpossible\graphify-out\
+{repos}\AI-Dev\BIMpossible\graphify-out\
     manifest.json                 83.9 KB   2026-07-21     <- ONLY this file
-F:\AI-Dev\BIMpossible\backend\graphify-out\
+{repos}\AI-Dev\BIMpossible\backend\graphify-out\
     graph.json                  10,610 KB   2026-07-21
     GRAPH_REPORT.md                149 KB   2026-07-21
     dashboard.html                  41 KB   2026-07-21
@@ -81,11 +81,11 @@ SKILL.md:99 writes the scan root with `echo "$(cd INPUT_PATH && pwd)"`. In Git B
 `pwd` emits an MSYS path. Observed:
 
 ```
-AI-Brain-Data\graphify-out\.graphify_root   =  /f/AI-Dev/AI-Brain-Data
+AI-Brain-Data\graphify-out\.graphify_root   =  {repos}/AI-Dev/AI-Brain-Data
 ```
 
 The interpreter recorded alongside it is native Windows Python
-(`C:\...\pythoncore-3.14-64\python.exe`), which cannot resolve `/f/AI-Dev/AI-Brain-Data`. So
+(`<python install>\pythoncore-3.14-64\python.exe`), which cannot resolve `{repos}/AI-Dev/AI-Brain-Data`. So
 `graphify update` with no arguments — the whole point of saving the root — is broken for any
 skill-created output directory on this machine. The CLI-created one is broken differently: it holds
 the relative string `backend`, which is only correct from one specific CWD.
@@ -102,12 +102,12 @@ from the shell.
 | `BIMpossible_Workspace\graphify-out\` | stray run, 2026-06-09 | **Misplaced artifact.** Contains a manifest whose keys are `aec/…`, `tests/…` — that is BIMpossible's *backend*, indexed into the Workspace repo. No graph. Safe to delete. |
 
 No `cost.json` exists anywhere, so the per-run token-cost tracker SKILL.md Step 9 describes has
-never produced a file here. `C:\Users\Zeria\.graphify` does not exist either — so the **global
+never produced a file here. `~\.graphify` does not exist either — so the **global
 multi-repo graph feature has never been used**.
 
 ### A4b. Coverage gaps — most of the portfolio has never been indexed
 
-A full sweep of `F:\AI-Dev` finds exactly four `graphify-out` directories (the three in A4 plus the
+A full sweep of `{repos}\AI-Dev` finds exactly four `graphify-out` directories (the three in A4 plus the
 backend one). That means:
 
 - **`Add-Ins` — the C# Revit add-in suite, one of the two primary repos — has never been
@@ -949,7 +949,7 @@ while the repo's actual licence is **Apache-2.0**; and one reviewer reports `GRA
 | # | Finding | Fix effort |
 |---|---|---|
 | **A1** | graphify is **frozen at 0.8.35** and structurally cannot self-upgrade — the `uv tool install --upgrade` path sits behind `command -v uv` and `uv` is not installed anywhere on this machine. The `graphify-cycle-detection-artifacts` memory records the opposite risk (silent auto-upgrade drift); it is inverted and needs correcting. | — |
-| **A3** | `.graphify_root` is written by `echo "$(cd … && pwd)"` under Git Bash, producing an **MSYS path** (`/f/AI-Dev/…`) that the recorded Windows interpreter cannot resolve. Argless `graphify update` is broken for every skill-created output directory. | 1 line |
+| **A3** | `.graphify_root` is written by `echo "$(cd … && pwd)"` under Git Bash, producing an **MSYS path** (`{repos}/AI-Dev/…`) that the recorded Windows interpreter cannot resolve. Argless `graphify update` is broken for every skill-created output directory. | 1 line |
 | **A2** | `graphify update` writes `manifest.json` CWD-relative but the graph input-path-relative, so BIMpossible's manifest and graph live in different directories. Makes `--update` CWD-sensitive. Same defect family as upstream #2259/#1151, which **duplicates the entire graph on Windows**. | wrapper change |
 | **B1** | The reference docs state flatly that **no ignore mechanism exists**. `.graphifyignore`, `.gitignore` fallback, `.graphifyinclude`, and `--exclude PAT` all exist. This changes the recommended large-repo workflow from "manually narrow to a subfolder" to "write an ignore file". We have none anywhere. | doc fix + 1 file |
 | **B2** | **Leiden clustering has never run on this machine.** The `leiden` extra needs `graspologic`, which is Python <3.13; this machine is 3.14.4 and `graspologic` cannot install. Clustering has silently fallen back to Louvain on every graph, including the community counts on the metrics ledger. | unfixable here — just know it |

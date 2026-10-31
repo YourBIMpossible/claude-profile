@@ -3274,9 +3274,9 @@
         {
           "n": 4,
           "tool": "Bash",
-          "target": "cat pricing.py; git log --oneline -3; git status --short; ls /f/Claude-Tools/reports | head",
+          "target": "cat pricing.py; git log --oneline -3; git status --short; ls {reports} | head",
           "blocked_by": "permission",
-          "result_head": "This Bash command contains multiple operations. The following part requires approval: cat pricing.py; git log --oneline -3; git status --short; ls /f/Claude-Too"
+          "result_head": "This Bash command contains multiple operations. The following part requires approval: cat pricing.py; git log --oneline -3; git status --short; ls {repos}/Claude-Too"
         },
         {
           "n": 5,
@@ -3311,9 +3311,9 @@
         {
           "n": 10,
           "tool": "Write",
-          "target": "F:\\Claude-Tools\\reports\\experiment-streaming-parser.md",
+          "target": "{reports}\\experiment-streaming-parser.md",
           "blocked_by": "permission",
-          "result_head": "Claude requested permissions to write to F:\\Claude-Tools\\reports\\experiment-streaming-parser.md, but you haven't granted it yet."
+          "result_head": "Claude requested permissions to write to {reports}\\experiment-streaming-parser.md, but you haven't granted it yet."
         },
         {
           "n": 11,

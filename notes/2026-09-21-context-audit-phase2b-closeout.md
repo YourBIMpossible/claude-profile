@@ -68,7 +68,7 @@ invented to reconcile the count.
   not individually re-verified this pass.
 - `state-tree-ownership-handoff-2026-09-02.md` — appended a correction marking the watermark and
   worktree topology stale (19+ days, 100+ PRs behind). Does **not** assert a new current
-  watermark or ownership value — points to live `F:\Claude-Tools\state\queue.yaml` and a fresh
+  watermark or ownership value — points to live `{tools}\state\queue.yaml` and a fresh
   `git worktree list` instead.
 - `phase4-xdist-promotion-gate.md` — replaced the 2026-09-11 "needs owner check" flag with a
   confirmed-dead finding: `ci.yml` deleted (`a3d32a92`), successor `clean-room-ci.yml` deleted
@@ -102,7 +102,7 @@ diffs are in `apply-manifest.json` / `after-manifest.json`.
   (`ci-runtime-cleanup-state-2026-09-02` → `phase4-xdist-promotion-gate`) was confirmed already
   present before archiving, not re-merged.
 - **Before/after manifests and full snapshots exist:** yes —
-  `C:\Users\Zeria\.claude\memory-backups\20260921-phase2b\` holds `apply-manifest.json` (pre-edit,
+  `~\.claude\memory-backups\20260921-phase2b\` holds `apply-manifest.json` (pre-edit,
   built before any edit), `after-manifest.json` (post-edit hashes + corrections), `before\` (135
   files) and `after\` (135 files, same count — 5 files moved into a new `archive/` subdir inside
   their existing store, 9 edited in place, 0 added/deleted at top level).
@@ -137,13 +137,13 @@ cases pass, both before and after.
 
 ## Artifacts
 
-- `C:\Users\Zeria\.claude\memory-backups\20260921-phase2b\apply-manifest.json` — pre-edit manifest.
-- `C:\Users\Zeria\.claude\memory-backups\20260921-phase2b\after-manifest.json` — post-edit hashes,
+- `~\.claude\memory-backups\20260921-phase2b\apply-manifest.json` — pre-edit manifest.
+- `~\.claude\memory-backups\20260921-phase2b\after-manifest.json` — post-edit hashes,
   manifest corrections, snapshot/validation summary.
-- `C:\Users\Zeria\.claude\memory-backups\20260921-phase2b\before\`,
-  `C:\Users\Zeria\.claude\memory-backups\20260921-phase2b\after\` — full before/after snapshots
+- `~\.claude\memory-backups\20260921-phase2b\before\`,
+  `~\.claude\memory-backups\20260921-phase2b\after\` — full before/after snapshots
   of both memory stores (135 files each).
 
 Note: the memory stores themselves
-(`C:\Users\Zeria\.claude\projects\*\memory\`) are not git-backed and are not part of this commit
+(`~\.claude\projects\*\memory\`) are not git-backed and are not part of this commit
 — only this closeout note is.

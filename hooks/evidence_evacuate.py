@@ -60,14 +60,42 @@ import time
 from pathlib import Path
 from typing import Callable
 
-DEFAULT_ARCHIVE = "F:/Evidence-Archive/EC-LIVE"
-DEFAULT_EVACUATOR = "F:/Claude-Tools/evidence-archive/evacuate_worktree.py"
+
+
+def _default_paths() -> tuple[str, str, str]:
+    """(archive, evacuator, config error) from the machine config (tools/machine_config.py):
+    <evidence_archive>/EC-LIVE and <tools_root>/evidence-archive/evacuate_worktree.py,
+    each falling back to its folder under <repos_root>. EVIDENCE_LIVE_ARCHIVE and
+    EVIDENCE_EVACUATOR override them. An unusable config still falls back (fail-open);
+    its error text is returned so a failure on the fallback path can name the cause."""
+    cfg: dict = {}
+    error = ""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+        import machine_config
+    except Exception as exc:  # fail-open: runs at import, before main's guard
+        error = f"cannot import machine_config: {type(exc).__name__}: {exc}"
+    else:
+        try:
+            cfg = machine_config.load()
+        except machine_config.ConfigError as exc:
+            error = str(exc)
+        except Exception as exc:  # fail-open: any other config failure also falls back
+            error = f"{type(exc).__name__}: {exc}"
+    repos = Path(cfg.get("repos_root") or Path.home())
+    archive = Path(cfg.get("evidence_archive") or repos / "Evidence-Archive") / "EC-LIVE"
+    tools = Path(cfg.get("tools_root") or repos / "claude-tools")
+    return archive.as_posix(), (tools / "evidence-archive" / "evacuate_worktree.py").as_posix(), error
+
+
+DEFAULT_ARCHIVE, DEFAULT_EVACUATOR, CONFIG_ERROR = _default_paths()
 PACKETS_REL = Path(".evidence-compiler") / "packets"
 PACKET_ID_IN_NAME = re.compile(r"(ep_[0-9a-f]{8,64})\.json$")
 TOTAL_BUDGET_S = 25.0      # hook timeout in settings is 30 s
 MIN_CALL_S = 2.0           # below this an evacuator call is deferred, not started
+# Runtime state stays under ~/.claude/hooks, never in the clone the hook runs from.
 LOG_PATH = Path(os.environ.get("EVIDENCE_EVACUATE_LOG")
-                or Path(__file__).with_name("evidence_evacuate.log"))
+                or Path.home() / ".claude" / "hooks" / "evidence_evacuate.log")
 # SessionEnd failures are appended here, one file each, and shown by the next
 # Stop: a systemMessage printed while a session is closing may never be displayed.
 PENDING_DIR = LOG_PATH.with_name(LOG_PATH.stem + ".pending")
@@ -78,6 +106,7 @@ STALE_TMP_S = 60.0         # an unrenamed .tmp older than this is an interrupted
 def log(msg: str) -> None:
     try:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_PATH, "a", encoding="utf-8") as fh:
             fh.write(f"{stamp} {msg}\n")
     except OSError:
@@ -174,7 +203,10 @@ def evacuate(checkout: Path, archive: Path, evacuator: Path, why: str, run: Run)
     if not missing:
         return
     if not evacuator.is_file():
-        run.fail(f"evacuator not found: {evacuator} ({len(missing)} packet(s) unarchived in {checkout})")
+        # A default path built from a broken machine config names that config error.
+        cause = (f" (machine config: {CONFIG_ERROR})"
+                 if CONFIG_ERROR and evacuator == Path(DEFAULT_EVACUATOR) else "")
+        run.fail(f"evacuator not found: {evacuator} ({len(missing)} packet(s) unarchived in {checkout}){cause}")
         return
     budget = run.remaining()
     if budget < MIN_CALL_S:
@@ -256,7 +288,7 @@ def write_pending(message: str) -> None:
     name = f"{time.time_ns()}-{os.getpid()}-{secrets.token_hex(4)}"
     tmp = PENDING_DIR / (name + ".tmp")
     try:
-        PENDING_DIR.mkdir(exist_ok=True)
+        PENDING_DIR.mkdir(parents=True, exist_ok=True)
         tmp.write_text(message, encoding="utf-8")
         os.replace(tmp, PENDING_DIR / (name + PENDING_SUFFIX))
     except OSError as exc:
@@ -322,6 +354,8 @@ def acknowledge(entries: list[Path]) -> None:
 def main(argv: list[str]) -> int:
     if os.environ.get("EVIDENCE_EVACUATE", "1") == "0":
         return 0
+    if CONFIG_ERROR:  # once per run: the default paths below are fallbacks, even when they work
+        log(f"WARN machine config: {CONFIG_ERROR} (default archive and evacuator paths are fallbacks)")
     archive = Path(os.environ.get("EVIDENCE_LIVE_ARCHIVE", DEFAULT_ARCHIVE))
     evacuator = Path(os.environ.get("EVIDENCE_EVACUATOR", DEFAULT_EVACUATOR))
     run = Run(float(os.environ.get("EVIDENCE_EVACUATE_BUDGET_S", TOTAL_BUDGET_S)))

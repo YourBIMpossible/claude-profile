@@ -20,7 +20,7 @@ live on every read. That is the whole design.
 |---|---|
 | Reports status, ranks work, names the next move | Fixing, committing, pushing, tagging |
 | Reads repos, ledgers, PRs, flags | Hunting defects → route to `/audit`, `/revit-functionality-audit` |
-| Writes `queue.yaml` (its own store) | **Never writes `BIMpossible_PHASE-STATUS.md` or `BIMpossible_WAVE-STATUS.md` directly** — those are updated by each session's own close-out when it ships wave-worthy work (`F:\BIMpossible\CLAUDE.md` § Session close-out — wave ledger), not by `/next`'s sync. Report staleness so the next close-out (or a backfill pass) catches it up. |
+| Writes `queue.yaml` (its own store) | **Never writes `BIMpossible_PHASE-STATUS.md` or `BIMpossible_WAVE-STATUS.md` directly** — those are updated by each session's own close-out when it ships wave-worthy work (`{repos}\BIMpossible\CLAUDE.md` § Session close-out — wave ledger), not by `/next`'s sync. Report staleness so the next close-out (or a backfill pass) catches it up. |
 | Verifies claims against machine evidence | Accepting a doc's word as verification |
 
 If the user's actual question is "is this code correct" or "what's broken", say so and route to the
@@ -30,9 +30,9 @@ audit skills instead of answering it here.
 
 Canonical store is **structured, not prose**:
 
-- `F:\Claude-Tools\state\projects.yaml` — the registry. One entry per project. Hand-edited.
-- `F:\Claude-Tools\state\queue.yaml` — the item store. Canonical. Hand-editable and machine-written.
-- `F:\Claude-Tools\state\QUEUE.md` — **generated view, do not hand-edit.** Regenerated from `queue.yaml`.
+- `{tools}\state\projects.yaml` — the registry. One entry per project. Hand-edited.
+- `{tools}\state\queue.yaml` — the item store. Canonical. Hand-editable and machine-written.
+- `{tools}\state\QUEUE.md` — **generated view, do not hand-edit.** Regenerated from `queue.yaml`.
 
 **Items are cross-repo work items, not repo-scoped rows.** An item declares `projects: [a, b]` when
 it spans repos (BIMpossible ↔ Add-Ins lockstep work is the common case). Never mirror one item into
@@ -97,7 +97,7 @@ first offering `sync`**. A confident answer off a stale store is the exact failu
 
 ### `<target> resume` — restart from records (Stage A, read-only)
 
-`python F:\Claude-Tools\state\resume_queue.py --resume <key>`. Prints: watermark vs live HEAD and
+`python {tools}\state\resume_queue.py --resume <key>`. Prints: watermark vs live HEAD and
 the project-leg freshness; items `in_flight` with claim identity and `STALE CLAIM (>24h, not
 auto-released)`; the anchor's last *Exact restart action* line **verbatim** with its git date/author
 (anchor path = optional `anchor:` in `projects.yaml`) — or `working tree, uncommitted` when the anchor
@@ -108,7 +108,7 @@ has uncommitted edits, never an older commit's identity; that bookend's `Complet
 
 ### `waiting` / `<target> waiting` — what only the owner can move (Stage A, read-only)
 
-`python F:\Claude-Tools\state\resume_queue.py --waiting [--project <key>]`. Lists the Waiting set
+`python {tools}\state\resume_queue.py --waiting [--project <key>]`. Lists the Waiting set
 (`reference/item-model.md` § Waiting set) ranked like the board, each with `ask:` (or
 `UNSPECIFIED ⚠`), verification level/date, and per-leg freshness; done/status mismatches print
 inline. Parked prints as a trailing count only. Missing asks are counted at the end — `sync`
@@ -188,7 +188,7 @@ Terse. The source artifacts this replaces failed by being exhaustive, so length 
 
 ## Single home — global skill, one location
 
-`next` is a **global, cross-project** skill with exactly one home: `F:\Claude-Profile\skills\next`
+`next` is a **global, cross-project** skill with exactly one home: `{profile}\skills\next`
 (surfaced at the runtime path `~/.claude/skills/next` through a directory junction — same files, not
 a copy). It renders a cross-project portfolio board, so it is **not** repo-specific.
 

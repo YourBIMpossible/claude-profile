@@ -25,8 +25,13 @@ import types
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "evidence_evacuate.py")
-EVACUATOR = os.environ.get("EVIDENCE_TEST_EVACUATOR",
-                           "F:/Claude-Tools/evidence-archive/evacuate_worktree.py")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import machine_config  # noqa: E402
+
+# The real evacuator in this machine's claude-tools clone; EVIDENCE_TEST_EVACUATOR overrides.
+EVACUATOR = os.environ.get("EVIDENCE_TEST_EVACUATOR") or (
+    Path(machine_config.load().get("tools_root") or "missing-claude-tools")
+    / "evidence-archive" / "evacuate_worktree.py").as_posix()
 
 results = []
 
@@ -108,9 +113,11 @@ def case_import_failure_restores_state(root: Path) -> None:
           f"raised={raised}")
 
 
-def run(root: Path, payload, args=(), env_extra=None, raw=None, via=None):
+def run(root: Path, payload, args=(), env_extra=None, raw=None, via=None, drop=(), hook=HOOK):
     """Run the hook as Claude Code would; `via` is a wrapper script that runs the
-    real hook (its first argument) as __main__ after arranging a failure."""
+    real hook (its first argument) as __main__ after arranging a failure. `drop`
+    names variables removed after the defaults are applied; `hook` runs a scratch
+    copy instead of the real hook."""
     env = os.environ.copy()
     env.pop("CLAUDE_PROJECT_DIR", None)
     env.update({
@@ -119,9 +126,11 @@ def run(root: Path, payload, args=(), env_extra=None, raw=None, via=None):
         "EVIDENCE_EVACUATE_LOG": str(root / "hook.log"),
     })
     env.update(env_extra or {})
+    for name in drop:
+        env.pop(name, None)
     data = raw if raw is not None else json.dumps(payload).encode("utf-8")
     t0 = time.perf_counter()
-    p = subprocess.run([sys.executable, *([str(via)] if via else []), HOOK, *args], input=data,
+    p = subprocess.run([sys.executable, *([str(via)] if via else []), str(hook), *args], input=data,
                        capture_output=True, env=env, timeout=60)
     return p, time.perf_counter() - t0
 
@@ -457,6 +466,71 @@ def case_bad_checkout_does_not_stop_sweep(root: Path) -> None:
           p.returncode == 1 and b"FAIL" in p.stdout)
 
 
+def case_bad_machine_config_is_named(root: Path) -> None:
+    """CP-27: a malformed machine config leaves the default evacuator path unusable;
+    the failure names the config error instead of only the fallback path. HOME and
+    USERPROFILE point into the case root so the fallback never reaches the real home."""
+    wt, store, stop = lane(root)
+    make_packet(store, "ep_abababababababab")
+    config = root / "profile-machine.json"
+    config.write_text("{bad json", encoding="utf-8")
+    p, _ = run(root, stop, drop=("EVIDENCE_EVACUATOR",),
+               env_extra={"CLAUDE_PROFILE_MACHINE_CONFIG": str(config), "HOME": str(root / "home"),
+                          "USERPROFILE": str(root / "home")})
+    msg = system_message(p)
+    logged = (root / "hook.log").read_text(encoding="utf-8") if (root / "hook.log").is_file() else ""
+    check("bad machine config: exit 0, evacuator failure shown",
+          p.returncode == 0 and "evacuator not found" in msg, msg)
+    check("bad machine config: systemMessage names the config error",
+          "machine config:" in msg and "not valid JSON" in msg, msg)
+    check("bad machine config: log names the config error",
+          "machine config:" in logged and "not valid JSON" in logged, logged)
+
+
+def case_bad_config_logged_when_fallback_works(root: Path) -> None:
+    """CP-27: with a malformed machine config but an existing fallback evacuator, the
+    packets are archived as before, no systemMessage is shown, and the config error is
+    still written to the hook's log, once."""
+    home = root / "home"
+    fallback = home / "claude-tools" / "evidence-archive" / "evacuate_worktree.py"
+    fallback.parent.mkdir(parents=True)
+    shutil.copyfile(EVACUATOR, fallback)
+    config = root / "profile-machine.json"
+    config.write_text("{bad json", encoding="utf-8")
+    _, store, stop = lane(root)
+    make_packet(store, "ep_efefefefefefefef")
+    p, _ = run(root, stop, drop=("EVIDENCE_EVACUATOR",),
+               env_extra={"CLAUDE_PROFILE_MACHINE_CONFIG": str(config), "HOME": str(home),
+                          "USERPROFILE": str(home)})
+    logged = (root / "hook.log").read_text(encoding="utf-8") if (root / "hook.log").is_file() else ""
+    check("bad config, fallback evacuator exists: exit 0, silent, packet archived",
+          p.returncode == 0 and not p.stdout
+          and (root / "archive" / "packets" / "ep_efefefefefefefef.json").is_file(),
+          p.stdout.decode("utf-8", "replace"))
+    check("bad config, fallback evacuator exists: config error logged once",
+          logged.count("machine config:") == 1 and "not valid JSON" in logged, logged)
+
+
+def case_broken_machine_config_module_fails_open(root: Path) -> None:
+    """CP-27: a machine_config.py that fails to import must not crash the hook at
+    module load. A scratch copy of the hook sits beside a scratch tools/ whose
+    machine_config.py has a syntax error; the hook exits 0 and names the cause."""
+    hook = root / "profile" / "hooks" / "evidence_evacuate.py"
+    hook.parent.mkdir(parents=True)
+    shutil.copyfile(HOOK, hook)
+    (root / "profile" / "tools").mkdir()
+    (root / "profile" / "tools" / "machine_config.py").write_text("def broken(:\n", encoding="utf-8")
+    _, store, stop = lane(root)
+    make_packet(store, "ep_cdcdcdcdcdcdcdcd")
+    p, _ = run(root, stop, hook=hook, drop=("EVIDENCE_EVACUATOR",),
+               env_extra={"HOME": str(root / "home"), "USERPROFILE": str(root / "home")})
+    msg = system_message(p) if p.returncode == 0 and p.stdout.strip().startswith(b"{") else ""
+    check("broken machine_config module: exit 0, no traceback",
+          p.returncode == 0 and b"Traceback" not in p.stderr, p.stderr.decode("utf-8", "replace")[-300:])
+    check("broken machine_config module: failure names the import error",
+          "machine config: cannot import machine_config: SyntaxError" in msg, msg)
+
+
 def case_budget_covers_hashing(root: Path) -> None:
     """The pre-check hashing draws on the shared budget: once it is spent, remaining
     checkouts are deferred (and surfaced) without hashing another file."""
@@ -529,7 +603,9 @@ CASES = (case_non_ascii_output_is_success, case_two_session_end_failures_both_sh
          case_closed_stdout_fails_open, case_precheck_hashes_only_candidates,
          case_partial_copy_is_retried, case_id_mismatch_is_settled, case_budget_is_shared,
          case_session_end_sweeps_siblings, case_bad_checkout_does_not_stop_sweep,
-         case_budget_covers_hashing, case_import_failure_restores_state)
+         case_budget_covers_hashing, case_import_failure_restores_state,
+         case_bad_machine_config_is_named, case_broken_machine_config_module_fails_open,
+         case_bad_config_logged_when_fallback_works)
 
 
 def run_case(case) -> list:
@@ -615,6 +691,18 @@ def test_budget_covers_hashing() -> None:
 
 def test_import_failure_restores_state() -> None:
     assert_case(case_import_failure_restores_state)
+
+
+def test_bad_machine_config_is_named() -> None:
+    assert_case(case_bad_machine_config_is_named)
+
+
+def test_broken_machine_config_module_fails_open() -> None:
+    assert_case(case_broken_machine_config_module_fails_open)
+
+
+def test_bad_config_logged_when_fallback_works() -> None:
+    assert_case(case_bad_config_logged_when_fallback_works)
 
 
 def case_core_flow(root: Path) -> None:

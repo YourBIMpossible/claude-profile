@@ -12,19 +12,25 @@ async function makeHost(over = {}) {
   const hooks = {}
   const timers = []
   const store = over.store || new Map()
-  const env = { now: 1_800_000_000_000, cwd: 'F:/repo', sid: 's1', files: { 'WORKLOG.md': 1_799_999_000_000 }, messages: [], usageFail: false, invalid: 0 }
+  const hit = (names, p) => !!names && names.some((n) => p.endsWith(n))
+  const env = { now: 1_800_000_000_000, cwd: '/fixture/repo', sid: 's1', files: { 'WORKLOG.md': 1_799_999_000_000 }, messages: [], usageFail: false, invalid: 0 }
   Object.assign(env, over.env || {})
   const $ = {
+    // fault injection: existsThrow / statThrow / nullMtime name files (suffix match); listThrow fails the listing
     fs: {
-      exists: async (p) => Object.keys(env.files).some((k) => p.endsWith(k)),
-      stat: async (p) => ({ mtimeMs: env.files[Object.keys(env.files).find((k) => p.endsWith(k))] }),
-      list: async () => [],
+      exists: async (p) => { if (hit(env.existsThrow, p)) throw new Error('EACCES'); return Object.keys(env.files).some((k) => p.endsWith(k)) },
+      stat: async (p) => {
+        if (hit(env.statThrow, p)) throw new Error('EACCES')
+        if (hit(env.nullMtime, p)) return {}
+        return { mtimeMs: env.files[Object.keys(env.files).find((k) => p.endsWith(k))] }
+      },
+      list: async () => { if (env.listThrow) throw new Error('EACCES'); return (env.list || []).map((name) => ({ kind: 'file', name })) },
     },
     clock: { now: async () => env.now, every: (ms, fn) => { const t = { ms, fn, cancelled: false, cancel() { this.cancelled = true } }; timers.push(t); return t } },
-    store: { get: async (k) => store.get(k), set: async (k, v) => { store.set(k, v) }, delete: async (k) => { store.delete(k) } },
+    store: { get: async (k) => store.get(k), set: async (k, v) => { if (env.setThrow) throw new Error('store write failed'); store.set(k, v) }, delete: async (k) => { store.delete(k) } },
     env: { get: async () => '1' },
     session: {
-      cwd: async () => env.cwd, id: async () => env.sid, messages: async () => env.messages,
+      cwd: async () => { if (env.cwdThrow) throw new Error('cwd unavailable'); return env.cwd }, id: async () => { if (env.sidThrow) throw new Error('no session id'); return env.sid }, messages: async () => env.messages,
       usage: async () => { env.usageCalls = (env.usageCalls || 0) + 1; if (env.block) { const g = env.block; env.block = null; await g } if (env.usageFail) throw new Error('x'); return { context: { percent: 41.2 }, rateLimits: [{ kind: 'five_hour', percentUsed: 23.4, resetsAt: env.now / 1000 + 7800 }, { kind: 'weekly', percentUsed: 40, resetsAt: 'bogus' }] } },
     },
     ui: { invalidate: () => { env.invalidations = (env.invalidations || 0) + 1 }, resolve: () => ({ Box: (p) => ({ ...p, t: 'Box' }), Text: (p) => ({ ...p, t: 'Text' }) }) },
@@ -83,7 +89,7 @@ const LINE = 'Roadmap: Pilot [active] · acceptance: 3/5 verified (pilot) · nex
   ok('5 anchor newer than line -> UNVERIFIED source changed', r.includes('UNVERIFIED') && r.includes('source changed'), r)
   r = await h.render(true)
   ok('6 working overrides everything', r.includes('WORKING'), r)
-  h.env.cwd = 'F:/other'
+  h.env.cwd = '/fixture/other'
   r = await h.render()
   ok('7 cwd change -> UNVERIFIED directory changed', r.includes('directory changed'), r)
 }
@@ -243,6 +249,260 @@ const LINE = 'Roadmap: Pilot [active] · acceptance: 3/5 verified (pilot) · nex
   ok('14 unknown pause value normalises to unknown', r.includes('PAUSE UNKNOWN'), r)
   r = await run('Done\n**Roadmap:** Pilot [active] · pause: safe')
   ok('14 bold-wrapped label is not accepted', r.includes('NO ROADMAP LINE'), r)
+}
+// a safe line captured on a host with the given faults; returns the host after one render
+const safeLine = async (over = {}, line = LINE) => {
+  const h = await makeHost(over)
+  await h.call('session.start', {})
+  await h.call('turn.complete', { answer: `Done
+${line}` })
+  return h
+}
+{ // 15 CP-12: an anchor the band cannot read or date is never a green checkpoint; no fallthrough past it
+  const both = { 'CURRENT-STATE.md': 1_799_999_000_000, 'WORKLOG.md': 1_799_999_000_000 }
+  let h = await safeLine({ env: { files: { ...both } } })
+  let r = await h.render()
+  ok('15 control: readable CURRENT-STATE.md -> CHECKPOINT REPORTED', r.includes('CHECKPOINT REPORTED') && r.includes('CURRENT-STATE.md'), r)
+  h = await safeLine({ env: { files: { ...both }, statThrow: ['CURRENT-STATE.md'] } })
+  r = await h.render()
+  ok('15 stat throws on CURRENT-STATE.md -> UNVERIFIED, anchor shown unreadable, no fallthrough to WORKLOG',
+    r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED') && r.includes('CURRENT-STATE.md unreadable') && !r.includes('WORKLOG.md'), r)
+  h = await safeLine({ env: { files: { ...both }, existsThrow: ['CURRENT-STATE.md'] } })
+  r = await h.render()
+  ok('15 exists() throws -> UNVERIFIED, not "no status anchor file"',
+    r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED') && !r.includes('no status anchor file') && !r.includes('WORKLOG.md'), r)
+  h = await safeLine({ env: { nullMtime: ['WORKLOG.md'] } })
+  r = await h.render()
+  ok('15 anchor mtime unavailable -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED') && r.includes('age unavailable'), r)
+  h = await safeLine({ env: { files: {} } })
+  r = await h.render()
+  ok('15 control: no anchor file at all keeps CHECKPOINT REPORTED', r.includes('CHECKPOINT REPORTED') && r.includes('no status anchor file'), r)
+  h = await safeLine({ env: { statThrow: ['WORKLOG.md'] } }, 'Roadmap: Pilot [active] · pause: attention')
+  ok('15 unreadable anchor does not override NEEDS YOU', (await h.render()).includes('NEEDS YOU'))
+}
+{ // 16 CP-30: a NORTHSTAR listing or stat failure is visible and never green; one bad entry does not hide the rest
+  const ns = (extra = {}) => ({ env: { list: ['NORTHSTAR.a.md', 'NORTHSTAR.b.md'], files: { 'WORKLOG.md': 1_799_999_000_000, 'NORTHSTAR.a.md': 1_799_999_000_000, 'NORTHSTAR.b.md': 1_799_999_000_000 }, ...extra } })
+  const changeB = async (h) => { h.env.now += 60_000; h.env.files['NORTHSTAR.b.md'] = h.env.now; await h.timers[0].fn() }
+  let h = await safeLine(ns())
+  let r = await h.render()
+  ok('16 control: readable NORTHSTAR files, unchanged -> CHECKPOINT REPORTED', r.includes('CHECKPOINT REPORTED'), r)
+  await changeB(h)
+  r = await h.render()
+  ok('16 control: NORTHSTAR.b changed after the line -> UNVERIFIED source changed', r.includes('UNVERIFIED') && r.includes('source changed'), r)
+  h = await safeLine(ns({ listThrow: true }))
+  r = await h.render()
+  ok('16 listing throws -> UNVERIFIED NORTHSTAR unreadable', r.includes('UNVERIFIED') && r.includes('NORTHSTAR unreadable') && !r.includes('CHECKPOINT REPORTED'), r)
+  h = await safeLine(ns({ statThrow: ['NORTHSTAR.a.md'] }))
+  r = await h.render()
+  ok('16 one NORTHSTAR stat throws -> UNVERIFIED NORTHSTAR unreadable', r.includes('UNVERIFIED') && r.includes('NORTHSTAR unreadable') && !r.includes('CHECKPOINT REPORTED'), r)
+  await changeB(h)
+  r = await h.render()
+  ok('16 a failing NORTHSTAR.a stat does not stop NORTHSTAR.b being read (change detected)', r.includes('source changed'), r)
+  h = await safeLine(ns({ nullMtime: ['NORTHSTAR.a.md'] }))
+  r = await h.render()
+  ok('16 undated NORTHSTAR file -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+}
+{ // 17 CP-31: no session id, or a failing fence write, never freezes the band on a stale green
+  const store = new Map()
+  const a = await safeLine({ store, env: { sidThrow: true } })
+  const b = await makeHost({ store, env: { sidThrow: true, cwd: '/fixture/other' } })
+  await b.call('session.start', {})
+  ok('17 two sessions without an id get separate fence keys', [...store.keys()].length === 2, JSON.stringify([...store.keys()]))
+  const ia = a.env.invalidations || 0
+  a.env.now += 60_000
+  a.env.files['WORKLOG.md'] = a.env.now
+  await a.timers[0].fn()
+  ok('17 session A without an id keeps ticking after session B (also without an id) starts', !a.timers[0].cancelled && (a.env.invalidations || 0) > ia)
+  let r = await a.render()
+  ok('17 a safe line without session identity -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+  await b.call('session.end', {})
+  ok('17 session.end without an id removes only its own fence key', store.size === 1)
+  const h = await safeLine({ env: { sidThrow: true } })
+  h.env.sidThrow = false
+  h.env.sid = 's2'
+  await h.timers[0].fn()
+  r = await h.render()
+  ok('17 line captured without an id, session id now known -> UNVERIFIED session identity unavailable', r.includes('UNVERIFIED') && r.includes('session identity unavailable'), r)
+  for (const [label, seed] of [['old generation in store', [['gen:s1', 'old-gen']]], ['empty store', []]]) {
+    const st = new Map(seed)
+    const f = await safeLine({ store: st, env: { setThrow: true } })
+    f.env.now += 60_000
+    f.env.files['WORKLOG.md'] = f.env.now
+    await f.timers[0].fn()
+    r = await f.render()
+    ok(`17 store.set throws (${label}): timer keeps running and the anchor change shows UNVERIFIED`, !f.timers[0].cancelled && r.includes('UNVERIFIED') && r.includes('source changed'), r)
+  }
+}
+{ // 18 CP-32: the parser rejects junk instead of rendering it as a checkpoint
+  const one = async (line) => (await safeLine({}, line)).render()
+  let r = await one('Roadmap: Pilot [active] · pause: safe-ish')
+  ok('18 pause: safe-ish is not safe (PAUSE UNKNOWN)', r.includes('PAUSE UNKNOWN') && !r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: Pilot [active] · pause: safe — mostly')
+  ok('18 control: pause: safe — mostly stays safe', r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: X [complete] [blocked] · pause: safe')
+  ok('18 two [status] tags -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: [active] · pause: safe')
+  ok('18 empty milestone -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · acceptance: lots · pause: safe')
+  ok('18 acceptance: lots -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · acceptance: 9/7 verified (s) · pause: safe')
+  ok('18 acceptance: 9/7 (n > N) -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · acceptance: 0/0 verified (s) · pause: safe')
+  ok('18 acceptance: 0/0 (no denominator) -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [complete] · acceptance: 7/7 verified (all) · pause: safe')
+  ok('18 control: acceptance 7/7 parses', r.includes('X [complete]') && r.includes('acceptance 7/7 verified (all)') && r.includes('CHECKPOINT REPORTED'), r)
+}
+{ // 19 CP-33: a failed refresh repaints with the error, and the recovery repaints it away
+  const h = await safeLine()
+  ok('19 baseline renders without an error', !(await h.render()).includes('band read failed'))
+  const i0 = h.env.invalidations || 0
+  h.env.cwdThrow = true
+  await h.timers[0].fn()
+  ok('19 failing tick repaints', (h.env.invalidations || 0) > i0, String((h.env.invalidations || 0) - i0))
+  let r = await h.render()
+  ok('19 the error is on the band', r.includes('band read failed'), r)
+  const i1 = h.env.invalidations || 0
+  await h.timers[0].fn()
+  ok('19 a repeated identical failure does not repaint again', (h.env.invalidations || 0) === i1)
+  h.env.cwdThrow = false
+  await h.timers[0].fn()
+  ok('19 recovery repaints', (h.env.invalidations || 0) > i1)
+  r = await h.render()
+  ok('19 recovered band no longer shows the error', !r.includes('band read failed'), r)
+}
+{ // 20 rev 2 F1: a newer footer that did not parse never leaves the older line green, and keeps an attention signal
+  let h = await safeLine()
+  await h.call('turn.complete', { answer: 'Done\nRoadmap: X [blocked] · acceptance: n/a · pause: attention · blocker: need owner' })
+  let r = await h.render()
+  ok('20 malformed attention line after a safe line -> NEEDS YOU with its blocker, never CHECKPOINT',
+    r.includes('NEEDS YOU') && r.includes('need owner') && r.includes('did not parse') && !r.includes('CHECKPOINT REPORTED'), r)
+  h = await safeLine()
+  await h.call('turn.complete', { answer: 'Done\nRoadmap: X [active] · acceptance: lots · pause: safe' })
+  r = await h.render()
+  ok('20 malformed safe line after a safe line -> kept line UNVERIFIED, never CHECKPOINT',
+    r.includes('UNVERIFIED') && r.includes('Pilot [active]') && r.includes('did not parse') && !r.includes('CHECKPOINT REPORTED'), r)
+  ok('20 the did-not-parse reason is shown once', r.split('did not parse').length === 2, r)
+  h = await safeLine({}, 'Roadmap: X [active] · acceptance: lots · pause: attention · blocker: waiting')
+  r = await h.render()
+  ok('20 malformed attention line with no earlier line -> NEEDS YOU with its blocker', r.includes('NEEDS YOU') && r.includes('waiting') && !r.includes('CHECKPOINT REPORTED'), r)
+  await h.call('turn.complete', { answer: `Done
+${LINE}` })
+  r = await h.render()
+  ok('20 a later valid line replaces it and clears the note', r.includes('CHECKPOINT REPORTED') && !r.includes('did not parse'), r)
+}
+{ // 21 rev 2 F2: while the band cannot read state, a safe line is never green
+  const h = await safeLine()
+  ok('21 control: readable state -> CHECKPOINT REPORTED', (await h.render()).includes('CHECKPOINT REPORTED'))
+  h.env.cwdThrow = true
+  await h.timers[0].fn()
+  const r = await h.render()
+  ok('21 failing refresh -> UNVERIFIED, never CHECKPOINT', r.includes('UNVERIFIED') && !r.includes('CHECKPOINT REPORTED'), r)
+  ok('21 the read-failure text is shown once', r.split('band read failed').length === 2, r)
+}
+{ // 22 rev 2 F4: an attention-prefixed pause word still asks for the owner
+  let r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: attention-needed')).render()
+  ok('22 pause: attention-needed -> NEEDS YOU', r.includes('NEEDS YOU'), r)
+  r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: Attention — owner review')).render()
+  ok('22 pause: Attention — reason -> NEEDS YOU', r.includes('NEEDS YOU'), r)
+  r = await (await safeLine({}, 'Roadmap: Pilot [active] · pause: safe-ish')).render()
+  ok('22 control: safe-ish still not safe', r.includes('PAUSE UNKNOWN'), r)
+}
+{ // 23 rev 2: row 2 names an unreadable or undated anchor once
+  let r = await (await safeLine({ env: { files: { 'CURRENT-STATE.md': 1, 'WORKLOG.md': 1 }, statThrow: ['CURRENT-STATE.md'] } })).render()
+  ok('23 unreadable anchor named once', r.includes('UNVERIFIED') && r.split('unreadable').length === 2 && r.includes('CURRENT-STATE.md unreadable'), r)
+  r = await (await safeLine({ env: { nullMtime: ['WORKLOG.md'] } })).render()
+  ok('23 undated anchor named once', r.includes('UNVERIFIED') && r.split('age unavailable').length === 2 && r.includes('WORKLOG.md age unavailable'), r)
+}
+{ // 24 rev 3 R2-1: a repeated field makes the footer unparsed; an attention value among them still asks for the owner
+  const one = async (line) => (await safeLine({}, line)).render()
+  let r = await one('Roadmap: X [active] · pause: attention · pause: safe')
+  ok('24 pause: attention then pause: safe -> NEEDS YOU, never CHECKPOINT', r.includes('NEEDS YOU') && r.includes('did not parse') && !r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: X [active] · pause: safe · pause: attention')
+  ok('24 pause: safe then pause: attention -> NEEDS YOU', r.includes('NEEDS YOU') && !r.includes('CHECKPOINT REPORTED'), r)
+  r = await one('Roadmap: X [active] · acceptance: lots · acceptance: 3/5 verified (s) · pause: safe')
+  ok('24 repeated acceptance -> malformed, junk not hidden', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+  r = await one('Roadmap: X [active] · pause: safe · pause: safe')
+  ok('24 any repeated field -> malformed', r.includes('did not parse') && r.includes('NO ROADMAP LINE'), r)
+}
+{ // 25 rev 3: `blocker: none` / `n/a` is no blocker
+  const one = async (line) => (await safeLine({}, line)).render()
+  let r = await one('Roadmap: see notes above · blocker: none')
+  ok('25 malformed footer with blocker: none does not force NEEDS YOU', !r.includes('NEEDS YOU') && r.includes('did not parse'), r)
+  r = await one('Roadmap: see notes above · blocker:  N/A ')
+  ok('25 blocker: N/A (case, spaces) is no blocker', !r.includes('NEEDS YOU') && r.includes('did not parse'), r)
+  r = await one('Roadmap: see notes above · blocker: waiting on x')
+  ok('25 control: a real blocker on a malformed footer still shows NEEDS YOU', r.includes('NEEDS YOU') && r.includes('waiting on x'), r)
+  r = await one('Roadmap: X [active] · pause: safe · blocker: none')
+  ok('25 valid line with blocker: none shows no BLOCKER', r.includes('CHECKPOINT REPORTED') && !r.includes('BLOCKER'), r)
+}
+{ // 26 F-106 R-c: sessions without an id are told apart by directory, so a hot reload fences the older instance and keys do not pile up
+  const nosid = (cwd) => ({ env: { sidThrow: true, cwd } })
+  const store = new Map()
+  const a = await makeHost({ store, ...nosid('/fixture/repo') })
+  await a.call('session.start', {})
+  const b = await makeHost({ store, ...nosid('/fixture/repo') })
+  await b.call('session.start', {})
+  const before = a.env.invalidations || 0
+  await a.timers[0].fn()
+  ok('26 hot reload without an id: the older instance in the same directory is fenced and stops refreshing', a.timers[0].cancelled && (a.env.invalidations || 0) === before)
+  const ib = b.env.invalidations || 0
+  b.env.now += 60_000
+  b.env.files['WORKLOG.md'] = b.env.now
+  await b.timers[0].fn()
+  ok('26 the newer instance keeps refreshing', !b.timers[0].cancelled && (b.env.invalidations || 0) > ib)
+  ok('26 two instances in one directory leave one fence key, not one each', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 1, JSON.stringify([...store.keys()]))
+  const many = new Map()
+  for (let i = 0; i < 6; i++) await (await makeHost({ store: many, ...nosid('/fixture/repo') })).call('session.start', {})
+  ok('26 six reloads in one directory still leave one gen:nosid key', [...many.keys()].length === 1, JSON.stringify([...many.keys()]))
+  const other = await makeHost({ store, ...nosid('/fixture/other') })
+  await other.call('session.start', {})
+  const ib2 = b.env.invalidations || 0
+  b.env.now += 60_000
+  b.env.files['WORKLOG.md'] = b.env.now
+  await b.timers[0].fn()
+  ok('26 a session without an id in ANOTHER directory does not silence it (CP-31 kept)', !b.timers[0].cancelled && (b.env.invalidations || 0) > ib2)
+  ok('26 each directory has its own key', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 2, JSON.stringify([...store.keys()]))
+  await a.call('session.end', {})
+  ok('26 the fenced older instance ending does not delete the newer instance key', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 2)
+  await b.call('session.end', {})
+  ok('26 the newer instance ending removes only its own key', [...store.keys()].filter((k) => k.startsWith('gen:nosid:')).length === 1)
+  const sid1 = await makeHost({ store, env: { sid: 'real-1', cwd: '/fixture/repo' } })
+  await sid1.call('session.start', {})
+  ok('26 a session WITH an id still uses its own gen:<id> key', store.has('gen:real-1'))
+  const nocwd = new Map()
+  const x = await makeHost({ store: nocwd, env: { sidThrow: true, cwdThrow: true } })
+  await x.call('session.start', {})
+  const y = await makeHost({ store: nocwd, env: { sidThrow: true, cwdThrow: true } })
+  await y.call('session.start', {})
+  await x.timers[0].fn()
+  ok('26 no id and no directory: instances stay independent (nothing to tell them apart by)', !x.timers[0].cancelled && [...nocwd.keys()].length === 2, JSON.stringify([...nocwd.keys()]))
+}
+{ // 27 F-106 R-resume: an attention footer that did not parse is recovered after a resume, not skipped for an older line
+  const OLD = 'Roadmap: Older [active] · acceptance: 1/2 verified (x) · next: later (you) · pause: safe'
+  const resumed = async (msgs) => {
+    const h = await makeHost({ env: { messages: msgs } })
+    await h.call('session.start', {})
+    return h
+  }
+  let h = await resumed([{ role: 'assistant', text: `done\n${OLD}` }, { role: 'user', text: 'go on' }, { role: 'assistant', text: 'working\nRoadmap: garbage · pause: attention · blocker: waiting on the owner' }])
+  let r = await h.render()
+  ok('27 a malformed footer that asks for attention is recovered after a resume: NEEDS YOU, as written', r.includes('NEEDS YOU') && r.includes('garbage') && !r.includes('Older [active]'), r)
+  ok('27 and it says it did not parse', r.includes('did not parse'), r)
+  h = await resumed([{ role: 'assistant', text: `done\n${OLD}` }, { role: 'assistant', text: 'Roadmap: see notes · blocker: waiting on x' }])
+  r = await h.render()
+  ok('27 a malformed footer with a real blocker also comes back as NEEDS YOU', r.includes('NEEDS YOU') && r.includes('waiting on x'), r)
+  h = await resumed([{ role: 'assistant', text: `done\n${OLD}` }, { role: 'assistant', text: 'Roadmap: see notes · blocker: none' }])
+  r = await h.render()
+  ok('27 control: a malformed footer with no attention and no blocker still falls back to the older line (UNVERIFIED, resumed)', r.includes('UNVERIFIED') && r.includes('Older [active]') && r.includes('recovered from transcript'), r)
+  h = await resumed([{ role: 'assistant', text: 'Roadmap: garbage · pause: attention' }, { role: 'assistant', text: `fine\n${OLD}` }])
+  r = await h.render()
+  ok('27 control: a good line NEWER than the malformed attention one wins, as in a live turn', r.includes('Older [active]') && !r.includes('garbage'), r)
+  h = await resumed([{ role: 'assistant', text: 'Roadmap: garbage · pause: attention' }, { role: 'user', text: 'q' }, { role: 'assistant', text: 'plain reply' }])
+  r = await h.render()
+  ok('27 the replies since the recovered footer are counted', r.includes('NEEDS YOU') && r.includes('1 reply since'), r)
+  h.env.cwd = '/fixture/other'
+  r = await h.render()
+  ok('27 a recovered attention line still goes UNVERIFIED when the directory changed', r.includes('UNVERIFIED') && r.includes('directory changed'), r)
 }
 for (const r of results) console.log(r[0], r[1], r[0] === 'FAIL' ? '\n   ' + r[2] : '')
 const fails = results.filter((r) => r[0] === 'FAIL').length

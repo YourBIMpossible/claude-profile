@@ -33,20 +33,20 @@ def payload(file_path, mode="default") -> str:
 
 
 BLOCKED = [
-    payload("F:/BIMpossible/.env"),
-    payload("F:\\BIMpossible\\.env"),                     # backslashes
+    payload("X:/fixture/BIMpossible/.env"),
+    payload("X:\\fixture\\BIMpossible\\.env"),                     # backslashes
     payload(".env.production"),
-    payload("F:/BIMpossible/backend/guard.py"),
-    payload("F:\\BIMpossible\\backend\\guard.py"),
-    payload("C:/Users/Zeria/.ssh/id_rsa"),
-    payload("C:/Users/Zeria/.ssh/id_ed25519.pub"),
+    payload("X:/fixture/BIMpossible/backend/guard.py"),
+    payload("X:\\fixture\\BIMpossible\\backend\\guard.py"),
+    payload("X:/Users/someone/.ssh/id_rsa"),
+    payload("X:/Users/someone/.ssh/id_ed25519.pub"),
     payload("certs/server.pem"),
     payload("certs/private.KEY"),                                  # case
     payload("deploy/bundle.pfx"),
-    payload("C:/Users/Zeria/.aws/credentials.json"),
+    payload("X:/Users/someone/.aws/credentials.json"),
     payload("app/google-credentials-prod.json"),                   # substring
-    payload("C:/Users/Zeria/.netrc"),
-    payload("C:/Users/Zeria/.pgpass"),
+    payload("X:/Users/someone/.netrc"),
+    payload("X:/Users/someone/.pgpass"),
     # fail-closed cases
     "not json at all",
     "",
@@ -59,15 +59,15 @@ BLOCKED = [
 
 # Live north-star files: owner approval prompt (exit 0 + "ask"), not a block.
 ASKED = [
-    payload("F:/BIMpossible/NORTHSTAR.md"),
-    payload("F:\\BIMpossible\\NORTHSTAR.md"),                     # backslashes
+    payload("X:/fixture/BIMpossible/NORTHSTAR.md"),
+    payload("X:\\fixture\\BIMpossible\\NORTHSTAR.md"),                     # backslashes
     payload("proj/northstar.md"),                                  # case
     payload("proj/NORTHSTAR.share-link.md"),
     payload("proj/NORTHSTAR.v2.final.md"),                         # slug with dots
 ]
 
 # Live north-star files where a prompt cannot be guaranteed: hard block, never a silent allow.
-NS = "F:/BIMpossible/NORTHSTAR.md"
+NS = "X:/fixture/BIMpossible/NORTHSTAR.md"
 BLOCKED += [
     payload(NS, "bypassPermissions"),
     payload(NS, "dontAsk"),
@@ -75,6 +75,26 @@ BLOCKED += [
     payload(NS, "somethingNew"),                                   # unknown mode
 ]
 ASKED += [payload(NS, "acceptEdits"), payload(NS, "plan"), payload(NS, "auto")]
+
+
+# MultiEdit and NotebookEdit write files the same way Edit does (CP-10): same verdicts.
+def tool_payload(tool: str, key: str, path: str, mode: "str | None" = "default") -> str:
+    body = {"tool_name": tool, "tool_input": {key: path}}
+    if mode is not None:
+        body["permission_mode"] = mode
+    return json.dumps(body)
+
+
+BLOCKED += [
+    tool_payload("MultiEdit", "file_path", "X:/fixture/BIMpossible/.env"),
+    tool_payload("MultiEdit", "file_path", "X:/fixture/BIMpossible/backend/guard.py"),
+    tool_payload("MultiEdit", "file_path", NS, "bypassPermissions"),
+    tool_payload("NotebookEdit", "notebook_path", "secrets/google-credentials.ipynb"),
+    tool_payload("NotebookEdit", "notebook_path", "X:/fixture/BIMpossible/.env.local"),
+    json.dumps({"tool_name": "MultiEdit", "tool_input": {"edits": []}}),          # no file_path
+    json.dumps({"tool_name": "NotebookEdit", "tool_input": {"new_source": "x"}}),  # no notebook_path
+]
+ASKED += [tool_payload("MultiEdit", "file_path", NS)]
 
 ALLOWED = [
     payload("proj/NORTHSTAR.draft.md"),                            # drafts stay free
@@ -84,16 +104,18 @@ ALLOWED = [
     payload("templates/NORTHSTAR.template.md"),
     payload("proj/NORTHSTAR-notes.md"),                            # not a north-star file
     payload("proj/northstar_inject.py"),
-    payload("F:/BIMpossible/backend/main.py"),
-    payload("F:/BIMpossible/.env.example"),
+    payload("X:/fixture/BIMpossible/backend/main.py"),
+    payload("X:/fixture/BIMpossible/.env.example"),
     payload(".env.template"),
     payload("docs/environment.md"),                                # 'env' substring
-    payload("F:/BIMpossible/backend/guardrails.py"),        # not guard.py
+    payload("X:/fixture/BIMpossible/backend/guardrails.py"),        # not guard.py
     payload("src/monkey.py"),                                      # .py not .key
     payload("notes/keys-to-success.md"),
-    payload("F:/Claude-Profile/hooks/README.md"),
+    payload("X:/fixture/claude-profile/hooks/README.md"),
     json.dumps({"tool_name": "NotebookEdit",
                 "tool_input": {"notebook_path": "analysis/run.ipynb"}}),
+    json.dumps({"tool_name": "MultiEdit",
+                "tool_input": {"file_path": "X:/fixture/BIMpossible/backend/main.py", "edits": []}}),
 ]
 
 

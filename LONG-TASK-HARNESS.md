@@ -27,7 +27,7 @@ One ANCHOR DOC per job:
   phase boundaries.
 - Audits → the report file in `audits/`, findings appended AS FOUND, not at the end.
 - Harness/profile work → a dated notes file in claude-profile.
-- A per-run record is written where it belongs when it is created. A closeout or run log goes to the repo's excluded records path: in BIMpossible, `docs/ops/_archive/<run>/`. Transient working output (scratch notes, drafts, investigation findings) goes to `F:\Claude-Tools\reports`; a plan or handoff that coordinates ongoing work governs future work, so it stays durable and discoverable in the repo for the workers who need it, with an explicit retrievable pointer where one is required. An open bug does not make its coordination material transient. The run anchor stays live while the run is open, because it is operative. A session ending is not the run closing; lifecycle state decides. It moves to the archive whole in the PR that closes the run, with inbound references repaired in the same commit. A file that a test or checker names stays where it is.
+- A per-run record is written where it belongs when it is created. A closeout or run log goes to the repo's excluded records path: in BIMpossible, `docs/ops/_archive/<run>/`. Transient working output (scratch notes, drafts, investigation findings) goes to `{reports}`; a plan or handoff that coordinates ongoing work governs future work, so it stays durable and discoverable in the repo for the workers who need it, with an explicit retrievable pointer where one is required. An open bug does not make its coordination material transient. The run anchor stays live while the run is open, because it is operative. A session ending is not the run closing; lifecycle state decides. It moves to the archive whole in the PR that closes the run, with inbound references repaired in the same commit. A file that a test or checker names stays where it is.
 
 The anchor carries: phase statuses, decisions + why, gotchas hit, and the exact next
 entry point (file/command). Verification stays proportional to the phase's
@@ -69,8 +69,8 @@ any moment without losing the job.
 ## Session scope
 
 - Build sessions: cwd = the repo root (worktree per lane, per house rules).
-- Portfolio/meta sessions (/next, dashboard, claude-profile tuning): cwd = F:\Claude-Tools (state/queue lives there; F:\AI-Dev is the personal sandbox).
-- Never grep/glob from a portfolio root (F:\ or F:\Claude-Tools) when the question concerns one repo.
+- Portfolio/meta sessions (/next, dashboard, claude-profile tuning): cwd = {tools} (state/queue lives there; {repos}\AI-Dev is the personal sandbox).
+- Never grep/glob from a portfolio root ({repos} or {tools}) when the question concerns one repo.
 
 ## Intake discipline (per tool call)
 
@@ -94,7 +94,7 @@ any moment without losing the job.
 
 ## Approvals
 
-- The stop list in `F:\Claude-Profile\CLAUDE.md` is the only gate list; check it per
+- The stop list in `{profile}\CLAUDE.md` is the only gate list; check it per
   phase. A normal push/PR the repo pre-authorizes and a new dependency inside the mandate
   are not stops.
 - Everything else: decide, act, and put "picked X over Y/Z because…" in the phase

@@ -44,7 +44,7 @@ An existing ledger → resume: its known finding IDs feed Step 2 as already-reco
 not rediscovered. New ledger → fill the run brief (objective = review this diff;
 scope = the Step 0 range + supplied findings; done means = every lens ran and
 every finding is assessed) and the criteria. The ledger lives in
-`F:\Claude-Tools\reports\grrp\`, outside the reviewed repo, so read-only holds.
+`{reports}\grrp\`, outside the reviewed repo, so read-only holds.
 This changes no lens, retention rule, or tiering.
 
 ## Step 1 — Load the repo profile / select lenses

@@ -6,7 +6,7 @@ note is the full resume point.
 
 ## Status: fact-gathering done, zero reconcile decisions applied
 
-Nothing in `F:\AI-Dev\.tools\state\queue.yaml` has changed. Watermarks are still at the values
+Nothing in `{repos}\AI-Dev\.tools\state\queue.yaml` has changed. Watermarks are still at the values
 recorded in the last completed sync (see that file's `reconciled:` header — bimpossible
 `e1a793f`/#293, addins `7bdfa68`/#53, workspace `2196bfb`/#33). Do not treat any of the below as
 applied — it is raw material for the next session to reconcile.
@@ -37,7 +37,7 @@ plan).
 ## Ledger content read (may be stale — see contradiction below)
 
 `BIMpossible_PHASE-STATUS.md` (199 lines, read in full) and `BIMpossible_WAVE-STATUS.md` (65
-lines, read in full) both from the local `F:\AI-Dev\BIMpossible_Workspace` working tree.
+lines, read in full) both from the local `{repos}\AI-Dev\BIMpossible_Workspace` working tree.
 Headline finding: a new gate section, **"BIMpossible hub cutover / tenancy test — GATE
 (CONDITIONAL, added 2026-08-07)"** (PHASE-STATUS.md lines 105-169) — status PAUSED, blocked on
 the owner creating disposable Forma-hub test projects + an explicit bounded read-only evidence
@@ -49,7 +49,7 @@ flips).
 
 ## ✅ Checkout contradiction — RESOLVED 2026-08-07 (same day)
 
-The `F:\AI-Dev\BIMpossible_Workspace` working tree is **not on main** — it's on session branch
+The `{repos}\AI-Dev\BIMpossible_Workspace` working tree is **not on main** — it's on session branch
 `docs/2026-08-06-session-paper-trail` at `6002bbf`, diverged 16 ahead / 17 behind origin/main.
 Its own commit `6002bbf` ("docs(tenancy): add BIMpossible hub cutover / tenancy test gate
 (PAUSED)") is why the PHASE-STATUS.md read contained the gate section despite HEAD lacking

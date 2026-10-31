@@ -50,7 +50,7 @@ a ledger only; every check, severity, output and approval gate below is unchange
 
 ## Run it
 
-1. **Resolve args.** Repo path (default `F:\BIMpossible`; never guess a
+1. **Resolve args.** Repo path (default `{repos}\BIMpossible`; never guess a
    different one — ask). Scope: default **incremental** (`--since` the last local
    report for that repo under `out/`, else the newest `main`/`master` merge base);
    `full` on request. Optional `--max-files N` (default 25).
@@ -59,7 +59,7 @@ a ledger only; every check, severity, output and approval gate below is unchange
 3. **Launch the runner** (it does pre-pass → per-file Qwen calls → report assembly):
 
    ```bash
-   python F:\Claude-Tools\local-audit\local_audit.py "<repo>" [--full] [--since <ref>] [--max-files N]
+   python {tools}\local-audit\local_audit.py "<repo>" [--full] [--since <ref>] [--max-files N]
    ```
 
    Each flagged file is ~1 min on the local GPU. A full BIMpossible sweep (25 files)

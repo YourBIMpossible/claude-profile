@@ -15,12 +15,12 @@ spec.loader.exec_module(sca)
 
 EXPECTED = (
     "Commit and push if it governs future work; if it is transient output, "
-    r"move it to F:\Claude-Tools\reports; or rename to *.draft.md if not ready."
+    f"move it to {sca.reports_dir()}; or rename to *.draft.md if not ready."
 )
 
 
 def test_untracked_design_doc_action_guidance_verbatim() -> None:
-    repo = "F:/BIMpossible"
+    repo = "X:/fixture/BIMpossible"
     wt = {"path": repo, "branch": "main", "detached": False}
     st = {
         "branch": "main", "upstream": "origin/main", "detached": False,
@@ -34,7 +34,7 @@ def test_untracked_design_doc_action_guidance_verbatim() -> None:
     assert doc[0]["severity"] == "ATTENTION REQUIRED"
     assert doc[0]["action"] == EXPECTED
     # renders with single backslashes, no doubled escapes, no control chars
-    assert "F:" + chr(92) + "Claude-Tools" + chr(92) + "reports;" in doc[0]["action"]
+    assert sca.reports_dir() + ";" in doc[0]["action"]  # this machine's reports dir, from its config
     assert chr(92) * 2 not in doc[0]["action"]
     assert "\r" not in doc[0]["action"]
     # draft marker handling unchanged
@@ -49,7 +49,7 @@ TRACKED_EXPECTED = (
 
 
 def test_tracked_modified_design_doc_action_guidance_verbatim() -> None:
-    repo = "F:/BIMpossible"
+    repo = "X:/fixture/BIMpossible"
     wt = {"path": repo, "branch": "main", "detached": False}
     st = {
         "branch": "main", "upstream": "origin/main", "detached": False,

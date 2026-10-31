@@ -1,0 +1,30 @@
+[
+  {
+    "path": "vendor/**",
+    "reason": "Byte-identical pins of upstream claude-tools code, verified by sha256 (vendor/README.md, hooks/tests). Editing them breaks the pin (validated: 6d5c9e2). The strings are a docstring example, a comment and a provenance note, not paths the code uses; fix upstream, then re-pin."
+  },
+  {
+    "path": "hooks/Show-AuditAlerts.ps1",
+    "match": "Ack-AuditAlert\\.ps1",
+    "reason": "Byte-identical pin of an upstream BIMpossible-Workspace file (sha256 in hooks/README.md); the path is only the text of the acknowledge command it prints. Fix upstream, then re-pin."
+  },
+  {
+    "path": "hooks/tests/*.py",
+    "match": "X:[\\\\/]",
+    "reason": "Synthetic Windows-form fixture paths on the placeholder drive X: for path-handling tests (gate patterns, worktree classification, closure audit); no real location."
+  },
+  {
+    "path": "skills/graphify/scripts/test_query_reranked.py",
+    "match": "r/backend",
+    "reason": "Synthetic resolved-graph fixture on the placeholder drive X:."
+  },
+  {
+    "path": "skills/ui-ux-pro-max/data/stacks/*.csv",
+    "reason": "Third-party UI guidance data whose examples cite hardcoded absolute paths as the anti-pattern to avoid."
+  },
+  {
+    "path": ".gitleaks.toml",
+    "match": "MIIEow",
+    "reason": "The gitleaks allowlist regex for the truncated PEM stub (a base64 stub and literal dots) that the ctxdex hook test feeds. Its text holds a regex-escaped backslash, an n, a word and an escaped dot, which the UNC rule reads as a server and a share; it is regex source, not a network path. Shape cannot tell a regex escape from a real share, so the exemption is this one line and not a looser rule: a real share on any other line or in any other file still fails, and the entry goes stale (and fails) if the line is removed. Pinned by tools/tests/test_machine_paths_gitleaks_allowlist.py."
+  }
+]

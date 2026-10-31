@@ -7,7 +7,7 @@
 ## Context
 
 The 2026-10-11 context-engineering audit
-(`F:\Claude-Tools\reports\2026-10-11-context-engineering-claude5-audit.md`, findings 1, 3, 4, 8)
+(`{reports}\2026-10-11-context-engineering-claude5-audit.md`, findings 1, 3, 4, 8)
 found three sets of startup instructions contradicting the global `CLAUDE.md`:
 
 - **Superpowers.** Its SessionStart hook injects an `<EXTREMELY_IMPORTANT>` mandate to invoke skills

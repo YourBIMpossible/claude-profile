@@ -1,7 +1,7 @@
 # Slop audit — Claude-Profile
 
 - **Date:** 2026-08-24
-- **Repo:** `F:\Claude-Profile`
+- **Repo:** `{profile}`
 - **Mode:** INCREMENTAL
 - **Window:** commits since the previous report `audits/2026-08-17__slop-audit.md` → 12 commits (`39d08a1`..`32eaae9`), 13 changed code files
 - **Checks:** silent-catch census, counter-integrity, tested-but-dead

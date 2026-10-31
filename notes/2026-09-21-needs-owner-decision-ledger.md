@@ -1,10 +1,10 @@
 # needs_owner_decision resolution ledger — 2026-09-21
 
 Read-only revalidation of all 25 rows classified `needs_owner_decision` in
-`C:\Users\Zeria\.claude\memory-backups\20260921-phase2a\proposed-manifest.json` (17
+`~\.claude\memory-backups\20260921-phase2a\proposed-manifest.json` (17
 Claude-Profile, 8 BIMpossible). No memory or policy file was edited to produce this ledger.
 Each row was re-checked against current local evidence (live git log/branches/PRs/worktrees,
-current file contents) — not just re-read from its old classification. F:\AI-Dev was not
+current file contents) — not just re-read from its old classification. {repos}\AI-Dev was not
 inspected (out of scope per house rule); two rows note where that boundary limited resolution.
 
 Taxonomy: **safely_actionable** (clear low-risk trim/archive, no ambiguity) · **retain_active**
@@ -36,7 +36,7 @@ required status checks) make this file redundant?
 ## Group B — CLAUDE.md-duplicate cluster: trim to pointer?
 
 Shared question across 2 Claude-Profile rows: is this now fully duplicated in
-`F:\Claude-Profile\CLAUDE.md`?
+`{profile}\CLAUDE.md`?
 
 | File | Verdict | Why |
 |---|---|---|
@@ -45,7 +45,7 @@ Shared question across 2 Claude-Profile rows: is this now fully duplicated in
 
 ## Group C — Worktree-naming-scheme cluster: does the topology description still match reality?
 
-Shared evidence across 2 BIMpossible rows: live `git worktree list` in F:\BIMpossible today
+Shared evidence across 2 BIMpossible rows: live `git worktree list` in {repos}\BIMpossible today
 shows an entirely different naming scheme (hash-named `agent-a*`, `w4/*`, `w9/*`, etc.) than
 either file describes.
 
@@ -58,7 +58,7 @@ either file describes.
 
 Shared underlying fact across 2 Claude-Profile rows: P7-SYNC-GOLIVE passed its supervised pilot
 (commit `59df1324`, #442, 2026-08-21) and is confirmed PROMOTED landed→live 2026-08-30 per
-`F:\Claude-Tools\state\queue.yaml`.
+`{tools}\state\queue.yaml`.
 
 | File | Verdict | Why |
 |---|---|---|
@@ -73,7 +73,7 @@ Shared underlying fact across 2 Claude-Profile rows: P7-SYNC-GOLIVE passed its s
 | `familyfixer-phase1-port-state.md` | PRs #23/#25 confirmed merged, but no evidence found of the owner re-test or naming-cleanup step completing. |
 | `delivery-receipt-gate-live.md` (BIMpossible) | Live `.githooks/pre-push` and branch protection both confirm the warn-only gate + bypass-logging description exactly as written. |
 | `slop-audit-remediation-2026-09-07-unstaged.md` (BIMpossible) | Every "don't touch" branch/PR it lists (Workspace #4/#17/#18/#27/#28/#111, 2 named branches) is still open/present, confirmed live. |
-| `ai-dev-extraction-roots.md` (BIMpossible) | All 5 named live roots still exist; nothing contradicts the 2026-08-25 "F:\AI-Dev is dead" ruling. |
+| `ai-dev-extraction-roots.md` (BIMpossible) | All 5 named live roots still exist; nothing contradicts the 2026-08-25 "{repos}\AI-Dev is dead" ruling. |
 | `wfa-closure-wave-2026-09-12.md` (BIMpossible) | Closure-wave tips are a correctly-framed historical checkpoint. **Contains an unresolved owner item:** WFA rerun + C2 Key Plan smoke test are owner-only actions, not evidence-closeable. |
 
 ## Ungrouped — factual_correction_candidate
@@ -90,7 +90,7 @@ Shared underlying fact across 2 Claude-Profile rows: P7-SYNC-GOLIVE passed its s
 
 | File | Open question |
 |---|---|
-| `bimpossible-site-untracked-project.md` | Factual part is now settled (site confirmed moved out of F:\AI-Dev to `F:\BIMpossible-Site\site\`, live repo). But whether it's now documented in "CLAUDE.md's project table" can't be resolved locally — no project table exists in any accessible CLAUDE.md (BIMpossible, AddIns, Claude-Profile); if one exists it's likely in the out-of-scope F:\AI-Dev\CLAUDE.md. Owner call needed on where that table now lives, if anywhere. |
+| `bimpossible-site-untracked-project.md` | Factual part is now settled (site confirmed moved out of {repos}\AI-Dev to `{repos}\BIMpossible-Site\site\`, live repo). But whether it's now documented in "CLAUDE.md's project table" can't be resolved locally — no project table exists in any accessible CLAUDE.md (BIMpossible, AddIns, Claude-Profile); if one exists it's likely in the out-of-scope {repos}\AI-Dev\CLAUDE.md. Owner call needed on where that table now lives, if anywhere. |
 
 ## Ungrouped — safely_actionable
 

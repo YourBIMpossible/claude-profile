@@ -9,7 +9,7 @@ they never fix, commit, or push.
 | Lens key | Executor (preferred → fallback) | Scope | Contract / source |
 |---|---|---|---|
 | `code-review` | bundled `/code-review` skill → general-purpose | generic correctness + maintainability of the diff | bundled code-review |
-| `bim-code-review` | `/bim-code-review` skill → general-purpose | repo-convention compliance + spec fidelity | `F:\BIMpossible\.claude\skills\bim-code-review` |
+| `bim-code-review` | `/bim-code-review` skill → general-purpose | repo-convention compliance + spec fidelity | `{repos}\BIMpossible\.claude\skills\bim-code-review` |
 | `security-diff` | `security-engineer` → general-purpose | diff-scoped, reachable security risk | `security-diff-lens.md` |
 | `revit-lifecycle` | general-purpose (+ revit-functionality-audit persona if present) | Revit API transaction / ExternalEvent / dispose lifecycle on changed C# | prompt below |
 | `concurrency` | `qa-engineer` → general-purpose | async / threading / queue / race correctness on changed code | prompt below |

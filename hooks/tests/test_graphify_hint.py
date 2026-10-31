@@ -142,11 +142,11 @@ class HookIO(unittest.TestCase):
         self.assertNotIn("delegate", text)
 
     def test_command_is_shell_neutral_and_needs_no_cd(self):
-        # 2026-09-29 acceptance run: a session ran `cd F:\...` in Git Bash, the
+        # 2026-09-29 acceptance run: a session ran `cd <drive>:\...` in Git Bash, the
         # backslashes were eaten and the first query failed; the retry worked.
         _, out = run_hook({"hook_event_name": "SessionStart", "cwd": str(self.web)})
         cmd_line = next(l.strip() for l in self.ctx(out, "SessionStart").splitlines()
-                        if l.strip().startswith("python "))
+                        if l.strip().startswith(hint.PYTHON_CMD + " "))
         self.assertNotIn("\\", cmd_line)
         self.assertNotIn("cd ", cmd_line)
         self.assertIn("no `cd`", self.ctx(out, "SessionStart"))
@@ -185,6 +185,98 @@ class HookIO(unittest.TestCase):
         for bad in ("not json", "", "[1,2]"):
             rc, out = run_hook(bad)
             self.assertEqual(rc, 0)
+
+
+def write_agent(agents_dir: Path, stem: str, frontmatter: str) -> None:
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / f"{stem}.md").write_text(f"---\n{frontmatter}---\n\nSystem prompt.\n", encoding="utf-8")
+
+
+class AgentDefinitions(unittest.TestCase):
+    """Custom subagents are judged by their definition's tools (2026-10-26:
+    backend-endpoint-reviewer, tools Read/Grep/Glob, was handed the hint)."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        tmp = Path(self._td.name).resolve()
+        self.web = make_repo(tmp / "web")
+        make_graph(self.web / "backend")
+        self.wt = make_worktree(self.web, self.web / ".claude" / "worktrees" / "lane", "lane")
+        self.home = tmp / "home"
+        self.home.mkdir()
+        # Path.home() reads USERPROFILE on Windows and HOME elsewhere; never the real profile.
+        self.env = {"USERPROFILE": str(self.home), "HOME": str(self.home)}
+        self.log = tmp / "logs"
+
+    def start(self, agent_type: str, cwd: Path) -> str:
+        rc, out = run_hook({"hook_event_name": "SubagentStart", "agent_type": agent_type, "cwd": str(cwd)},
+                           self.env, self.log)
+        self.assertEqual(rc, 0)
+        return out
+
+    def last_log(self) -> dict:
+        return json.loads((self.log / hint.LOG_NAME).read_text(encoding="utf-8").splitlines()[-1])
+
+    def test_project_agent_without_shell_gets_nothing(self):
+        write_agent(self.web / ".claude" / "agents", "reviewer",
+                    "name: backend-endpoint-reviewer\ndescription: >\n  Reviews endpoints.\n"
+                    "  tools: Bash\ntools: Read, Grep, Glob\n")
+        self.assertEqual(self.start("backend-endpoint-reviewer", self.web / "backend"), "")
+        self.assertEqual(self.last_log()["skipped"], "shell_less_agent")
+
+    def test_worktree_copy_of_the_definition_is_found(self):
+        write_agent(self.wt / ".claude" / "agents", "reviewer", "name: reviewer\ntools: Read, Grep\n")
+        self.assertEqual(self.start("reviewer", self.wt), "")
+
+    def test_user_agent_without_shell_gets_nothing(self):
+        write_agent(self.home / ".claude" / "agents", "docs", "name: docs\ntools: [Read, WebFetch]\n")
+        self.assertEqual(self.start("docs", self.web), "")
+
+    def test_agents_with_a_shell_get_the_hint(self):
+        cases = {
+            "bash-csv": "tools: Read, Bash\n",
+            "pattern": "tools: Read, Bash(git log:*, git diff:*)\n",
+            "ps-list": "tools:\n  - Read\n  - PowerShell\n",
+            "all-tools": "description: no tools field means every tool\n",
+            "star": "tools: '*'\n",
+            "partly-denied": "disallowedTools: Bash(rm:*)\n",
+        }
+        for name, body in cases.items():
+            write_agent(self.web / ".claude" / "agents", name, f"name: {name}\n{body}")
+        for name in cases:
+            self.assertIn(hint.HINT_TAG, self.start(name, self.web), name)
+
+    def test_disallowed_shell_gets_nothing(self):
+        write_agent(self.web / ".claude" / "agents", "nosh",
+                    "name: nosh\ndisallowedTools: Bash, PowerShell\n")
+        self.assertEqual(self.start("nosh", self.web), "")
+
+    def test_unknown_or_plugin_agent_keeps_the_hint(self):
+        for agent in ("Explore", "general-purpose", "pr-review-toolkit:code-reviewer", "no-such-agent"):
+            self.assertIn(hint.HINT_TAG, self.start(agent, self.web), agent)
+
+    def test_file_stem_is_the_name_when_frontmatter_has_none(self):
+        write_agent(self.web / ".claude" / "agents", "stemmed", "tools: Read\n")
+        self.assertEqual(self.start("stemmed", self.web), "")
+
+    def test_nearest_definition_wins(self):
+        write_agent(self.web / ".claude" / "agents", "dup", "name: dup\ntools: Read, Bash\n")
+        write_agent(self.home / ".claude" / "agents", "dup", "name: dup\ntools: Read\n")
+        self.assertIn(hint.HINT_TAG, self.start("dup", self.web))
+
+    def test_no_graph_never_reads_agent_files(self):
+        bare = make_repo(Path(self._td.name).resolve() / "bare")
+        write_agent(bare / ".claude" / "agents", "x", "name: x\ntools: Read\n")
+        self.assertEqual(self.start("x", bare), "")
+        self.assertEqual(self.last_log()["skipped"], "no_graph")
+
+    def test_frontmatter_parser(self):
+        fm = hint.parse_frontmatter("---\nname: \"a\"\ntools: [Read, 'Bash(git:*, ls)']\n"
+                                    "disallowedTools:\n  - Edit\n---\nbody: not frontmatter\n")
+        self.assertEqual(fm, {"name": "a", "tools": ["Read", "Bash(git:*, ls)"], "disallowedTools": ["Edit"]})
+        self.assertIsNone(hint.parse_frontmatter("no frontmatter"))
+        self.assertIsNone(hint.parse_frontmatter("---\nname: unterminated\n"))
 
 
 # ---- transcript fixtures: the record shapes Claude Code writes ----

@@ -1,7 +1,7 @@
 """Drop-in wrapper for `graphify query` that optionally reranks candidates with BM25.
 
 Productionizes the reranker evaluated in
-F:\\Claude-Tools\\graphify\\recall\\rerank_bm25.py (see RERANK-EXPERIMENT.md):
+{tools}/graphify/recall/rerank_bm25.py (see RERANK-EXPERIMENT.md):
 BM25 k1=1.5 b=0.75 over tokenize(label + source_file), stable sort so a
 0.0-vs-0.0 tie keeps graphify's own BFS order, truncated to the same node
 count graphify's own budget would have shown. That method is reused here
@@ -54,8 +54,10 @@ import argparse
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -64,9 +66,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve_graph  # noqa: E402
 
-GRAPHIFY = Path(
-    r"C:\Users\Zeria\AppData\Local\Python\pythoncore-3.14-64\Scripts\graphify.exe"
-)
+def _find_graphify() -> Path | None:
+    """GRAPHIFY_EXE overrides (a file path, or a command name / extensionless path that
+    shutil.which resolves; a bare name is a command, never a file in the current folder);
+    else `graphify` on PATH; else the graphify script installed
+    beside this interpreter (scripts dir, then the per-user scripts dir). None when the
+    GRAPHIFY_EXE override does not resolve or nothing is found."""
+    override = os.environ.get("GRAPHIFY_EXE")
+    if override:
+        # The file check is only for a value that names a path: a bare `graphify` is a command, resolved
+        # through PATH as a shell would, not a file that happens to sit in the current folder.
+        if os.sep in override or (os.altsep and os.altsep in override):
+            path = Path(override)
+            if path.is_file():
+                return path
+            # Python 3.11's shutil.which does not try PATHEXT for a value with a folder in it (3.12 does),
+            # so complete an extensionless Windows path here.
+            if os.name == "nt" and not path.suffix:
+                for ext in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep):
+                    candidate = Path(str(path) + ext.lower())
+                    if ext and candidate.is_file():
+                        return candidate
+        resolved = shutil.which(override)
+        return Path(resolved) if resolved else None
+    found = shutil.which("graphify")
+    if found:
+        return Path(found)
+    for scheme in (None, f"{os.name}_user"):
+        try:
+            scripts = Path(sysconfig.get_path("scripts", scheme) if scheme else sysconfig.get_path("scripts"))
+        except KeyError:
+            continue
+        for name in ("graphify.exe", "graphify"):
+            if (scripts / name).is_file():
+                return scripts / name
+    return None
+
+
+GRAPHIFY: Path | None = _find_graphify()
+
+
+class GraphifyNotFoundError(RuntimeError):
+    """The graphify binary is missing at startup or vanished before a query ran."""
+
+
+def _not_found_message(vanished: Path | None = None) -> str:
+    """The one stderr line for a missing binary; `vanished` names a resolved binary that
+    disappeared after startup."""
+    exe = os.environ.get("GRAPHIFY_EXE") or "unset"
+    gone = f"; resolved {vanished} no longer exists" if vanished is not None else ""
+    return f"graphify not found (GRAPHIFY_EXE={exe}, PATH, scripts dirs{gone})"
 
 # Same ladder as rerank_bm25.py: ask for a lot, retry bigger only if still
 # truncated. Total pool size varies wildly by query (hundreds to thousands
@@ -139,19 +188,25 @@ class BM25:
 
 
 def run_query_raw(cwd: Path, question: str, budget: int, extra_args: list[str]) -> str:
-    """Run `graphify query` and return its raw stdout. Raises on nonzero exit."""
+    """Run `graphify query` and return its raw stdout. Raises on nonzero exit,
+    GraphifyNotFoundError when the binary is missing."""
+    if GRAPHIFY is None:
+        raise GraphifyNotFoundError(_not_found_message())
     env = dict(os.environ)
     env["GRAPHIFY_QUERY_LOG_DISABLE"] = "1"
     env["PYTHONHASHSEED"] = "0"
-    proc = subprocess.run(
-        [str(GRAPHIFY), "query", question, "--budget", str(budget), *extra_args],
-        cwd=str(cwd),
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        proc = subprocess.run(
+            [str(GRAPHIFY), "query", question, "--budget", str(budget), *extra_args],
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise GraphifyNotFoundError(_not_found_message(GRAPHIFY)) from exc
     if proc.returncode != 0:
         raise RuntimeError(
             f"graphify query failed ({proc.returncode}) for {question!r}: "
@@ -382,6 +437,9 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 def main(argv: list[str] | None = None) -> int:
     args, unknown = parse_args(argv)
+    if GRAPHIFY is None:
+        print(_not_found_message(), file=sys.stderr)
+        return 2
     cwd = Path.cwd()
     _resolve_graph_arg(args, cwd)
 
@@ -397,10 +455,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dfs or not args.rerank:
         _t0 = time.perf_counter()
-        rc, out = _passthrough(
-            [str(GRAPHIFY), "query", args.question, "--budget", str(args.budget), *extra_args],
-            cwd,
-        )
+        try:
+            rc, out = _passthrough(
+                [str(GRAPHIFY), "query", args.question, "--budget", str(args.budget), *extra_args],
+                cwd,
+            )
+        except FileNotFoundError:
+            print(_not_found_message(GRAPHIFY), file=sys.stderr)
+            return 2
         if rc == 0:
             _log_wrapped(
                 args,
@@ -424,6 +486,9 @@ def main(argv: list[str] | None = None) -> int:
             retrieval_ms=rr.retrieval_ms,
             rerank_ms=rr.rerank_ms,
         )
+    except GraphifyNotFoundError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1

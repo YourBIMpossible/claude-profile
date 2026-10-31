@@ -17,6 +17,10 @@ WHAT IT DOES
   this into exploration subagent prompts"); SubagentStart gets a
   self-contained version so the subagent route works even when the parent
   forgets. No graph -> no output: projects without a graph are never nudged.
+  Subagents that cannot run a shell get nothing: the built-ins in
+  NO_SHELL_AGENTS, and custom agents whose definition (.claude/agents/*.md
+  from cwd upward, then ~/.claude/agents) grants neither Bash nor PowerShell.
+  An agent with no definition found keeps the hint.
 
   UserPromptSubmit is a fallback. The harness does not always fire
   SessionStart: a desktop fork (2026-10-05 funnel, session 07542a44) fired
@@ -40,12 +44,13 @@ SCOPE HONESTY
   ADVISORY. It informs tool choice; it cannot make the model use graphify,
   and it does not check graph freshness beyond printing the build date.
 
-PINNED-COPY RULES (hooks/README.md, C1)
-  Installed as a copied file under ~/.claude/hooks. It must not import code
-  from the skills junction, so the resolver below is a verbatim-behaviour
-  copy of resolve_graph.resolve(); hooks/tests/test_graphify_hint.py runs
-  both over the same fixtures and fails if they ever disagree. WRAPPER is a
-  hardcoded path the MODEL runs (not code this hook executes).
+SELF-CONTAINED (hooks/README.md, C1)
+  Runs from the profile clone and imports nothing from skills/, so the
+  resolver below is a verbatim-behaviour copy of resolve_graph.resolve();
+  hooks/tests/test_graphify_hint.py runs both over the same fixtures and
+  fails if they ever disagree. WRAPPER is derived from this file's location
+  (the same clone's skills/); it is a path the MODEL runs, not code this
+  hook executes.
 
   Never fails a session: any error -> exit 0, no output (the error type goes
   to the diagnostic log). Opt-out: GRAPHIFY_HINT=0.
@@ -59,10 +64,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-WRAPPER = r"F:\Claude-Profile\skills\graphify\scripts\query_reranked.py"
+WRAPPER = str(Path(__file__).resolve().parents[1] / "skills" / "graphify" / "scripts" / "query_reranked.py")
+PYTHON_CMD = "python" if os.name == "nt" else "python3"
 
-# Subagent types that cannot run shell commands gain nothing from the hint.
+# Built-in subagent types that cannot run shell commands gain nothing from the hint.
+# Custom agents are judged by their definition's tools (agent_has_shell below).
 NO_SHELL_AGENTS = {"claude-code-guide", "statusline-setup"}
+SHELL_TOOLS = ("Bash", "PowerShell")
+AGENT_DEF_MAX_BYTES = 256 << 10
 HANDLED_EVENTS = ("SessionStart", "SubagentStart", "UserPromptSubmit")
 
 HINT_TAG = "<graphify-graph>"
@@ -176,7 +185,7 @@ def query_command(graph: str) -> str:
     acceptance run: the first query failed that way, the retry succeeded).
     The wrapper takes --graph, so it runs correctly from any cwd.
     """
-    return f'python "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
+    return f'{PYTHON_CMD} "{Path(WRAPPER).as_posix()}" "<question>" --graph "{Path(graph).as_posix()}"'
 
 
 def build_hint(r: dict, *, subagent: bool) -> str:
@@ -279,6 +288,103 @@ def _classify(line: bytes) -> bool | None:
     return True if _attachment_has_hint(rec.get("attachment")) else None
 
 
+# ---- agent definitions: does a custom subagent have a shell? ----
+_LIST_SPLIT_RE = re.compile(r",(?![^()]*\))")  # commas outside Bash(...) patterns
+
+
+def _unquote(s: str) -> str:
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
+    return s
+
+
+def _scalar_or_list(value: str) -> str | list[str]:
+    value = value.strip()
+    if value.startswith("[") and value.endswith("]"):
+        return [_unquote(v) for v in _LIST_SPLIT_RE.split(value[1:-1]) if v.strip()]
+    return _unquote(value)
+
+
+def parse_frontmatter(text: str) -> dict[str, str | list[str]] | None:
+    """Top-level keys of a `---` frontmatter block; None if the file has none.
+
+    Enough YAML for agent files without a YAML dependency: `key: value`,
+    `key: [a, b]`, and block lists (`key:` then `- item` lines). Folded or
+    nested values are kept as raw text or ignored; only name/tools/
+    disallowedTools are consulted.
+    """
+    lines = text.lstrip("﻿").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    out: dict[str, str | list[str]] = {}
+    key: str | None = None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return out
+        item = re.match(r"\s*-\s+(.*)$", line)
+        if item and key is not None and isinstance(out.get(key), list):
+            out[key].append(_unquote(item.group(1)))  # type: ignore[union-attr]
+            continue
+        m = re.match(r"([A-Za-z_][\w-]*)\s*:\s*(.*)$", line)
+        if m:
+            key, value = m.group(1), m.group(2)
+            out[key] = _scalar_or_list(value) if value.strip() else []
+    return None  # unterminated block
+
+
+def _tool_names(value: str | list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    items = value if isinstance(value, list) else _LIST_SPLIT_RE.split(value)
+    return [t.strip() for t in items if t.strip()]
+
+
+def _agent_dirs(cwd: str) -> list[Path]:
+    """Project .claude/agents from cwd upward (nearest wins), then the user's."""
+    here = Path(cwd)
+    dirs = [d / ".claude" / "agents" for d in (here, *here.parents)]
+    dirs.append(Path.home() / ".claude" / "agents")
+    return [d for d in dirs if d.is_dir()]
+
+
+def find_agent_definition(agent_type: str, cwd: str) -> dict[str, str | list[str]] | None:
+    """Frontmatter of the agent file whose `name` (or file stem) is agent_type."""
+    for d in _agent_dirs(cwd):
+        for path in sorted(d.glob("*.md")):
+            with open(path, "rb") as f:
+                text = f.read(AGENT_DEF_MAX_BYTES).decode("utf-8", errors="replace")
+            fm = parse_frontmatter(text)
+            if fm is None:
+                continue
+            name = fm.get("name")
+            if (name if isinstance(name, str) and name else path.stem) == agent_type:
+                return fm
+    return None
+
+
+def agent_has_shell(agent_type: str, cwd: str) -> bool | None:
+    """False only when a definition proves the agent has no Bash/PowerShell.
+
+    None = no definition found (plugin agents, built-ins other than
+    NO_SHELL_AGENTS): the caller keeps the hint. A `tools` field absent or `*`
+    means every tool. A pattern grant such as Bash(git:*) counts as a shell;
+    only a bare entry in disallowedTools removes one.
+    """
+    if not agent_type or ":" in agent_type:
+        return None
+    fm = find_agent_definition(agent_type, cwd)
+    if fm is None:
+        return None
+    tools = _tool_names(fm.get("tools"))
+    denied = set(_tool_names(fm.get("disallowedTools")) or [])
+    if not tools or "*" in tools:
+        granted = set(SHELL_TOOLS)
+    else:
+        granted = {t.split("(", 1)[0].strip() for t in tools} & set(SHELL_TOOLS)
+    return bool(granted - denied)
+
+
 def handle(payload: dict, rec: dict) -> tuple[str, str] | None:
     """Decide what to inject for one hook payload; record the outcome in rec."""
     event = payload.get("hook_event_name") or "SessionStart"
@@ -286,7 +392,8 @@ def handle(payload: dict, rec: dict) -> tuple[str, str] | None:
     if event not in HANDLED_EVENTS:
         rec["skipped"] = "event_ignored"
         return None
-    if event == "SubagentStart" and payload.get("agent_type") in NO_SHELL_AGENTS:
+    agent_type = payload.get("agent_type")
+    if event == "SubagentStart" and agent_type in NO_SHELL_AGENTS:
         rec["skipped"] = "shell_less_agent"
         return None
     cwd = payload.get("cwd") or os.getcwd()
@@ -297,6 +404,16 @@ def handle(payload: dict, rec: dict) -> tuple[str, str] | None:
         rec["skipped"] = "no_graph"
         return None
     rec["graph"] = r["graph"]
+    if event == "SubagentStart" and isinstance(agent_type, str):
+        # Only after a graph resolves, so no-graph projects never read agent files.
+        try:
+            shell = agent_has_shell(agent_type, str(cwd))
+        except Exception as e:  # unreadable definition: keep the hint
+            rec["error"] = sanitize_error(e)
+            shell = None
+        if shell is False:
+            rec["skipped"] = "shell_less_agent"
+            return None
     if event == "UserPromptSubmit":
         # Fallback for paths where the harness fires no SessionStart (desktop
         # forks, some compactions): inject only if the live context lacks it.

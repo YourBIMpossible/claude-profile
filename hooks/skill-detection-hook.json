@@ -1,6 +1,6 @@
 // Tier 1 skill-detection hook.
 // Paste this object as a NEW entry in the existing "hooks" -> "PostToolUse" array
-// in C:\Users\Zeria\.claude\settings.json (alongside the context_budget entry -
+// in ~\.claude\settings.json (alongside the context_budget entry -
 // do not replace it). Then open /hooks once, or restart, to load it.
 {
   "matcher": "mcp__mcp-server-for-revit__send_code_to_revit",

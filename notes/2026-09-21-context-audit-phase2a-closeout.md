@@ -2,8 +2,8 @@
 
 Closes the context-audit program's Phase 2A memory-consolidation track. Full record (manifests,
 before/after snapshots, hash verification) lives outside this repo at
-`C:\Users\Zeria\.claude\memory-backups\20260921-phase2a\phase2a-closeout.md` — the memory stores
-themselves are not git-backed, so nothing under `C:\Users\Zeria\.claude\projects\*\memory\` is
+`~\.claude\memory-backups\20260921-phase2a\phase2a-closeout.md` — the memory stores
+themselves are not git-backed, so nothing under `~\.claude\projects\*\memory\` is
 committed here.
 
 **What happened:** Phase 2A-1 inventoried all 135 topic files across the Claude-Profile and

@@ -1,4 +1,4 @@
-# Anti-Slop Code Audit — F:\Claude-Profile
+# Anti-Slop Code Audit — {profile}
 
 **Date:** 2026-09-07
 **Mode:** Incremental (read-only, findings only — no fixes, no commits)
@@ -9,7 +9,7 @@
 | `87d86bf` | fix(context-weight): treat a missing measurement input as FAIL, not zero |
 | `6a0ab7e` | fix(graphify): harden reranked-query telemetry — corpus parity, truthful timing, visible failures |
 | `e93f1aa` | fix: read canonical Claude profile roots (touches context_weight paths) |
-| `cfb95f3` | test(ctxdex): move hook self-test scratch root off the retired F:\AI-Dev root |
+| `cfb95f3` | test(ctxdex): move hook self-test scratch root off the retired {repos}\AI-Dev root |
 
 **Files audited (current contents, per task scope):**
 - `skills/graphify/scripts/query_reranked.py`
@@ -77,7 +77,7 @@ One LOW robustness gap in this same area — see LOW-1.
 **Verdict: no dead twins. Both suites exercise the shipped path. VERIFIED** by running each and by tracing production callers.
 
 - `test_context_weight.py` imports `context_weight` and calls `cw.main(**paths)` and `cw.skill_descriptions` directly — the same module and the same `main()` reached by the `__main__` guard (:178–179). `main`'s parameters exist only so tests pass a throwaway estate; the no-arg production call resolves the module constants. **Not dead.** Ran this pass: `OK - 13 cases`.
-- `test_ctxdex_hook.py` invokes the real shipped hook by path (`parents[1]/ctxdex_autoindex.py`) as a subprocess with JSON on stdin, exactly as Claude Code would, and asserts against ctxdex's real DB. It depends on `F:/Claude-Tools/ctxdex/ctxdex.py`, which exists. **Not dead.** Ran this pass: `39/39 checks passed`.
+- `test_ctxdex_hook.py` invokes the real shipped hook by path (`parents[1]/ctxdex_autoindex.py`) as a subprocess with JSON on stdin, exactly as Claude Code would, and asserts against ctxdex's real DB. It depends on `{tools}/ctxdex/ctxdex.py`, which exists. **Not dead.** Ran this pass: `39/39 checks passed`.
 - Production caller of `query_reranked.py`: `skills/graphify/references/query.md:75` routes a BFS query through it when `GRAPHIFY_RERANK=1` (documented by commit `6a0ab7e`'s sibling doc change), and `bench_reranker.py` / `measure_latency.py` drive the same wrapper. **Live, not dead.**
 - Production caller of `context_weight.py`: invoked directly as a CLI tool (`python tools/context_weight.py`, weekly per its docstring). No orphaned entry point.
 

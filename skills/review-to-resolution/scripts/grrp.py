@@ -21,7 +21,7 @@ Commands:
   batch-init --slug S [--dir D]                  create a batch manifest (endpoint first), or return the existing one
   batch  MANIFEST [--json] [--record]            batch archive-ready check over every ledger and item
 
-Gate and batch exit codes: 0 complete, 1 incomplete, 2 blocked, 3 invalid.
+Gate and batch exit codes: 0 complete, 1 incomplete, 2 blocked, 3 invalid (also a usage error).
 Stdlib only; Python 3.10+.
 """
 from __future__ import annotations
@@ -37,13 +37,46 @@ import sys
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NoReturn
 
-DEFAULT_DIR = Path(os.environ.get("GRRP_LEDGER_DIR", r"F:\Claude-Tools\reports\grrp"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))  # the profile clone's tools/
+import machine_config  # noqa: E402
 
-DEFAULT_QUEUE = Path(os.environ.get("GRRP_QUEUE", r"F:\Claude-Tools\state\queue.yaml"))
+
+CONFIG_ERRORS: dict[str, str] = {}  # machine config key -> why it could not be read
+
+
+def _machine_path(key: str, *parts: str) -> Path:
+    """<machine config key>/<parts> (tools/machine_config.py); a placeholder that does not
+    exist when the key is unset, so a missing root surfaces as a missing path. A config that
+    cannot be read also yields the placeholder; its error is kept in CONFIG_ERRORS."""
+    try:
+        base = machine_config.load().get(key) or ""
+    except machine_config.ConfigError as e:
+        CONFIG_ERRORS[key] = str(e)
+        base = ""
+    return Path(base, *parts) if base else Path(machine_config.config_path().parent, f"unset-{key}", *parts)
+
+
+DEFAULT_DIR = Path(os.environ.get("GRRP_LEDGER_DIR") or _machine_path("reports_dir", "grrp"))
+
+
+def _ledger_dir(a: argparse.Namespace) -> Path | None:
+    """--dir, else DEFAULT_DIR; None (reason on stderr) when DEFAULT_DIR is only the placeholder
+    of an unreadable machine config, so init never writes a ledger under it."""
+    if a.dir:
+        return Path(a.dir)
+    if "reports_dir" in CONFIG_ERRORS:
+        print(f"error: no default ledger directory: {CONFIG_ERRORS['reports_dir']}; "
+              "fix the machine config, set GRRP_LEDGER_DIR or pass --dir", file=sys.stderr)
+        return None
+    return DEFAULT_DIR
+
+DEFAULT_QUEUE = Path(os.environ.get("GRRP_QUEUE") or _machine_path("tools_root", "state", "queue.yaml"))
 # /next statuses meaning the queue has taken responsibility (parked/dropped = refused).
 QUEUE_ACCEPTING = {"ready", "blocked_dep", "blocked_external", "blocked_owner", "in_flight", "landed", "live"}
 
+SOURCES = {"original", "discovered"}
 CLASSIFICATIONS = {"original", "blocker", "independent", "enhancement", "externally_owned"}
 SAFE_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
@@ -437,6 +470,9 @@ def validate(led: Ledger, recon: Reconciled | None = None) -> list[str]:
             rid = rec.get("id", "")
             if _blank(rid):
                 errs.append(f"grrp-{_q(kind)} block without id")
+            elif not SAFE_ID_RE.fullmatch(rid):
+                # Messages print an unsafe id as <invalid>, so two such ids would read as one record.
+                errs.append(f"grrp-{_q(kind)} block id is not a safe token ({SAFE_ID_RE.pattern})")
             elif rid in ids:
                 errs.append(f"{_q(rid)}: duplicate id")
             ids.add(rid)
@@ -461,12 +497,12 @@ def validate(led: Ledger, recon: Reconciled | None = None) -> list[str]:
 
     for f in led.of("finding"):
         fid = f.get("id", "?")
-        for key, allowed in (("classification", CLASSIFICATIONS), ("assessment", ASSESSMENTS),
+        for key, allowed in (("source", SOURCES), ("classification", CLASSIFICATIONS), ("assessment", ASSESSMENTS),
                              ("resolution", RESOLUTIONS), ("authority", AUTHORITIES),
                              ("execution_state", set(EXEC_STATES))):
             if f.get(key, "") not in allowed:
                 errs.append(f"{_q(fid)}: {key} '{_q(f.get(key, ''))}' not in {sorted(allowed)}")
-        for key in ("source", "owner", "requirement"):
+        for key in ("owner", "requirement"):  # an empty source fails the enum check above
             if _blank(f.get(key)):
                 errs.append(f"{_q(fid)}: '{key}' must never be empty")
         # Required keys whose value may be the canonical empty ('none' / blank) must still be written:
@@ -620,6 +656,10 @@ def gate(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
     pending_transfers = []
     for t in led.of("transfer"):
         why = transfer_acceptance(t, led.path, queue)
+        st = rec.states.get((t.get("id", ""), "transfer"))
+        if not why and st is not None and st.outcome in {"failed", "denied"}:
+            # An ack is not acceptance once the receiver reports the transfer failed or refused.
+            why = f"receiver reported the transfer {st.outcome} ({_q(st.event_id)})"
         if why:
             pending_transfers.append(f"{_q(t.get('id'))}: {why}")
     for st in rec.states.values():
@@ -705,7 +745,9 @@ writer: parent session only — children return receipts, never edit this file
 
 
 def cmd_init(a: argparse.Namespace) -> int:
-    d = Path(a.dir) if a.dir else DEFAULT_DIR
+    d = _ledger_dir(a)
+    if d is None:
+        return EXIT["invalid"]
     existing = sorted(d.glob(f"*-{a.slug}.ledger.md")) if d.exists() else []
     if existing:
         print(f"existing: {existing[-1]}")
@@ -823,8 +865,26 @@ def read_receipts(paths: list[Path]) -> tuple[list[tuple[str, dict[str, str]]], 
         for kind in r.blocks:
             if kind != "event":
                 problems.append(f"{p.name}: grrp-{kind} ignored; receipts carry grrp-event blocks only")
+        if not r.of("event"):
+            problems.append(f"{p.name}: no grrp-event block; nothing applied from this receipt")
         out.extend((p.name, ev) for ev in r.of("event"))
     return out, problems
+
+
+def misnamed_receipts(box: Path) -> list[str]:
+    """Inbox files that carry a grrp fence but are not `*.md`: `apply` never reads them, so each is
+    reported rather than silently skipped. Files without a grrp fence are not receipts (desktop.ini)."""
+    out: list[str] = []
+    for p in sorted(box.iterdir()) if box.is_dir() else []:
+        if not p.is_file() or p.suffix == ".md":
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if any(_mentions_grrp_fence(line) for line in text.splitlines()):
+            out.append(f"{p.name}: not a .md receipt; not applied (rename it to <name>.md)")
+    return out
 
 
 def apply_events(led: Ledger, incoming: list[tuple[str, dict[str, str]]], today: str,
@@ -878,6 +938,7 @@ def cmd_apply(a: argparse.Namespace) -> int:
     box = inbox_dir(path)
     paths = [Path(r) for r in a.receipts] + (sorted(box.glob("*.md")) if box.is_dir() else [])
     incoming, problems = read_receipts(paths)
+    problems += misnamed_receipts(box)
     res = apply_events(led, incoming, _dt.date.today().isoformat())
     res.rejected[:0] = problems
     after = parse_text(path, res.text)
@@ -955,7 +1016,8 @@ def handoff(led: Ledger, queue: Path | None = DEFAULT_QUEUE) -> dict:
         pending = [n for n in OBLIGATIONS if eff.get(n, ("", ""))[0] == "pending"]
         if pending:
             continuing.setdefault(who, []).append(f"{_q(fid)}({','.join(pending)})")
-            covered.add(_q(fid))
+            # Only those tracks are shown: "not assessed" / "still open" on the finding stay open work.
+            covered_tracks.update((_q(fid), _q(n)) for n in pending)
     deferred, blockers = [], list(g["blocked"])
     for (target, track), st in sorted(rec.states.items()):
         e = st.event or {}
@@ -1141,16 +1203,48 @@ def _resolve(base: Path, p: str) -> Path:
     return q if q.is_absolute() else (base / q)
 
 
-def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path(".")) -> str | None:
+# CP-15: a check must be able to fail. On a delivery or integration item the delivered revision is a
+# literal commit id, and the ref it must be in is never relative (`~`, `^`, `@{...}`, `:`) or a HEAD-style
+# pointer; `file` names the bytes it expects (`same`, or a content hash).
+ANCESTOR_LITERAL_KINDS = {"delivery", "integration"}
+COMMIT_ID_RE = re.compile(r"[0-9a-fA-F]{7,64}")
+RELATIVE_REV_RE = re.compile(r"[~^:]|@\{|(?:^|/)(?:@|HEAD|FETCH_HEAD|ORIG_HEAD|MERGE_HEAD|CHERRY_PICK_HEAD|"
+                             r"REVERT_HEAD|REBASE_HEAD|BISECT_HEAD)$")
+FILE_HASH_RE = re.compile(r"sha256:([0-9a-fA-F]{64})")
+
+
+def _commit_of(repo: Path, rev: str) -> str | None:
+    """The full commit id `rev` names in `repo`, or None when git cannot resolve it to a commit."""
+    r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+                       capture_output=True, text=True, timeout=30)
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path("."), *, kind: str = "",
+               status: str = "") -> str | None:
     """One deterministic check; None = passed, else why it failed. Specs (space-separated):
-    `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo path>` · `file <path>` ·
+    `ledger <id> <verdict>` · `git-ancestor <rev> <ref> <repo path>` · `file <path> sha256:<hex>` ·
     `same <path> == <path>` (byte-identical, e.g. a published mirror). Relative paths resolve
-    against `base` (the manifest's folder). Vacuous forms (`rev == ref`, a path compared with
-    itself) and option-like revisions fail."""
+    against `base` (the manifest's folder). `kind` and `status` are the item's. Vacuous forms fail:
+    `rev` and `ref` naming the same commit (after `git rev-parse`), a path compared with itself, a
+    `file` without a content hash, and `ledger <id> <verdict>` other than `complete` on a complete
+    item. On a delivery or integration item `rev` must be a literal commit id and `ref` must not be
+    relative or a HEAD-style pointer. Option-like revisions fail."""
     parts = spec.split()
     op = parts[0] if parts else ""
     try:
         if op == "ledger" and len(parts) == 3:
+            if status == "complete" and parts[2] != "complete":
+                return f"a complete item needs 'ledger <id> complete', not {_q(parts[2])}"
             g = ledgers.get(parts[1])
             if g is None:
                 return f"unknown ledger {_q(parts[1])}"
@@ -1161,13 +1255,28 @@ def _run_check(spec: str, ledgers: dict[str, dict], base: Path = Path(".")) -> s
                 return "revision must not start with '-'"
             if rev == ref:
                 return "vacuous check (revision compared with itself)"
-            r = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", rev, ref],
+            if kind in ANCESTOR_LITERAL_KINDS and (not COMMIT_ID_RE.fullmatch(rev) or RELATIVE_REV_RE.search(ref)):
+                return (f"relative or symbolic revision on a {kind} item (rev {_q(rev)} must be a literal "
+                        f"commit id; ref {_q(ref)} must not be HEAD-style or use ~ ^ @{{}} :)")
+            rev_sha, ref_sha = _commit_of(repo, rev), _commit_of(repo, ref)
+            if rev_sha is None or ref_sha is None:
+                return f"git cannot resolve {_q(rev)} or {_q(ref)}"
+            if rev_sha == ref_sha:
+                return f"vacuous check ({_q(rev)} and {_q(ref)} are the same commit)"
+            r = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", rev_sha, ref_sha],
                                capture_output=True, text=True, timeout=30)
             if r.returncode == 0:
                 return None
             return f"{_q(rev)} is not in {_q(ref)}" if r.returncode == 1 else f"git cannot resolve {_q(rev)} or {_q(ref)}"
         if op == "file" and len(parts) >= 2:
-            return None if _resolve(base, " ".join(parts[1:])).is_file() else "file missing"
+            m = FILE_HASH_RE.fullmatch(parts[-1]) if len(parts) >= 3 else None
+            if m is None:
+                return ("vacuous check (a file's existence proves nothing): add its content hash "
+                        "`file <path> sha256:<64 hex>`, or compare it with `same`")
+            path = _resolve(base, " ".join(parts[1:-1]))
+            if not path.is_file():
+                return "file missing"
+            return None if _sha256_file(path) == m.group(1).lower() else "file content differs from its sha256"
         if op == "same" and "==" in parts:
             i = parts.index("==")
             a, b = _resolve(base, " ".join(parts[1:i])), _resolve(base, " ".join(parts[i + 1:]))
@@ -1449,7 +1558,8 @@ def batch_check(path: Path, queue: Path | None = DEFAULT_QUEUE) -> dict:
                 errors.append(f"item {q}: covers '{_q(lid)}:{_q(ref)}' names no listed ledger")
             covered_by.setdefault((lid, ref), []).append((iid, st))
         # A claim is only as good as its check: a cleared item whose check fails is not cleared.
-        fails = [f"{_q(spec.split()[0])}: {why}" for spec in specs for why in [_run_check(spec, ledgers, base)] if why]
+        fails = [f"{_q(spec.split()[0])}: {why}" for spec in specs
+                 for why in [_run_check(spec, ledgers, base, kind=kind, status=st)] if why]
         label = f"{q}: {st} ({_q(kind)}, owner {_q(it.get('owner'))})"
         if st in ITEM_CLEARED and st != "owner_accepted" and fails:
             failed_claims.append(f"{q}: claimed {st}, check failed ({'; '.join(fails)})")
@@ -1643,7 +1753,9 @@ relay_requests: 0
 
 
 def cmd_batch_init(a: argparse.Namespace) -> int:
-    d = Path(a.dir) if a.dir else DEFAULT_DIR
+    d = _ledger_dir(a)
+    if d is None:
+        return EXIT["invalid"]
     name_re = re.compile(rf"\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(a.slug)}\.batch\.md")
     existing = sorted(x for x in d.iterdir() if name_re.fullmatch(x.name)) if d.is_dir() else []
     if existing:
@@ -1707,8 +1819,16 @@ def cmd_batch(a: argparse.Namespace) -> int:
     return EXIT[r["verdict"]]
 
 
+class _Parser(argparse.ArgumentParser):
+    """A usage error exits 3 (invalid), never argparse's 2, which reads as the `blocked` verdict."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(EXIT["invalid"], f"{self.prog}: error: {message}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="grrp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = _Parser(prog="grrp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("init"); p.add_argument("--slug", required=True); p.add_argument("--dir"); p.add_argument("--objective")
     p = sub.add_parser("status"); p.add_argument("ledger")

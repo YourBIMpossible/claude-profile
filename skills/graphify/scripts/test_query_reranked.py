@@ -11,12 +11,14 @@ Run: python -m unittest test_query_reranked -v
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -25,7 +27,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import query_reranked as qr  # noqa: E402
 
-BIMPOSSIBLE_BACKEND = Path(r"F:\BIMpossible\backend")
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))  # the profile clone's tools/
+import machine_config  # noqa: E402
+
+BIMPOSSIBLE_BACKEND = Path(machine_config.load()["repos_root"]) / "BIMpossible" / "backend"
+
+
+HAVE_GRAPHIFY = importlib.util.find_spec("graphify") is not None
+
+
+def _graphify_stub() -> dict:
+    """Stand-ins for the two `graphify` modules the wrapper imports, for an environment without the graphify package (CI
+    installs only pytest): `graphify.paths` (one constant, the value the real package defines, checked below) and
+    `graphify.querylog` (log_query records its calls on `.calls` instead of writing a log)."""
+    pkg = types.ModuleType("graphify")
+    pkg.__path__ = []
+    paths = types.ModuleType("graphify.paths")
+    paths.GRAPHIFY_OUT = "graphify-out"
+    querylog = types.ModuleType("graphify.querylog")
+    querylog.calls = []
+    querylog.log_query = lambda **kwargs: querylog.calls.append(kwargs)
+    pkg.paths, pkg.querylog = paths, querylog
+    return {"graphify": pkg, "graphify.paths": paths, "graphify.querylog": querylog}
+
+
+class WithoutGraphifyPackage(unittest.TestCase):
+    """Tests of the wrapper's own logic must not need the graphify package: with it absent, the two modules are stubbed;
+    with it present, the real ones are used."""
+
+    def setUp(self):
+        super().setUp()
+        if not HAVE_GRAPHIFY:
+            patcher = mock.patch.dict(sys.modules, _graphify_stub())
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class TestGraphifyStub(unittest.TestCase):
+    @unittest.skipUnless(HAVE_GRAPHIFY, "the graphify package is not installed here")
+    def test_the_stub_constant_is_the_real_one(self):
+        from graphify.paths import GRAPHIFY_OUT
+        self.assertEqual(_graphify_stub()["graphify.paths"].GRAPHIFY_OUT, GRAPHIFY_OUT)
+
+    @unittest.skipUnless(HAVE_GRAPHIFY, "the graphify package is not installed here")
+    def test_the_stub_log_query_takes_the_keywords_the_real_one_takes(self):
+        import inspect
+        from graphify import querylog
+        real = inspect.signature(querylog.log_query)
+        wanted = {"kind", "question", "corpus", "result", "mode", "depth", "token_budget", "duration_ms"}
+        self.assertTrue(wanted <= set(real.parameters) or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in real.parameters.values()), real)
 
 
 class TestTokenize(unittest.TestCase):
@@ -234,7 +285,7 @@ class TestArgParsing(unittest.TestCase):
         self.assertEqual(unknown, ["--some-future-flag", "v"])
 
 
-class TestGraphResolution(unittest.TestCase):
+class TestGraphResolution(WithoutGraphifyPackage):
     def _args(self, graph=None):
         return mock.Mock(graph=graph)
 
@@ -256,8 +307,8 @@ class TestGraphResolution(unittest.TestCase):
             self.assertIsNone(args.graph)
 
     def test_resolved_graph_fills_missing_arg(self):
-        found = qr.resolve_graph.ResolvedGraph("G:/r/backend/graphify-out/graph.json",
-                                               "G:/r/backend", "repo-subdir", "G:/r/backend")
+        found = qr.resolve_graph.ResolvedGraph("X:/r/backend/graphify-out/graph.json",
+                                               "X:/r/backend", "repo-subdir", "X:/r/backend")
         with tempfile.TemporaryDirectory() as td:
             args = self._args()
             with mock.patch.object(qr.resolve_graph, "resolve", return_value=found):
@@ -272,7 +323,7 @@ class TestGraphResolution(unittest.TestCase):
             self.assertIsNone(args.graph)
 
 
-class TestPassthroughTelemetry(unittest.TestCase):
+class TestPassthroughTelemetry(WithoutGraphifyPackage):
     """Passthrough queries log exactly one wrapper record stamped rerank=false."""
 
     STDOUT = b"Traversal: BFS | 1 nodes found\n\nNODE Foo [src=a.py loc=L1]\n"
@@ -288,6 +339,7 @@ class TestPassthroughTelemetry(unittest.TestCase):
                    "GRAPHIFY_QUERY_LOG_DISABLE": ""}
             with (
                 mock.patch.dict(os.environ, env),
+                mock.patch.object(qr, "GRAPHIFY", Path(td) / "graphify.exe"),
                 mock.patch.object(qr.subprocess, "run", return_value=completed) as run,
                 mock.patch.object(qr.Path, "cwd", return_value=Path(td)),
                 mock.patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
@@ -298,6 +350,7 @@ class TestPassthroughTelemetry(unittest.TestCase):
                        if log.exists() else [])
             return code, records, run
 
+    @unittest.skipUnless(HAVE_GRAPHIFY, "reads the record the graphify package's querylog writes")
     def test_success_logs_one_rerank_false_record(self):
         code, records, run = self._run(0, ["find foo"])
         self.assertEqual(code, 0)
@@ -310,6 +363,7 @@ class TestPassthroughTelemetry(unittest.TestCase):
         self.assertEqual(rec["nodes_returned"], 1)
         self.assertEqual(run.call_args.kwargs["env"]["GRAPHIFY_QUERY_LOG_DISABLE"], "1")
 
+    @unittest.skipUnless(HAVE_GRAPHIFY, "reads the record the graphify package's querylog writes")
     def test_dfs_logs_mode_dfs_even_with_gate_forced_on(self):
         code, records, _ = self._run(0, ["find foo", "--dfs", "--rerank"])
         self.assertEqual(code, 0)
@@ -317,13 +371,201 @@ class TestPassthroughTelemetry(unittest.TestCase):
         self.assertIs(records[0]["rerank"], False)
 
     def test_failed_query_logs_nothing(self):
-        code, records, _ = self._run(2, ["find foo"])
-        self.assertEqual(code, 2)
+        # rc 3, not 2: 2 is the wrapper's own graphify-not-found exit.
+        code, records, _ = self._run(3, ["find foo"])
+        self.assertEqual(code, 3)
         self.assertEqual(records, [])
 
 
+class TestPassthroughTelemetryContract(unittest.TestCase):
+    """The wrapper's side of the logging contract, against a stubbed querylog (so it runs without the graphify package):
+    exactly one record per query, stamped rerank=false, the mode and question passed through, none for a failed query."""
+
+    STDOUT = b"Traversal: BFS | 1 nodes found\n\nNODE Foo [src=a.py loc=L1]\n"
+
+    def _run(self, rc, argv):
+        stub = _graphify_stub()
+        completed = subprocess.CompletedProcess([], rc, stdout=self.STDOUT, stderr=b"")
+        with tempfile.TemporaryDirectory() as td:
+            graph = Path(td) / "graphify-out" / "graph.json"
+            graph.parent.mkdir()
+            graph.write_text("{}")
+            env = {"GRAPHIFY_RERANK": "", "GRAPHIFY_QUERY_LOG_DISABLE": ""}
+            with (
+                mock.patch.dict(sys.modules, stub),
+                mock.patch.dict(os.environ, env),
+                mock.patch.object(qr, "GRAPHIFY", Path(td) / "graphify.exe"),
+                mock.patch.object(qr.subprocess, "run", return_value=completed),
+                mock.patch.object(qr.Path, "cwd", return_value=Path(td)),
+                mock.patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+                mock.patch.object(sys, "stderr", io.TextIOWrapper(io.BytesIO())),
+            ):
+                code = qr.main(argv)
+            return code, list(stub["graphify.querylog"].calls)
+
+    def test_success_logs_one_rerank_false_record(self):
+        code, calls = self._run(0, ["find foo"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertIs(call["rerank"], False)
+        self.assertEqual((call["via"], call["kind"], call["mode"], call["question"]), ("wrapper", "query", "bfs", "find foo"))
+        self.assertTrue(call["corpus"].endswith("graph.json"))
+
+    def test_dfs_logs_mode_dfs_even_with_gate_forced_on(self):
+        code, calls = self._run(0, ["find foo", "--dfs", "--rerank"])
+        self.assertEqual(code, 0)
+        self.assertEqual((calls[0]["mode"], calls[0]["rerank"]), ("dfs", False))
+
+    def test_failed_query_logs_nothing(self):
+        code, calls = self._run(3, ["find foo"])
+        self.assertEqual(code, 3)
+        self.assertEqual(calls, [])
+
+
+class TestMissingBinary(unittest.TestCase):
+    """A missing graphify binary gives one clear stderr line and exit 2, never a traceback."""
+
+    SCRIPT = Path(__file__).resolve().parent / "query_reranked.py"
+
+    def _run_script(self, mode_flag: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "no" / "graphify.exe"
+            env = dict(os.environ, GRAPHIFY_EXE=str(missing), GRAPHIFY_QUERY_LOG_DISABLE="1")
+            return subprocess.run(
+                [sys.executable, str(self.SCRIPT), "find foo", mode_flag],
+                cwd=td, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+
+    def _assert_clear_failure(self, rc: int, stderr: str) -> None:
+        self.assertEqual(rc, 2, stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertIn("graphify not found (GRAPHIFY_EXE=", stderr)
+
+    def test_missing_graphify_exe_rerank(self):
+        proc = self._run_script("--rerank")
+        self._assert_clear_failure(proc.returncode, proc.stderr)
+
+    def test_bare_graphify_exe_with_a_file_of_that_name_in_the_folder_is_the_plain_not_found(self):
+        # #65 review N1, end to end: GRAPHIFY_EXE=graphify, graphify not on PATH, and a file called graphify in the
+        # current folder is the plain not-found line, never "resolved graphify no longer exists".
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as empty_path_dir:
+            (Path(td) / "graphify").write_text("")
+            env = dict(os.environ, GRAPHIFY_EXE="graphify", PATH=empty_path_dir, GRAPHIFY_QUERY_LOG_DISABLE="1")
+            proc = subprocess.run(
+                [sys.executable, str(self.SCRIPT), "find foo", "--no-rerank"],
+                cwd=td, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+        self._assert_clear_failure(proc.returncode, proc.stderr)
+        self.assertIn("graphify not found (GRAPHIFY_EXE=graphify", proc.stderr)
+        self.assertNotIn("no longer exists", proc.stderr)
+
+    def test_missing_graphify_exe_no_rerank(self):
+        proc = self._run_script("--no-rerank")
+        self._assert_clear_failure(proc.returncode, proc.stderr)
+
+    def _main_with_vanishing_binary(self, argv: list[str]) -> tuple[int, str, Path]:
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as td:
+            vanished = Path(td) / "graphify.exe"
+        with (
+            mock.patch.dict(os.environ, {"GRAPHIFY_EXE": ""}),
+            mock.patch.object(qr, "GRAPHIFY", vanished),
+            mock.patch.object(qr, "_resolve_graph_arg"),
+            mock.patch.object(qr.subprocess, "run", side_effect=FileNotFoundError(2, "gone")),
+            mock.patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+            mock.patch.object(sys, "stderr", err),
+        ):
+            code = qr.main(argv)
+        return code, err.getvalue(), vanished
+
+    def test_binary_vanishing_mid_run_rerank(self):
+        code, stderr, vanished = self._main_with_vanishing_binary(["find foo", "--rerank"])
+        self._assert_clear_failure(code, stderr)
+        self.assertIn(str(vanished), stderr)
+
+    def test_binary_vanishing_mid_run_no_rerank(self):
+        code, stderr, vanished = self._main_with_vanishing_binary(["find foo", "--no-rerank"])
+        self._assert_clear_failure(code, stderr)
+        self.assertIn(str(vanished), stderr)
+
+
+class TestGraphifyExeResolution(unittest.TestCase):
+    """GRAPHIFY_EXE accepts a file path, a bare command name on PATH, or (Windows) a
+    path without .exe -- resolved like a shell would, never only as a literal file."""
+
+    def _fake_bin_dir(self, td: str) -> Path:
+        bin_dir = Path(td) / "bin"
+        bin_dir.mkdir()
+        for name in ("graphify", "graphify.exe"):
+            fake = bin_dir / name
+            fake.write_text("")
+            fake.chmod(0o755)
+        return bin_dir
+
+    def test_bare_name_resolves_through_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            bin_dir = self._fake_bin_dir(td)
+            with mock.patch.dict(os.environ, {"GRAPHIFY_EXE": "graphify", "PATH": str(bin_dir)}):
+                found = qr._find_graphify()
+            self.assertIsNotNone(found)
+            self.assertEqual(found.parent.resolve(), bin_dir.resolve())
+
+    @unittest.skipUnless(os.name == "nt",
+                         "PATHEXT completion of an extensionless path is Windows-only")
+    def test_extensionless_path_resolves_with_pathext(self):
+        with tempfile.TemporaryDirectory() as td:
+            exe = Path(td) / "graphify.exe"
+            exe.write_text("")
+            with mock.patch.dict(os.environ, {"GRAPHIFY_EXE": str(Path(td) / "graphify")}):
+                found = qr._find_graphify()
+            self.assertIsNotNone(found)
+            self.assertEqual(found.resolve(), exe.resolve())
+
+    def test_missing_override_is_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "no" / "graphify.exe"
+            with mock.patch.dict(os.environ, {"GRAPHIFY_EXE": str(missing)}):
+                self.assertIsNone(qr._find_graphify())
+
+    def _in_folder_with_a_graphify_file(self, override: str, path_dir: str):
+        """_find_graphify() for GRAPHIFY_EXE=override, run from a folder that holds a file named `graphify`."""
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "graphify").write_text("")
+            before = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch.dict(os.environ, {"GRAPHIFY_EXE": override, "PATH": path_dir}):
+                    return qr._find_graphify()
+            finally:
+                os.chdir(before)
+
+    def test_a_bare_name_is_not_taken_as_a_file_in_the_current_folder(self):
+        # #65 review N1: `GRAPHIFY_EXE=graphify` names a command, resolved like a shell would (PATH). A file of that
+        # name in the current folder is not it; accepting it gave a relative path that "vanished" on the next cd.
+        with tempfile.TemporaryDirectory() as empty_path_dir:
+            self.assertIsNone(self._in_folder_with_a_graphify_file("graphify", empty_path_dir))
+
+    def test_a_bare_name_still_resolves_on_path_when_a_file_of_that_name_is_in_the_folder(self):
+        with tempfile.TemporaryDirectory() as td:
+            bin_dir = self._fake_bin_dir(td)
+            found = self._in_folder_with_a_graphify_file("graphify", str(bin_dir))
+            self.assertIsNotNone(found)
+            self.assertEqual(found.parent.resolve(), bin_dir.resolve())
+
+    def test_a_relative_path_with_a_separator_is_still_a_file_check(self):
+        # either spelling of the separator: the native one, and the forward slash Windows accepts too
+        for spelling in (os.path.join(".", "graphify"), "./graphify"):
+            with self.subTest(spelling=spelling):
+                found = self._in_folder_with_a_graphify_file(spelling, "")
+                self.assertIsNotNone(found)
+                self.assertTrue(found.name.startswith("graphify"))
+
+
 @unittest.skipUnless(
-    qr.GRAPHIFY.exists() and (BIMPOSSIBLE_BACKEND / "graphify-out" / "graph.json").exists(),
+    qr.GRAPHIFY is not None and qr.GRAPHIFY.exists()
+    and (BIMPOSSIBLE_BACKEND / "graphify-out" / "graph.json").exists(),
     "graphify binary or BIMpossible backend graph not available on this machine",
 )
 class TestLiveIntegration(unittest.TestCase):

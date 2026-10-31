@@ -1,0 +1,199 @@
+"""Install-Rea.ps1 under Windows PowerShell 5.1 and PowerShell 7, with every external tool stubbed.
+
+node, npm and claude are .cmd stubs in a temp folder. PATH holds only that folder and System32,
+so no real Node.js, npm or Claude CLI can be reached and nothing is installed or registered.
+The npm stub's `install` is a no-op, and the claude stub keeps its "registration" as a marker
+file in the temp folder.
+
+Under 5.1, ErrorActionPreference=Stop turns redirected native stderr into a terminating error,
+so each case runs on both shells.
+
+Run: python tools/tests/test_install_rea.py   (or pytest tools/tests)
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parents[1] / "Install-Rea.ps1"
+SHELLS = [s for s in ("powershell.exe", "pwsh") if shutil.which(s)] if os.name == "nt" else []
+
+CLAUDE_STUB = r"""@echo off
+echo %*>>"{log}"
+if "%2"=="get" goto get
+if "%2"=="remove" goto remove
+if "%2"=="add" goto add
+exit /b 9
+:get
+if exist "{marker}" goto registered
+echo No MCP server found with name: %3 1>&2
+exit /b 1
+:registered
+echo rea:
+echo   Scope: User config (available in all your projects)
+echo   Status: %STUB_STATUS%
+echo   Command: %STUB_COMMAND%
+echo   Args: %STUB_ARGS%
+exit /b 0
+:remove
+if "%STUB_REMOVE_FAIL%"=="1" goto removefail
+del "{marker}"
+exit /b 0
+:removefail
+echo Failed to remove MCP server rea: config is locked 1>&2
+exit /b 1
+:add
+type nul > "{marker}"
+echo Added stdio MCP server rea
+exit /b 0
+"""
+
+NPM_STUB = r"""@echo off
+echo %*>>"{log}"
+if "%1"=="prefix" goto prefix
+exit /b 0
+:prefix
+if "%STUB_NPM_WARN%"=="1" echo npm warn config global --global, --local are deprecated. 1>&2
+echo {prefix}
+exit /b 0
+"""
+
+NODE_STUB = r"""@echo off
+if "%STUB_NODE_WARN%"=="1" echo node warning: stub stderr line 1>&2
+echo %STUB_NODE_VERSION%
+"""
+
+
+@unittest.skipUnless(SHELLS, "Windows with powershell.exe and/or pwsh")
+class InstallReaStubbed(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="install-rea-test-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.bin = self.root / "bin"
+        self.prefix = self.root / "npmprefix"
+        pkg = self.prefix / "node_modules" / "rea-agents"
+        (pkg / "scripts").mkdir(parents=True)
+        self.bin.mkdir()
+        (pkg / "package.json").write_text('{"version": "0.0.0-stub"}', encoding="utf-8")
+        (pkg / "scripts" / "rea.mjs").write_text("", encoding="utf-8")
+        self.entry_forward = str(pkg / "scripts" / "rea.mjs").replace("\\", "/")
+        self.log = self.root / "calls.log"
+        self.marker = self.root / "registered.marker"
+        self.write_stub("node", NODE_STUB)
+        self.write_stub("npm", NPM_STUB.replace("{prefix}", str(self.prefix)))
+        self.write_stub("claude", CLAUDE_STUB)
+        system32 = Path(os.environ["SystemRoot"]) / "System32"
+        self.env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{system32}", "STUB_NODE_VERSION": "v24.11.0",
+                    "STUB_STATUS": "Connected", "STUB_COMMAND": "node", "STUB_ARGS": f"{self.entry_forward} --mcp"}
+
+    def write_stub(self, name: str, body: str) -> None:
+        text = body.replace("{log}", str(self.log)).replace("{marker}", str(self.marker))
+        (self.bin / f"{name}.cmd").write_text(text.replace("\n", "\r\n"), encoding="ascii")
+
+    def run_script(self, shell: str, *args: str, **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT), *args],
+                              env={**self.env, **env}, capture_output=True, text=True, timeout=120)
+
+    def calls(self) -> str:
+        return self.log.read_text(encoding="ascii") if self.log.exists() else ""
+
+    def test_unregistered_server_reaches_the_registration_step(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                proc = self.run_script(shell, "-DryRun")
+                out = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, out)
+                self.assertNotIn("NativeCommandError", out)
+                self.assertIn("[rea] claude mcp add --scope user rea -- node", out)
+
+    # CT-SLOP1026 / CP-7: a native stderr line under EAP Stop must not abort the run on 5.1.
+    def test_npm_prefix_stderr_warning_does_not_abort(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                proc = self.run_script(shell, "-DryRun", STUB_NPM_WARN="1")
+                out = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, out)
+                self.assertNotIn("RemoteException", out)
+                self.assertIn(f"[rea] claude mcp add --scope user rea -- node {self.entry_forward} --mcp", out)
+
+    def test_node_version_stderr_line_does_not_abort(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                proc = self.run_script(shell, "-DryRun", STUB_NODE_WARN="1")
+                out = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, out)
+                self.assertNotIn("RemoteException", out)
+                self.assertIn("[rea] claude mcp add --scope user rea -- node", out)
+
+    # CT-SLOP1026 / CP-22: a failed `claude mcp remove` must stop the run before `mcp add`.
+    def test_failed_remove_stops_before_re_adding(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.marker.write_text("", encoding="ascii")
+                self.log.unlink(missing_ok=True)
+                proc = self.run_script(shell, STUB_COMMAND="npx", STUB_REMOVE_FAIL="1")
+                out = proc.stdout + proc.stderr
+                self.assertNotEqual(proc.returncode, 0, out)
+                self.assertIn("claude mcp remove --scope user rea failed (exit 1)", out)
+                self.assertIn("not re-adding it. Failed to remove MCP server rea", out)
+                self.assertIn("mcp remove --scope user rea", self.calls())
+                self.assertNotIn("mcp add", self.calls())
+
+    # CT-SLOP1026 / CP-23: every ending, skips included, reports one status on the success stream
+    # so bootstrap.ps1 can print it; skips still exit 0.
+    def status(self, shell: str, *args: str, **env: str) -> str:
+        script = str(SCRIPT).replace("'", "''")
+        command = f"$r = @(& '{script}' {' '.join(args)}); Write-Host ('STATUS=[' + ($r -join '|') + ']')"
+        proc = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                              env={**self.env, **env}, capture_output=True, text=True, timeout=120)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        lines = [line for line in proc.stdout.splitlines() if line.startswith("STATUS=")]
+        self.assertEqual(len(lines), 1, out)
+        return lines[0][len("STATUS=["):-1]
+
+    def test_status_when_node_is_missing(self) -> None:
+        (self.bin / "node.cmd").unlink()
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell), "skipped: Node.js/npm not on PATH")
+
+    def test_status_when_node_is_too_old(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell, STUB_NODE_VERSION="v18.0.0"),
+                                 "skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)")
+
+    def test_status_when_claude_is_missing(self) -> None:
+        (self.bin / "claude.cmd").unlink()
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell), "not registered: 'claude' CLI not on PATH")
+
+    def test_status_of_a_dry_run(self) -> None:
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell, "-DryRun"), "dry run: no changes made")
+
+    def test_status_when_already_registered(self) -> None:
+        self.marker.write_text("", encoding="ascii")
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(self.status(shell), "already registered")
+
+    def test_status_after_registering(self) -> None:
+        for shell in SHELLS:
+            for reported, expected in (("Connected", "registered and connected"),
+                                       ("Failed to connect", "registered, not connected")):
+                with self.subTest(shell=shell, reported=reported):
+                    self.marker.unlink(missing_ok=True)
+                    self.assertEqual(self.status(shell, STUB_STATUS=reported), expected)
+                    self.assertTrue(self.marker.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

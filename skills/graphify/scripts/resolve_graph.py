@@ -2,7 +2,7 @@
 
 graphify's own CLI only looks at `<cwd>/graphify-out/graph.json`. Sessions
 rarely start there: they start at a repo root whose graph lives in a subfolder
-(`F:\\BIMpossible` -> `backend\\graphify-out`), or in a worktree under
+(`{repos}\\BIMpossible` -> `backend\\graphify-out`), or in a worktree under
 `.claude\\worktrees\\<lane>`, where `graphify-out/` (gitignored) never exists.
 This resolves the canonical graph instead of assuming it sits beside cwd.
 

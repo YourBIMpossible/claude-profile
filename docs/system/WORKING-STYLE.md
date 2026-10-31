@@ -1,11 +1,11 @@
-# F:\AI-Dev — Default Working Style (Canonical)
+# {repos}\AI-Dev — Default Working Style (Canonical)
 
-> **Precedence superseded by `F:\Claude-Profile\CLAUDE.md`** (Operating agreement + stop list). Where this file conflicts with it, CLAUDE.md wins.
+> **Precedence superseded by `{profile}\CLAUDE.md`** (Operating agreement + stop list). Where this file conflicts with it, CLAUDE.md wins.
 
-> **Relocated 2026-08-22** — moved from `F:\AI-Dev\system\` to `F:\Claude-Profile\docs\system\` (AI-Dev extraction). `F:\AI-Dev` is now the owner's personal sandbox; project roots are `F:\BIMpossible*`, `F:\Claude-Profile`, `F:\Claude-Tools`, `F:\AI-Dashboard`, `F:\AI-Brain-Data`. Historical `F:\AI-Dev\...` paths below translate via `RENAMES.md`.
+> **Relocated 2026-08-22** — moved from `{repos}\AI-Dev\system\` to `{profile}\docs\system\` (AI-Dev extraction). `{repos}\AI-Dev` is now the owner's personal sandbox; project roots are `{repos}\BIMpossible*`, `{profile}`, `{tools}`, `{repos}\AI-Dashboard`, `{repos}\AI-Brain-Data`. Historical `{repos}\AI-Dev\...` paths below translate via `RENAMES.md`.
 
 ## Status
-Canonical working-style for all projects in `F:\AI-Dev`. Subfolder rules cross-reference this file. Last updated 2026-05-30.
+Canonical working-style for all projects in `{repos}\AI-Dev`. Subfolder rules cross-reference this file. Last updated 2026-05-30.
 
 ## Default: do what's asked, at the scope asked
 - Build exactly what I requested. Don't expand scope, add features, or "round up" to a fuller version unless I ask.

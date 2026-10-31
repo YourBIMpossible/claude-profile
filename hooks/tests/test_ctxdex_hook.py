@@ -1,25 +1,78 @@
 """Self-test driver for ctxdex_autoindex.py — exercises it exactly as Claude
 Code would (JSON on stdin, inspect stdout/exit code), then checks ctxdex's
-own DB for what did/didn't get indexed. Uses an isolated synthetic project
-so nothing touches real data.
+own DB for what did/didn't get indexed. Every run gets its own throwaway
+sandbox (a copy of ctxdex.py, so its database, a working directory and a fake
+home for the hook's log and tool-results tree), so nothing touches real data and
+two runs on one machine cannot collide (CT-SLOP1026 / N-3).
 """
 import json
+import os
+import shutil
 import subprocess
 import sys
 import sqlite3
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 HOOK = str(Path(__file__).resolve().parents[1] / "ctxdex_autoindex.py")
-CTXDEX = "F:/Claude-Tools/ctxdex/ctxdex.py"
-PROJECT = "ctxdex-hook-selftest"
-# Isolated synthetic scratch root under the OS temp dir — the self-test writes
-# fixture files at f"{CWD}-*.txt", so this MUST be a writable, throwaway location
-# outside any real tree (previously F:/AI-Dev/_scratch, which both created an
-# operative dependency on the retired AI-Dev root and littered that archive).
-CWD = str(Path(tempfile.gettempdir()) / "ctxdex-hook-selftest")
-DB_PATH = Path(f"F:/Claude-Tools/ctxdex/data/{PROJECT}.db")
+PROFILE = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROFILE / "tools"))
+import machine_config  # noqa: E402
+
+# The real ctxdex in this machine's claude-tools clone (CTXDEX_DIR overrides, as for the hook). It is only READ: each run copies
+# ctxdex.py into its own sandbox and works there.
+SOURCE_CTXDEX_DIR = Path(os.environ.get("CTXDEX_DIR") or Path(machine_config.load().get("tools_root") or "missing-claude-tools") / "ctxdex")
+
+# Per-run sandbox (set by setup_sandbox, removed by teardown_sandbox). ctxdex.py keeps its databases next to itself, the hook honours
+# CTXDEX_DIR, and Path.home() follows HOME and USERPROFILE, so a fresh temp root holding a copy of ctxdex.py and a fake home isolates
+# the database, the hook's log and the tool-results tree without changing the hook. The project name is the working directory's name
+# (the hook derives it from the cwd), made unique per run. The self-test writes fixture files at f"{CWD}-*.txt", so all of it lives
+# under the one throwaway root, outside any real tree.
+SANDBOX_ROOT = None
+CTXDEX_DIR = None
+CTXDEX = None
+PROJECT = None
+CWD = None
+DB_PATH = None
+TEST_HOME = None
+
+
+def setup_sandbox() -> Path:
+    """Create this run's sandbox and point the module's locations at it. Returns the sandbox root."""
+    global SANDBOX_ROOT, CTXDEX_DIR, CTXDEX, PROJECT, CWD, DB_PATH, TEST_HOME
+    root = Path(tempfile.mkdtemp(prefix="ctxdex-hook-selftest-"))
+    CTXDEX_DIR = root / "ctxdex"
+    CTXDEX_DIR.mkdir()
+    shutil.copy2(SOURCE_CTXDEX_DIR / "ctxdex.py", CTXDEX_DIR / "ctxdex.py")
+    CTXDEX = (CTXDEX_DIR / "ctxdex.py").as_posix()
+    PROJECT = "selftest-" + uuid.uuid4().hex[:10]
+    CWD = str(root / "work" / PROJECT)
+    DB_PATH = CTXDEX_DIR / "data" / f"{PROJECT}.db"
+    TEST_HOME = root / "home"
+    TEST_HOME.mkdir()
+    SANDBOX_ROOT = root
+    return root
+
+
+def teardown_sandbox() -> None:
+    """Remove this run's sandbox (best effort: a lock left by a just-exited child must not fail the run)."""
+    global SANDBOX_ROOT
+    if SANDBOX_ROOT is not None:
+        shutil.rmtree(SANDBOX_ROOT, ignore_errors=True)
+        SANDBOX_ROOT = None
+
+
+def hook_env(env_extra=None) -> dict:
+    """The environment the hook runs in: the sandbox's ctxdex copy and fake home, plus any extra variables."""
+    env = os.environ.copy()
+    env["CTXDEX_DIR"] = str(CTXDEX_DIR)
+    env["HOME"] = str(TEST_HOME)
+    env["USERPROFILE"] = str(TEST_HOME)
+    if env_extra:
+        env.update(env_extra)
+    return env
 
 results = []
 
@@ -29,13 +82,12 @@ def check(name, cond, detail=""):
     print(f"{'PASS' if cond else 'FAIL'}: {name}" + (f" -- {detail}" if detail and not cond else ""))
 
 
-def run_hook(payload, env_extra=None):
-    import os
-    env = os.environ.copy()
-    if env_extra:
-        env.update(env_extra)
+def run_hook(payload, env_extra=None, drop=(), hook=HOOK):
+    env = hook_env(env_extra)
+    for name in drop:
+        env.pop(name, None)
     p = subprocess.run(
-        [sys.executable, HOOK],
+        [sys.executable, str(hook)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -67,7 +119,15 @@ def clean_db():
 
 
 def run_checks() -> list:
-    """Drive ctxdex_autoindex.py through every scenario. Returns the (name, ok, detail) result tuples."""
+    """Drive ctxdex_autoindex.py through every scenario in a fresh sandbox. Returns the (name, ok, detail) result tuples."""
+    setup_sandbox()
+    try:
+        return _run_scenarios()
+    finally:
+        teardown_sandbox()
+
+
+def _run_scenarios() -> list:
     results.clear()
     # fresh start
     clean_db()
@@ -188,14 +248,14 @@ def run_checks() -> list:
     check("7a non-Bash tool_name exits 0", p.returncode == 0)
     check("7b non-Bash tool_name never indexed", len(rows) == 0, f"rows={rows}")
 
-    self_index_payload = dict(base_payload, tool_input={"command": "python F:/Claude-Tools/ctxdex/ctxdex.py search \"foo\""})
+    self_index_payload = dict(base_payload, tool_input={"command": f"python {CTXDEX} search \"foo\""})
     p = run_hook(self_index_payload)
     rows = db_rows("bash-output")
     check("7c command invoking ctxdex itself is skipped (no recursive self-index)", len(rows) == 0, f"rows={rows}")
     clean_db()
 
     # backslash path + bare-name-at-start variants must also trip the guard
-    self_index_bs_payload = dict(base_payload, tool_input={"command": r"python F:\Claude-Tools\ctxdex\ctxdex.py stats"})
+    self_index_bs_payload = dict(base_payload, tool_input={"command": "python " + CTXDEX.replace("/", "\\") + " stats"})
     p = run_hook(self_index_bs_payload)
     rows = db_rows("bash-output")
     check("7d backslash-path ctxdex.py invocation is skipped", len(rows) == 0, f"rows={rows}")
@@ -224,22 +284,20 @@ def run_checks() -> list:
     check("7g prose mention of 'ctxdex' (not an invocation) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
     clean_db()
 
-    mention_grep_payload = dict(base_payload, tool_input={"command": "grep -r ctxdex F:/Claude-Profile"})
+    mention_grep_payload = dict(base_payload, tool_input={"command": f"grep -r ctxdex {PROFILE.as_posix()}"})
     p = run_hook(mention_grep_payload)
     rows = db_rows("bash-output")
     check("7h grepping FOR 'ctxdex' (not invoking it) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
     clean_db()
 
-    mention_read_own_source_payload = dict(base_payload, tool_input={"command": "cat F:/Claude-Profile/hooks/ctxdex_autoindex.py"})
+    mention_read_own_source_payload = dict(base_payload, tool_input={"command": f"cat {PROFILE.as_posix()}/hooks/ctxdex_autoindex.py"})
     p = run_hook(mention_read_own_source_payload)
     rows = db_rows("bash-output")
     check("7i reading this hook's own source (ctxdex_autoindex.py, not ctxdex.py) is NOT suppressed", len(rows) >= 1, f"rows={rows}")
     clean_db()
 
     # --- Scenario 8: native persisted-output pointer is followed (and only when safe) ---
-    import os
-
-    TOOL_RESULTS_DIR = Path.home() / ".claude" / "projects" / "_ctxdex-hook-selftest" / "tool-results"
+    TOOL_RESULTS_DIR = TEST_HOME / ".claude" / "projects" / "_ctxdex-hook-selftest" / "tool-results"
     TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     real_big_file = TOOL_RESULTS_DIR / "selftest-real.txt"
     MARKER = "UNIQUE_MARKER_ONLY_IN_REAL_FILE_9f3a"
@@ -280,7 +338,7 @@ def run_checks() -> list:
     # This is the ACTUAL confirmed live payload shape (2026-08-07 live payload
     # dump) - the primary mechanism. Scenario 8 above tests the secondary
     # string-wrapper fallback only; this is what real Bash calls produce.
-    TOOL_RESULTS_DIR2 = Path.home() / ".claude" / "projects" / "_ctxdex-hook-selftest2" / "tool-results"
+    TOOL_RESULTS_DIR2 = TEST_HOME / ".claude" / "projects" / "_ctxdex-hook-selftest2" / "tool-results"
     TOOL_RESULTS_DIR2.mkdir(parents=True, exist_ok=True)
     real_big_file2 = TOOL_RESULTS_DIR2 / "selftest-real2.txt"
     MARKER2 = "UNIQUE_MARKER_ONLY_IN_REAL_FILE_DICT_7e2b"
@@ -355,6 +413,43 @@ def run_checks() -> list:
         TOOL_RESULTS_DIR2.parent.rmdir()
     except OSError:
         pass
+
+    # --- Scenario 10: malformed machine config is named in the preflight log -----
+    # CP-28: the config error must reach the "ctxdex.py not found" line instead of
+    # being swallowed. HOME/USERPROFILE point into a temp dir so neither the real
+    # machine config nor the real hook log is touched.
+    with tempfile.TemporaryDirectory(prefix="ctxdex-hook-badcfg-") as tmp:
+        bad_config = Path(tmp) / "profile-machine.json"
+        bad_config.write_text("{bad json", encoding="utf-8")
+        home = Path(tmp) / "home"
+        p = run_hook(base_payload, drop=("CTXDEX_DIR",), env_extra={
+            "CLAUDE_PROFILE_MACHINE_CONFIG": str(bad_config), "HOME": str(home), "USERPROFILE": str(home)})
+        hook_log = home / ".claude" / "hooks" / "ctxdex_autoindex.log"
+        logged = hook_log.read_text(encoding="utf-8") if hook_log.is_file() else ""
+        check("10a hook exits 0 with a malformed machine config", p.returncode == 0,
+              f"returncode={p.returncode} stderr={p.stderr[:300]}")
+        check("10b preflight still reports ctxdex.py not found", "ctxdex.py not found" in logged, logged[:500])
+        check("10c preflight log names the machine config error",
+              "machine config:" in logged and "not valid JSON" in logged, logged[:500])
+
+    # --- Scenario 11: machine_config.py that fails to import must not crash the hook
+    # The import runs at module load, outside main's guard. A scratch copy of the hook
+    # beside a scratch tools/machine_config.py with a syntax error: exit 0, cause logged.
+    with tempfile.TemporaryDirectory(prefix="ctxdex-hook-badmod-") as tmp:
+        scratch_hook = Path(tmp) / "profile" / "hooks" / "ctxdex_autoindex.py"
+        scratch_hook.parent.mkdir(parents=True)
+        scratch_hook.write_bytes(Path(HOOK).read_bytes())
+        (Path(tmp) / "profile" / "tools").mkdir()
+        (Path(tmp) / "profile" / "tools" / "machine_config.py").write_text("def broken(:\n", encoding="utf-8")
+        home = Path(tmp) / "home"
+        p = run_hook(base_payload, hook=scratch_hook, drop=("CTXDEX_DIR",),
+                     env_extra={"HOME": str(home), "USERPROFILE": str(home)})
+        hook_log = home / ".claude" / "hooks" / "ctxdex_autoindex.log"
+        logged = hook_log.read_text(encoding="utf-8") if hook_log.is_file() else ""
+        check("11a hook exits 0 when machine_config.py fails to import",
+              p.returncode == 0 and "Traceback" not in p.stderr, f"returncode={p.returncode} stderr={p.stderr[-300:]}")
+        check("11b preflight log names the import error",
+              "machine config: cannot import machine_config: SyntaxError" in logged, logged[:500])
     clean_db()
     return list(results)
 

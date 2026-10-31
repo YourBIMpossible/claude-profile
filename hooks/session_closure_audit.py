@@ -41,9 +41,85 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 HOOKS_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = HOOKS_DIR / "closure_audit_repos.json"
+sys.path.insert(0, str(HOOKS_DIR.parent / "tools"))
+try:
+    import machine_config  # roots for {repos}/{tools}/{profile}/{reports} in the config
+    MACHINE_CONFIG_ERROR = ""
+except Exception as _exc:  # fail open: an unusable helper must not take the audit down - but say so (CP-9)
+    machine_config = None
+    MACHINE_CONFIG_ERROR = f"{type(_exc).__name__}: {_exc}"
+
+
+def reports_dir() -> str:
+    """Where transient output belongs on this machine (the machine config's reports_dir)."""
+    try:
+        return str(machine_config.load().get("reports_dir") or "") or "the reports folder"
+    except Exception:
+        return "the reports folder"
+
+
+class Resolved(NamedTuple):
+    repos: list  # (name, path, required) for the entries that apply to this machine
+    config_error: str  # why the machine roots are unusable here ("" when they are fine)
+    broken: list  # names of entries not checked because of config_error
+    unset: dict  # expand message ("{tools} is not set in ...") -> names of optional entries skipped for it
+    required_unset: list  # (name, expand message) for "required": true entries whose root is not set
+    dead_roots: dict  # root token -> (its value, names of entries under it) for a set root that is not a folder
+
+
+def resolve_repos(cfg: dict) -> Resolved:
+    """The config entries that apply to this machine, plus every entry that could not be resolved.
+
+    An entry's path may use the machine roots ({repos}, {tools}, {profile}) and '~'. Optional 'platform'
+    (a sys.platform prefix: win32 / linux / darwin) scopes an entry to one OS. A missing repo is reported
+    only when the entry says "required": true - one shared config serves every machine, and most machines
+    hold only some of the repos. An entry that cannot be resolved is never dropped silently (CP-9): an
+    unusable machine config or helper is returned as config_error with the entries it blocked, an entry
+    naming a root this machine has not set is returned under unset (required_unset when the entry is
+    required: that is ATTENTION, like a missing required path), and an entry under a root that is set
+    but is not an existing folder (a misconfigured root, never a legitimately absent repo) under dead_roots."""
+    out, broken, unset, required_unset, dead_roots = [], [], {}, [], {}
+    config_error, roots_cfg = "", None
+    if machine_config is None:
+        config_error = f"the machine-roots helper tools/machine_config.py did not import ({MACHINE_CONFIG_ERROR})"
+    else:
+        try:
+            roots_cfg = machine_config.load()
+        except Exception as exc:
+            config_error = f"the machine config is unusable ({type(exc).__name__}: {exc})"
+            roots_cfg = {}  # {profile} still resolves; every other root reads as unset and lands in broken
+    root_values = machine_config.roots(roots_cfg) if machine_config is not None else {}
+    for r in cfg.get("repos", []):
+        if r.get("platform") and not sys.platform.startswith(r["platform"]):
+            continue
+        path = r["path"]
+        try:
+            if machine_config is None:
+                if "{" in path:
+                    raise LookupError(path)
+                path = os.path.expanduser(path)
+            else:
+                path = machine_config.expand(path, roots_cfg)
+        except Exception as exc:
+            if config_error:
+                broken.append(r["name"])
+            elif r.get("required"):
+                required_unset.append((r["name"], str(exc)))
+            else:
+                unset.setdefault(str(exc), []).append(r["name"])
+            continue
+        dead = [tok for tok, value in root_values.items() if tok in r["path"] and value and not os.path.isdir(value)]
+        if dead:
+            dead_roots.setdefault(dead[0], (root_values[dead[0]], []))[1].append(r["name"])
+            continue
+        out.append((r["name"], path, bool(r.get("required"))))
+    return Resolved(out, config_error, broken, unset, required_unset, dead_roots)
+
+
 GIT_TIMEOUT = 8  # seconds, per git call — this hook must never hang a session
 OVERALL_GIT_BUDGET = 10.0  # seconds, wall-clock ceiling for ALL git calls combined.
 # The outer harness (settings.json hook "timeout": 15) kills this whole process
@@ -373,7 +449,7 @@ def audit_worktree(
                 "text": f"{path} — untracked design/decision doc: {p}",
                 "action": (
                     "Commit and push if it governs future work; if it is transient output, "
-                    r"move it to F:\Claude-Tools\reports; or rename to *.draft.md if not ready."
+                    f"move it to {reports_dir()}; or rename to *.draft.md if not ready."
                 ),
             })
             file_level_attention = True
@@ -405,16 +481,45 @@ def audit_worktree(
 
 def build_report(cfg: dict) -> str:
     deadline = time.monotonic() + OVERALL_GIT_BUDGET
-    repos = cfg.get("repos", [])
-
     valid_repos = []  # (name, path)
     missing_sections = []
-    for r in repos:
-        name, path = r["name"], r["path"]
-        if not os.path.isdir(path):
-            missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
-        else:
+    resolved = resolve_repos(cfg)
+    if resolved.broken:
+        missing_sections.append(
+            f"## (machine roots)\n  ATTENTION REQUIRED: {resolved.config_error}, so these configured repositories "
+            f"were not checked: {', '.join(resolved.broken)}. State unknown, not confirmed clean. Fix it "
+            "(python tools/machine_config.py shows the roots)."
+        )
+    for tok, (value, names) in resolved.dead_roots.items():
+        missing_sections.append(
+            f"## (machine roots)\n  ATTENTION REQUIRED: {tok} is set to {value}, which is not an existing folder, so "
+            f"these configured repositories were not checked: {', '.join(names)}. State unknown, not confirmed "
+            "clean. Fix that root (python tools/machine_config.py shows the roots)."
+        )
+    for name, reason in resolved.required_unset:
+        missing_sections.append(
+            f"## {name}\n  ATTENTION REQUIRED: required repository not checked: {reason}. State unknown, not "
+            "confirmed clean. Set that root (python tools/machine_config.py shows the roots)."
+        )
+    note_sections = [
+        f"## (not checked)\n  NOTE: skipped {', '.join(names)}: {reason}. Not counted in the verdict; set that root if "
+        "this machine holds the repository."
+        for reason, names in resolved.unset.items()
+    ]
+    for name, path, required in resolved.repos:
+        if os.path.isdir(path):
             valid_repos.append((name, path))
+        elif required:
+            missing_sections.append(f"## {name}\n  ATTENTION REQUIRED: configured path not found: {path} — Fix closure_audit_repos.json.")
+    if not valid_repos and not missing_sections:
+        # Nothing was checked: every configured entry is absent here (machine roots wrong, an entry skipped for its
+        # platform or naming an unset root) or the list is empty. That must not read as a clean, empty report (CP-9).
+        # An unusable machine config is not this case: it already reported itself above, with its error.
+        missing_sections.append(
+            "## (no repository)\n  ATTENTION REQUIRED: none of the configured repositories exists on this machine, "
+            "so the audit checked nothing. State unknown, not confirmed clean. Check the machine roots "
+            "(python tools/machine_config.py) and closure_audit_repos.json."
+        )
 
     # Stage 1: `git worktree list` for every valid repo, concurrently.
     wt_lists = _run_concurrently(
@@ -478,10 +583,11 @@ def build_report(cfg: dict) -> str:
                     total_warn += 1
                 lines.append(f"  [{f['severity']}] {f['text']}\n      -> {f['action']}")
         sections.append("\n".join(lines))
+    sections.extend(note_sections)
 
     verdict = (
         f"Verdict: {total_attn} ATTENTION REQUIRED, {total_warn} WARNING across "
-        f"{len(repos)} configured repo(s). Nothing here blocks closing this session — "
+        f"{len(valid_repos)} configured repo(s). Nothing here blocks closing this session — "
         "items above are what to externalize before deleting any worktree that holds them."
     )
     if truncated_repos or truncated_worktrees:

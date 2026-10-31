@@ -1,14 +1,16 @@
 # vendor/ — pinned copies of upstream-owned hook code
 
 Nothing here is developed in this repo. Each directory is a byte-for-byte pinned copy of
-an upstream subsystem's runtime files, kept here only so `bootstrap.ps1` can install it
-under `~/.claude/hooks/` (C1 in `hooks/README.md`) instead of the hooks running from a
-switchable checkout. Fix bugs upstream, then re-pin. `.gitattributes` marks `vendor/**`
-`-text` so the bytes (CRLF, as checked out upstream) are stored and installed unchanged.
+an upstream subsystem's runtime files, kept here so its hooks run from this clone's reviewed,
+merged code (C1 in `hooks/README.md`) instead of from a switchable upstream checkout. Fix bugs
+upstream, then re-pin; never edit a file here in place (its sha256 is asserted by
+hooks/tests, and the machine-path guard exempts `vendor/**` for exactly that reason).
+`.gitattributes` marks `vendor/**` `-text` so the bytes (CRLF, as checked out upstream) are
+stored unchanged.
 
 ## evidence-capture (+ evidence-footprints/shell_paths.py)
 
-- Owner: Claude-Tools (`F:\Claude-Tools`, repo `YourBIMpossible/claude-tools`).
+- Owner: Claude-Tools (`{tools}`, repo `YourBIMpossible/claude-tools`).
 - Pinned from: commit `8a21f0a18d23f0d529e28dedf95a4459d5f4d0e8` (local `main`, 2026-10-06;
   not yet on `origin/main` at pin time — 2026-10-11). Working tree for these paths was clean.
 - Unit: every top-level `evidence-capture/*.py` and `evidence-capture/boundary/*.json`
@@ -16,9 +18,9 @@ switchable checkout. Fix bugs upstream, then re-pin. `.gitattributes` marks `ven
   which `screen.py` imports from `<unit>/../evidence-footprints`. Upstream tests, caches and
   docs are not copied. Standard library only; no third-party dependencies.
 - `tool_sha256` of this unit: `ce559bfe38d98a730f0d4195f4349862ec19e253f4acb54d1f0743d3d9bf46e9`
-  (identical to the upstream checkout at the pinned commit). The installed copy has no git
-  directory above it, so manifests record `tool_commit: null`; this file maps that
-  `tool_sha256` back to the commit.
+  (identical to the upstream checkout at the pinned commit). Running from this clone, manifests
+  record this clone's commit as `tool_commit`; this file maps the unit's `tool_sha256` back
+  to the upstream commit.
 - Not copied: `~/.claude/evidence-capture.json` (store/destination config), the stores
   themselves, any runtime evidence. Those stay where they are.
 
@@ -27,12 +29,10 @@ Re-pin procedure:
 2. Here, on a branch: copy the same file set from the upstream working tree into
    `vendor/` (delete files upstream removed), then refresh the table below and the
    `tool_sha256` line (`python -I -c "import sys; sys.path.insert(0, 'vendor/evidence-capture'); import pipeline; print(pipeline.tool_identity())"`).
-3. `pytest hooks/tests`; PR; after merge run `bootstrap.ps1`, which replaces the installed
-   unit as a whole and keeps the previous one as `<unit>.pre-profile-backup-<stamp>`.
+3. `pytest hooks/tests`; PR; merge. Every machine runs the new unit from its next session
+   start (the session-start hook fast-forwards the clone); no installer run.
 
-Rollback: delete `~/.claude/hooks/<unit>` and rename the newest
-`<unit>.pre-profile-backup-<stamp>` back; to return to the upstream-checkout registration,
-restore `~/.claude/settings.json.pre-capture-pin-backup-20261011`.
+Rollback: revert the re-pin commit and merge; the previous unit runs from the next session start.
 
 | File | sha256 |
 |---|---|
