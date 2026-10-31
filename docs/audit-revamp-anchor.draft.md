@@ -165,3 +165,14 @@ Dependency survey: F:\Claude-Tools\reports\2026-10-17__six-routine-dependency-ma
 **Checkpoint 2026-10-30 (1a.iv repairs, commit 63d5020, local only):** 1a4-4 tooling defects fixed with tests: `--deliver file` built and activated (D2), `RUN brief-done` required before dispatch, `method-line` load proof checked on return, `RUN outputs-audit` flags undeclared writes, strict UTF-8 line storage, G4 measured at the inspected revision, G4 seven-part text in SKILL.md. Tests 2026-10-30: weekly 90 passed / 3 skipped / 81 subtests; context-weight 10; nl-filter 19; graphify 8 and next-sync 7 skipped (env vars unset, suites unchanged). Open conflict: live prompt G4 part (2) says the checker measures the working tree at HEAD; the skill now measures the inspected revision (owner to reconcile at cutover). Restart: 1a4-5 side-by-side rerun (`--autofix` off, `--deliver file`) in a fresh session, against the live 2026-10-26 outputs.
 
 **Checkpoint 2026-10-30 (1a4-5 isolated rerun, White): repairs verified; cutover not authorized.** Weekly run 7c2747 `degraded`; gate `incomplete` (AC-1 unmet); batch "NOT COMPLETE / verdict: incomplete · items 1/3 cleared · ledgers W incomplete"; RESULTS.md delivered (D2). Findings C0 H5 M35 L65 I30 (135); ctxcheck 73/4/0; HYG-13 all ✓; G4 TIGHT at inspected revisions. Sweep 1c1220 `degraded`, outputs-audit clean. 1a4-4 defects: brief, attestation, early hand-back, mojibake and G4 drift did not recur; undeclared-outputs flag fired (1,730) but every hit traces to concurrent sessions' worktrees or hook/cache dirs, none to this run. Open: G4 live-prompt wording conflict; outputs-audit scope; sweep run log. Report: F:\Claude-Tools\reports\2026-10-30__audit-revamp-1a4-5-closeout.md. Restart: owner decides the §5 calls in that report, then approves install per routine.
+
+**Checkpoint 2026-10-30 (readiness closeout): PENDING owner — cutover not authorized.** Commit e1e9a5a fixes the open 1a4-5 items:
+- G4 is reported at the inspected SHA.
+- The Checklist is checked for readability.
+- `RUN isolate`/`release-src` give a run-owned detached checkout.
+- The sweep writes a run log via `RUN write-run-log`.
+- outputs-audit is run-attributed: changes in live roots are informational, and undeclared output in run-owned dirs is a defect.
+- Archive exclusion uses the `:(exclude,glob)` pathspec.
+- Child-rule checks were added.
+
+Tests 2026-10-30 on e1e9a5a: weekly 113 passed / 3 skipped / 107 subtests; context-weight 10; nl-filter 19. Delivery: PR https://github.com/YourBIMpossible/claude-profile/pull/76 (open). Status: A done · B done (pending merge) · C not started · D not started · AC-1 unmet (perf, Add-Ins build and breach-chain have no home). Report: F:\Claude-Tools\reports\2026-10-30__audit-revamp-phase1a-closeout.md. Restart: owner merges PR 76 and fills F:\Claude-Tools\reports\2026-10-30__audit-revamp-away-authorization.md, then pastes it as the prompt.
