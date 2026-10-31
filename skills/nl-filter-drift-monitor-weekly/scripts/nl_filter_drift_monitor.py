@@ -31,10 +31,27 @@ from typing import Any, Sequence
 
 EXIT_PASS, EXIT_REGRESSION, EXIT_NOT_RUN, EXIT_REFUSED = 0, 1, 2, 64
 
-DEFAULT_REPO = os.environ.get("NL_FILTER_REPO", r"F:\BIMpossible")
+
+def _repos_root() -> Path:
+    """{repos}, the folder holding the repo clones, from this profile's machine config
+    (tools/machine_config.py); without it, the folder holding this profile clone."""
+    profile = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(profile / "tools"))
+    try:
+        import machine_config
+        return Path(machine_config.load(profile)["repos_root"])
+    except (ImportError, KeyError, ValueError, OSError):
+        return profile.parent
+    finally:
+        sys.path.pop(0)
+
+
+REPOS_ROOT = _repos_root()
+DEFAULT_REPO = os.environ.get("NL_FILTER_REPO", str(REPOS_ROOT / "BIMpossible"))
 DEFAULT_CONTAINER = os.environ.get("NL_FILTER_CONTAINER", "docker-backend-1")
 SHARED_LEDGER = os.environ.get(
-    "NL_FILTER_SHARED_LEDGER", r"F:\BIMpossible-Workspace\02_Reference\Audit and Scan Info"
+    "NL_FILTER_SHARED_LEDGER",
+    str(REPOS_ROOT / "BIMpossible-Workspace" / "02_Reference" / "Audit and Scan Info"),
 )
 MONITOR_REL = Path("backend") / "tests" / "eval" / "nl_filter_monitor.py"
 IN_CONTAINER_JSON = "/tmp/nl-filter-live.json"

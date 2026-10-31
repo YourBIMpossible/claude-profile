@@ -51,7 +51,7 @@ class that no code-scanning lens would have surfaced.
 **2. Dangling references**
 - File paths cited in `.md` files that do not exist on disk
 - File paths cited in code comments that do not exist
-- Cross-repo references (`F:\AI-Dev\...`) that have moved or been retired
+- Cross-repo references (`{repos}\AI-Dev\...`) that have moved or been retired
 - Superseded doc names still cited as current
 
 **3. Rules without enforcement**

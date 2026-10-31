@@ -85,7 +85,7 @@ def test_implicit_history_refused_in_fake_tools_dir(tmp_path):
     assert _sha(canon) == before
 
 
-@pytest.mark.parametrize("argv", [["--bogus"], ["--history-path"], ["--tools-dir", "Z:/nope", "--no-history-write"], []])
+@pytest.mark.parametrize("argv", [["--bogus"], ["--history-path"], ["--tools-dir", "X:/nope", "--no-history-write"], []])
 def test_bad_args_exit_64(argv, capsys):
     assert W.run(argv) == W.EXIT_USAGE
     assert "usage error" in capsys.readouterr().err

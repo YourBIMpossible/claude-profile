@@ -14,11 +14,11 @@ LIVE half, a standing signal — it must NEVER become a PR or merge gate (owner 
 
 | Name | Default | Meaning |
 |---|---|---|
-| `REPO` | `F:\BIMpossible` (env `NL_FILTER_REPO`) | BIMpossible checkout holding `backend/tests/eval/nl_filter_monitor.py` |
+| `REPO` | `{repos}\BIMpossible` (env `NL_FILTER_REPO`) | BIMpossible checkout holding `backend/tests/eval/nl_filter_monitor.py` |
 | `CONTAINER` | `docker-backend-1` (env `NL_FILTER_CONTAINER`) | Running backend container. Never started, stopped or recreated by this skill |
-| `LEDGER_DIR` | — (required in practice) | Where all writes go. The shared default `F:\BIMpossible-Workspace\02_Reference\Audit and Scan Info` (env `NL_FILTER_SHARED_LEDGER`) is refused unless `--live` is passed |
+| `LEDGER_DIR` | — (required in practice) | Where all writes go. The shared default `{repos}\BIMpossible-Workspace\02_Reference\Audit and Scan Info` (env `NL_FILTER_SHARED_LEDGER`) is refused unless `--live` is passed |
 | `REPEATS` | `10` | Live passes over the suite (flip detector needs >1) |
-| `WORKSPACE` | `F:\BIMpossible-Workspace` | Repo that receives the ledger PR (production mode only) |
+| `WORKSPACE` | `{repos}\BIMpossible-Workspace` | Repo that receives the ledger PR (production mode only) |
 
 Runner: `python <skill>/scripts/nl_filter_drift_monitor.py` (Python 3.10+, stdlib only).
 Flags: `--mode offline|live`, `--repeats`, `--container`, `--ledger-dir`, `--repo`,
@@ -38,7 +38,7 @@ Exit codes: `0` pass · `1` regression (scored-case miss or flip) · `2` proved 
 Use to validate an install or a change to this skill. Never touches the shared ledger,
 the baseline, the container or any repo.
 
-1. `LEDGER_DIR` = a fresh dir outside every repo (e.g. `F:\Claude-Tools\reports\<date>__...\ledger`).
+1. `LEDGER_DIR` = a fresh dir outside every repo (e.g. `{reports}\<date>__...\ledger`).
 2. `python scripts/nl_filter_drift_monitor.py --mode offline --ledger-dir $LEDGER_DIR`
 3. `python scripts/nl_filter_drift_monitor.py --mode live --whatif-dry-run --ledger-dir $LEDGER_DIR`
 4. Confirm `git -C $REPO status --porcelain` and the sha256 of
@@ -98,8 +98,8 @@ commit, stash, reset or push there (only `fetch`, `remote set-head`, `ls-tree`, 
 
 - Never read, print or modify `$REPO\.env` or `$REPO\backend\guard.py` (`.env.example` is fine).
   Never print a key or secret; never paste raw model output.
-- Operate only in `F:\BIMpossible`, `F:\BIMpossible-Workspace`, `F:\BIMpossible-AddIns`;
-  anything pointing at `F:\AI-Dev` → stop and say so. Never write under `_backups\` or
+- Operate only in `{repos}\BIMpossible`, `{repos}\BIMpossible-Workspace`, `{repos}\BIMpossible-AddIns`;
+  anything pointing at `{repos}\AI-Dev` → stop and say so. Never write under `_backups\` or
   modify `99_Archive\`.
 - Do not fabricate results; a run that did not happen is reported as not run.
 

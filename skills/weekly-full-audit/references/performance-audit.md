@@ -85,7 +85,7 @@ Total: X ms
 Save a single markdown report to:
 
 ```
-F:\AI-Dev\BIMpossible_Workspace\01_BuildLog\YYYY-MM-DD__performance-diagnostic-wave-4-6-5-session-1.md
+{repos}\AI-Dev\BIMpossible_Workspace\01_BuildLog\YYYY-MM-DD__performance-diagnostic-wave-4-6-5-session-1.md
 ```
 
 Containing:
@@ -101,7 +101,7 @@ Containing:
 
 So every run of this task is findable as a set (the session browser has no native "groups" — see 2026-06-01 decision), keep a durable file-based index:
 
-1. **Append one line** to `F:\AI-Dev\BIMpossible_Workspace\01_BuildLog\_perf-diagnostic-runs.md` (create it with an `# ⏱ PERF-DIAG run index` heading + a `| Date | Cold (ms) | Warm (ms) | Top contributor | Report |` table header if it does not yet exist). The new row records: run date, end-to-end cold ms, warm ms, the #1 contributor, and a relative link to that run's report under `01_BuildLog/`.
+1. **Append one line** to `{repos}\AI-Dev\BIMpossible_Workspace\01_BuildLog\_perf-diagnostic-runs.md` (create it with an `# ⏱ PERF-DIAG run index` heading + a `| Date | Cold (ms) | Warm (ms) | Top contributor | Report |` table header if it does not yet exist). The new row records: run date, end-to-end cold ms, warm ms, the #1 contributor, and a relative link to that run's report under `01_BuildLog/`.
 2. **Best-effort session title:** at the start of the run, if a session-title mechanism is available (e.g. the `/title` command), set the title to `PERF-DIAG <YYYY-MM-DD>` so runs cluster when searching the session browser by `PERF-DIAG`. If no title mechanism is available in this run, skip silently — the index file in step 1 is the authoritative grouping.
 
 ---

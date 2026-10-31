@@ -29,7 +29,7 @@ HEAD against `origin/main` and refuses a zero-lane run on a clean `main` checkou
 auto-fix pass that edits the main checkout and never commits can never verify (audit
 2026-10-05, HYG-42; owner decision: scratch-worktree commits, not an uncommitted-diff mode).
 
-From `F:\BIMpossible`:
+From `{repos}\BIMpossible`:
 
 ```powershell
 git worktree add .claude\worktrees\auto-fix -b claude/auto-fix-$(Get-Date -Format yyyy-MM-dd) origin/main
@@ -86,7 +86,7 @@ verifier diffs against `origin/main`) to confirm nothing was broken:
 
 ```powershell
 powershell.exe -NonInteractive -ExecutionPolicy Bypass `
-  -File "F:\BIMpossible\.claude\worktrees\auto-fix\Verify-Local-CI.ps1" -BaseRef origin/main -SkipFrontend
+  -File "{repos}\BIMpossible\.claude\worktrees\auto-fix\Verify-Local-CI.ps1" -BaseRef origin/main -SkipFrontend
 ```
 
 Wait for completion (typically 3–6 minutes). Capture exit code and any failures.

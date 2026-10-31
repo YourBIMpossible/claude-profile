@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import re
 import sys
@@ -281,10 +282,12 @@ def derive_items(lid: str, gate: dict[str, Any], report: str | None, receiver: s
                       "covers": ", ".join(f"{lid}:{r}" for r in refs)})
     if report:
         ok = Path(report).is_file()
+        # grrp rejects a bare `file <path>` as vacuous: pin the report's content as written now.
+        digest = hashlib.sha256(Path(report).read_bytes()).hexdigest() if ok else "0" * 64
         items.append({"id": f"{lid}-report", "kind": "artifact", "text": f"report of run ledger {lid}",
                       "source": f"ledger {lid}", "owner": "parent", "action": "write the report",
                       "status": "complete" if ok else "open",
-                      "evidence": report if ok else "none", "check": f"file {report}"})
+                      "evidence": report if ok else "none", "check": f"file {report} sha256:{digest}"})
     return items
 
 

@@ -1016,8 +1016,8 @@ class DatePolicyTests(unittest.TestCase):
         self.assertEqual(rec["run_date"], rec["date_policy"]["run_date"])
 
     def test_grrp_paths_are_parsed_not_rebuilt(self) -> None:
-        self.assertEqual(L.parse_grrp_path("created: C:/l/2026-10-17-x.ledger.md\n"), "C:/l/2026-10-17-x.ledger.md")
-        self.assertEqual(L.parse_grrp_path("note\nexisting: /a/2026-10-18-x.batch.md\n"), "/a/2026-10-18-x.batch.md")
+        self.assertEqual(L.parse_grrp_path("created: X:/l/2026-10-17-x.ledger.md\n"), "X:/l/2026-10-17-x.ledger.md")
+        self.assertEqual(L.parse_grrp_path("note\nexisting: /aa/2026-10-18-x.batch.md\n"), "/aa/2026-10-18-x.batch.md")
         for bad in ("", "created: a\ncreated: b\n"):
             with self.assertRaises(L.AuditError):
                 L.parse_grrp_path(bad)
@@ -1106,7 +1106,7 @@ class EnrollmentGateTests(unittest.TestCase):
     def test_enrolled_ledger_validates_and_gates_incomplete(self) -> None:
         grrp = SKILLS / "review-to-resolution" / "scripts" / "grrp.py"
         if not grrp.exists():
-            grrp = Path(os.environ.get("GRRP_PY", "F:/Claude-Profile/skills/review-to-resolution/scripts/grrp.py"))
+            grrp = Path(os.environ.get("GRRP_PY", str(grrp)))
         if not grrp.exists():
             self.skipTest("grrp.py not found")
         enroll = HERE.parent / "scripts" / "grrp_enroll.py"
@@ -1149,7 +1149,7 @@ class BatchLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.grrp = SKILLS / "review-to-resolution" / "scripts" / "grrp.py"
         if not self.grrp.exists():
-            self.grrp = Path(os.environ.get("GRRP_PY", "F:/Claude-Profile/skills/review-to-resolution/scripts/grrp.py"))
+            self.grrp = Path(os.environ.get("GRRP_PY", str(self.grrp)))
         if not self.grrp.exists():
             self.skipTest("grrp.py not found")
         self.enroll = HERE.parent / "scripts" / "grrp_enroll.py"
