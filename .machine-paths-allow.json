@@ -14,6 +14,11 @@
     "reason": "Synthetic Windows-form fixture paths on the placeholder drive X: for path-handling tests (gate patterns, worktree classification, closure audit); no real location."
   },
   {
+    "path": "skills/*/tests/*.py",
+    "match": "X:[\\\\/]",
+    "reason": "Synthetic Windows-form fixture paths on the placeholder drive X: for skill path-parsing and bad-argument tests (GRRP path parsing, missing --tools-dir); no real location."
+  },
+  {
     "path": "skills/graphify/scripts/test_query_reranked.py",
     "match": "r/backend",
     "reason": "Synthetic resolved-graph fixture on the placeholder drive X:."
