@@ -145,8 +145,34 @@ def test_mcp_merge_and_auto_merge():
 
 
 def test_direct_github_file_writes_are_refused():
-    for name in ("mcp__github__push_files", "mcp__github__create_or_update_file"):
+    for name in ("mcp__github__push_files", "mcp__github__create_or_update_file", "mcp__github__delete_file"):
         assert "skips every local gate" in decide({"tool_name": name, "tool_input": {}})
+
+
+@pytest.mark.parametrize("command", [
+    "gh api repos/o/r/merges -f base=main -f head=x",
+    "curl -X POST https://api.github.com/repos/o/r/merges -d '{}'",
+    "gh api graphql -f query='mutation { mergeBranch(input: {}) { x } }'",
+    "gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { x } }'",
+    "gh api graphql -F query=@q.graphql -f n=updateRefs",
+    "gh api -X PUT repos/o/r/contents/f -f message=m -f content=eA==",
+    "gh api repos/o/r/contents/f --method DELETE -f message=m -f sha=1",
+    "gh api repos/o/r/git/refs/heads/main -X PATCH -f sha=1",
+    "gh api repos/o/r/git/commits --input c.json",
+    "curl -X POST https://api.github.com/repos/o/r/git/trees -d @t.json",
+    "Invoke-RestMethod -Method Put https://api.github.com/repos/o/r/contents/f -Body $b",
+])
+def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))), command
+
+
+@pytest.mark.parametrize("command", [
+    "gh api repos/o/r/contents/f", "gh api repos/o/r/git/refs/heads/main --jq .object.sha",
+    "curl https://api.github.com/repos/o/r/git/trees/main", "grep -n updateRef hooks/ship_guard.py",
+    "gh api repos/o/r/contents/f | jq -r .content",
+])
+def test_reads_of_the_contents_and_git_data_api_are_allowed(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))) is None, command
 
 
 def test_unrelated_calls_are_allowed_untouched():
@@ -396,6 +422,9 @@ def test_the_rest_merge_pin_is_read_only_from_the_sha_field():
     "git --config-env=core.hooksPath=X push", "git config --unset core.hooksPath", "git config core.hooksPath hooks",
     "git config --global core.hooksPath /tmp/h", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath git push",
     "BIMP_PREPUSH_BYPASS=why git push", "export BIMP_SECRETS_BYPASS=x", "sh -c 'git push --no-verify'",
+    "git -c alias.p='push --no-verify' p", "git -c Alias.st=push st", "git --config-env include.path=X status",
+    "git --config-env=includeIf.onbranch:main.path=X log", "git config alias.x 'push --no-verify'",
+    "git config --global alias.x '!git push'", "git config set alias.x push", "git config --add include.path h.cfg",
 ])
 def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
@@ -404,6 +433,8 @@ def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
 @pytest.mark.parametrize("command", [
     "git commit -m 'ship it'", "git commit -am 'no verify needed'","git commit -m x -- -n",
     "git config core.hooksPath .githooks", "git config --get core.hooksPath", "git push --dry-run",
+    "git config --get alias.x", "git config alias.x", "git config --unset alias.x", "git config --get-regexp alias",
+    "git config get include.path",
 ])
 def test_ordinary_commits_and_config_reads_are_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command

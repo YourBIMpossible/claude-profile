@@ -35,7 +35,7 @@ POWERSHELL = os.environ.get("BOOTSTRAP_TEST_POWERSHELL", "powershell.exe")
 PY_NAME = "python" if os.name == "nt" else "python3"
 # Every tool that writes a file by path goes through the path gate (CP-10).
 PATH_GATE_MATCHER = "Write|Edit|MultiEdit|NotebookEdit"
-SHIP_GUARD_MATCHER = ("Bash|PowerShell|mcp__.*merge_pull_request|mcp__.*push_files|mcp__.*create_or_update_file|"
+SHIP_GUARD_MATCHER = ("Bash|PowerShell|mcp__.*merge_pull_request|mcp__.*push_files|mcp__.*create_or_update_file|mcp__.*delete_file|"
                       "mcp__ccd_pr__set_auto_merge")
 
 

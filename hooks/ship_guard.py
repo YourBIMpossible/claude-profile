@@ -13,6 +13,8 @@ MERGES. A merge is allowed only when every check on the PR head is green, and th
     `sha` key of a JSON body (`-d` / `--data` / `--json` / `-Body`);
   - GraphQL `mergePullRequest` / `enablePullRequestAutoMerge`: always refused, because the guard cannot tell which PR a
     node id is; `gh pr merge` is the route it can check;
+  - GitHub's branch merge (REST `repos/OWNER/REPO/merges`, GraphQL `mergeBranch`): always refused, as it merges with no
+    PR and no checks;
   - an MCP tool named `*merge_pull_request` (owner, repo, pull number and `sha` in its input);
   - the app's auto-merge switch (`mcp__ccd_pr__set_auto_merge`) when it turns auto-merge on: with no required checks,
     auto-merge has nothing to wait for.
@@ -36,8 +38,12 @@ runs its whole local gate, CI's tests included, on every push. This hook makes s
     they point git somewhere the guard does not follow;
   - the audited bypass variables (BIMP_PREPUSH_BYPASS, BIMP_SECRETS_BYPASS) are refused in a command and while they are
     set in the session's environment: they are for the owner, typed in the owner's own terminal;
-  - an MCP tool that writes files straight to GitHub (`*push_files`, `*create_or_update_file`) is refused: it skips every
-    local gate. Push from a clone instead.
+  - `git -c` / `--config-env` / `git config` setting an `alias.*`, `include.*` or `includeIf.*` key is refused: an
+    alias can turn any subcommand into a push the guard cannot see;
+  - writes that put code on a branch without a push are refused: an MCP tool that writes files straight to GitHub
+    (`*push_files`, `*create_or_update_file`, `*delete_file`), the GraphQL `createCommitOnBranch` / `updateRef(s)` /
+    `createRef` mutations, and a writing call (a write method, fields or a body) to the REST `contents/`, `git/refs`,
+    `git/commits`, `git/trees` or `git/blobs` endpoints. Push from a clone instead.
 
 The directory a push or merge runs in is followed through `cd` (cmd's `cd /d` too), `pushd`, `Set-Location` / `sl` /
 `Push-Location`, `git -C`, and into `bash -c` / `sh -c` / `cmd /c` arguments, powershell / pwsh `-Command`,
@@ -56,8 +62,8 @@ merge, push, commit, hooks path or bypass exits 0 after one regex test, so ordin
 any other tool (Write, Read, ...) is allowed untouched.
 
 SCOPE HONESTY: this binds Claude sessions on machines that run this profile. The owner merging in the GitHub web UI or
-pushing from a terminal is not affected, by design. A command that hides the git or gh call from the text (a git alias, a
-script file, a command decoded at run time other than `-EncodedCommand`) is not seen; the hooks themselves, the gate they run and CI are the layers behind it.
+pushing from a terminal is not affected, by design. A command that hides the git or gh call from the text (a git alias already in
+the config, a script file, a command decoded at run time other than `-EncodedCommand`) is not seen; the hooks themselves, the gate they run and CI are the layers behind it.
 """
 from __future__ import annotations
 
@@ -79,7 +85,7 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 
 # Cheap prefilters: anything that could be a merge, or a push / commit / hooks-path / bypass. Everything else exits 0.
 MAYBE_MERGE = re.compile(r"\bmerge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge", re.IGNORECASE)
-MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|BIMP_\w*BYPASS", re.IGNORECASE)
+MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|\b(alias|include|includeif)\.|BIMP_\w*BYPASS", re.IGNORECASE)
 MAYBE_ENCODED = re.compile(
     r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*[\s'\",](-|--|/)e"
     # a launcher, `$variable` or `(expression)` may start a powershell under any name: an exact -EncodedCommand word
@@ -87,6 +93,19 @@ MAYBE_ENCODED = re.compile(
     r"(e|ec|en(c(o(d(e(d(c(o(m(m(a(n(d)?)?)?)?)?)?)?)?)?)?)?)?)(?=[\s'\",]|$)", re.IGNORECASE)
 REST_MERGE = re.compile(r"repos/([^/\s'\"`]+)/([^/\s'\"`]+)/pulls/(\d+)/merge\b")
 GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
+# Writes that put code on a branch with no push, so no local gate runs: GitHub's branch merge (REST and GraphQL), the
+# GraphQL commit / ref mutations, and the REST contents and git-data endpoints when the call writes.
+MAYBE_GH_WRITE = re.compile(r"/merges\b|\bmergeBranch\b|\bcreateCommitOnBranch\b|\bupdateRefs?\b|\bcreateRef\b|"
+                            r"/contents\b|/git/(refs|commits|trees|blobs)\b")
+REST_BRANCH_MERGE = re.compile(r"repos/[^/\s'\"`]+/[^/\s'\"`]+/merges\b")
+GRAPHQL_WRITE = re.compile(r"\b(mergeBranch|createCommitOnBranch|updateRefs?|createRef)\b")
+REST_WRITE_PATH = re.compile(r"repos/[^/\s'\"`]+/[^/\s'\"`]+/(contents\b|git/(refs|commits|trees|blobs)\b)")
+WRITE_REQUEST = re.compile(
+    r"(^|[\s'\"])(-X|--method|--request|-Method)[\s=]*['\"]?(PUT|POST|PATCH|DELETE)\b"
+    r"|(^|\s)(-f|--field|--raw-field|--input|-d|--data[\w-]*|--json|-T|--upload-file|-Body|-InFile)(\s|=|$)"
+    r"|\.(put|post|patch|delete)\(", re.IGNORECASE)
+# `-c` / `git config` keys that change what a git subcommand means or where config is read from.
+CONFIG_REDIRECT_KEY = re.compile(r"(alias|include|includeif)\.", re.IGNORECASE)
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|COUNT)")
 GIT_REDIRECT_ENV = re.compile(r"\bGIT_(DIR|WORK_TREE|COMMON_DIR)\b")
 GIT_REDIRECT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
@@ -143,7 +162,7 @@ PS_VALUE_SHORT = {"ep", "ex", "w", "o", "of", "if", "v", "wd"}
 PS_VALUE_LONG = ("executionpolicy", "windowstyle", "outputformat", "inputformat", "version", "configurationname",
                  "configurationfile", "settingsfile", "custompipename", "psconsolefile", "workingdirectory")
 EXPRESSION_RUNNERS = {"iex", "invoke-expression"}
-DIRECT_WRITE_TOOLS = re.compile(r"(push_files|create_or_update_file)$")
+DIRECT_WRITE_TOOLS = re.compile(r"(push_files|create_or_update_file|delete_file)$")
 
 Runner = Callable[[list, Optional[str]], "subprocess.CompletedProcess[str]"]
 
@@ -449,6 +468,21 @@ def _config_writes_hooks_path(args: list) -> bool:
     return bool(values) and values[0] != ".githooks"
 
 
+def _config_sets_redirect(args: list) -> bool:
+    """True when `git config <args>` would set an alias.*, include.* or includeIf.* key (reads and unsets are allowed)."""
+    low = [a.lower() for a in args]
+    keys = [k for k, a in enumerate(low) if CONFIG_REDIRECT_KEY.match(a)]
+    if not keys:
+        return False
+    k = keys[0]
+    flags = {a.split("=")[0] for a in low if a.startswith("-")}
+    if {"get", "unset", "list"} & set(low[:k]) or flags & {"--get", "--get-all", "--get-regexp", "--list", "-l",
+                                                           "--show-origin", "--unset", "--unset-all"}:
+        return False
+    # `git config alias.x` with no value is a read.
+    return any(not a.startswith("-") for a in args[k + 1:])
+
+
 def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
     """Check one `git ...` simple command: refuse hook-skipping forms; record a push with the directory it runs in."""
     i, directory, unknown = 1, cwd, why
@@ -461,6 +495,9 @@ def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
             key = value.split("=")[0]
             if key.lower() == "core.hookspath":
                 raise Refuse(f"`git {opt} core.hooksPath=...` replaces the repository's gate hooks. Run git without it.")
+            if CONFIG_REDIRECT_KEY.match(key):
+                raise Refuse(f"`git {opt} {key}=...` can turn any subcommand into a push the guard cannot see (an alias) "
+                             "or read config it cannot check (an include). Run the git command itself.")
             if any(ch in key for ch in "$`%"):
                 raise Refuse(f"`git {opt} {value}` sets a key the guard cannot read, which could be core.hooksPath. "
                              "Name the key literally.")
@@ -486,6 +523,9 @@ def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
         if _config_writes_hooks_path(args):
             raise Refuse("core.hooksPath is the gate's switch: only `python <profile>/tools/git_gate.py` (or "
                          "`git config core.hooksPath .githooks`) sets it, and a session never unsets or redirects it.")
+        if _config_sets_redirect(args):
+            raise Refuse("`git config alias.* / include.* / includeIf.*` can turn any subcommand into a push the guard "
+                         "cannot see, or pull in config it cannot check. A session does not set them.")
 
 
 def _unwrap(words: list, here: Optional[str], why: str) -> tuple:
@@ -850,7 +890,8 @@ def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
 def scan_command(command: str, cwd: Optional[str], powershell: bool) -> Scan:
     """What a shell command would push and merge. Raises Refuse for a form the guard refuses outright."""
     scan = Scan()
-    if not (MAYBE_MERGE.search(command) or MAYBE_SHIP.search(command) or MAYBE_ENCODED.search(command)):
+    if not (MAYBE_MERGE.search(command) or MAYBE_SHIP.search(command) or MAYBE_ENCODED.search(command)
+            or MAYBE_GH_WRITE.search(command)):
         return scan
     _check_text(command)
     scan_shell(command, cwd, powershell, scan)
@@ -858,7 +899,8 @@ def scan_command(command: str, cwd: Optional[str], powershell: bool) -> Scan:
 
 
 def _check_text(command: str) -> None:
-    """Refuse the forms the command's text alone shows: a GraphQL merge, a bypass, GIT_CONFIG_* carrying hooksPath."""
+    """Refuse the forms the command's text alone shows: a GraphQL merge, a bypass, GIT_CONFIG_* carrying hooksPath,
+    a branch merge, and a GitHub write that puts code on a branch without a push."""
     if GRAPHQL_MERGE.search(command):
         raise Refuse("a GraphQL merge (mergePullRequest / enablePullRequestAutoMerge) names the PR by node id, which "
                      "this guard cannot check. Use `gh pr merge <number> --repo OWNER/REPO --match-head-commit <sha>` "
@@ -869,6 +911,18 @@ def _check_text(command: str) -> None:
                          "set it. Fix what the gate reports instead.")
     if GIT_CONFIG_ENV.search(command) and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
+    if REST_BRANCH_MERGE.search(command):
+        raise Refuse("GitHub's branch merge (`repos/OWNER/REPO/merges`) puts commits on a branch with no PR and no "
+                     "checks. Open a PR and merge it once every check is green.")
+    if GRAPHQL_WRITE.search(command) and re.search(r"graphql", command, re.IGNORECASE):
+        raise Refuse("a GraphQL branch merge, commit or ref write (mergeBranch / createCommitOnBranch / updateRef(s) / "
+                     "createRef) puts code on a branch without a push, so no local gate runs. Commit in a clone and "
+                     "`git push`.")
+    for piece in re.split(r"[\n;|&]", command):
+        if REST_WRITE_PATH.search(piece) and WRITE_REQUEST.search(piece):
+            raise Refuse("a write to GitHub's contents or git-data API (`contents/`, `git/refs`, `git/commits`, "
+                         "`git/trees`, `git/blobs`) puts code on a branch without a push, so no local gate runs. "
+                         "Commit in a clone and `git push`.")
 
 
 def check_pushes(command: str, pushes: list, environ: Mapping[str, str], run: Runner = _run) -> None:
