@@ -80,7 +80,11 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 # Cheap prefilters: anything that could be a merge, or a push / commit / hooks-path / bypass. Everything else exits 0.
 MAYBE_MERGE = re.compile(r"\bmerge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge", re.IGNORECASE)
 MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|BIMP_\w*BYPASS", re.IGNORECASE)
-MAYBE_ENCODED = re.compile(r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*[\s'\",](-|--|/)e", re.IGNORECASE)
+MAYBE_ENCODED = re.compile(
+    r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*[\s'\",](-|--|/)e"
+    # a launcher, `$variable` or `(expression)` may start a powershell under any name: an exact -EncodedCommand word
+    r"|(\b(start-process|saps|start)\b|[$(])[^|;&\n]*[\s'\",](-|--|/)"
+    r"(e|ec|en(c(o(d(e(d(c(o(m(m(a(n(d)?)?)?)?)?)?)?)?)?)?)?)?)(?=[\s'\",]|$)", re.IGNORECASE)
 REST_MERGE = re.compile(r"repos/([^/\s'\"`]+)/([^/\s'\"`]+)/pulls/(\d+)/merge\b")
 GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|COUNT)")
@@ -104,6 +108,7 @@ COMMIT_VALUE_LETTERS = set("mFCctSu")
 CD_COMMANDS = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
 SHELLS_C = {"bash", "sh", "zsh", "dash", "bash.exe", "sh.exe"}
 POWERSHELLS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+LAUNCHERS = {"start-process", "saps", "start", "start.exe"}  # start a program with arguments the guard reads as text
 CMDS = {"cmd", "cmd.exe"}
 # Commands that run the rest of their words as a command, each with its own options that take the next word as a value.
 WRAPPERS = {
@@ -672,13 +677,17 @@ def _is_encoded_option(name: str) -> bool:
 
 
 def _check_launched_encoded(words: list) -> None:
-    """Refuse an encoded command that a launcher the guard does not follow (Start-Process, cmd's `start`, ...) hands to
-    a powershell word among `words`, when it cannot be decoded or holds a push / commit / merge. Values are read past
-    the quotes and commas of `-ArgumentList '-EncodedCommand','<base64>'`."""
+    """Refuse an encoded command among `words` that the guard does not otherwise follow, when it cannot be decoded or
+    holds a push / commit / merge. Under a launcher (Start-Process, saps, cmd's `start`) every encoded option is
+    checked, whatever executable it starts, since a copied or renamed powershell has any name; elsewhere one after a
+    powershell word, or after a `$variable`, `(expression)` or `(expression).Member` (left as `.Member` once the
+    expression is split out) that may name one. Values are read past the quotes and commas of
+    `-ArgumentList '-EncodedCommand','<base64>'`."""
     items = [i for w in words for i in re.split(r"[,\s]+", w) if i.strip("'\"")]
     items = [i.strip("'\"") for i in items]
+    launcher = bool(items) and _base(items[0]) in LAUNCHERS
     for j, item in enumerate(items):
-        if _base(item) not in POWERSHELLS:
+        if not ((j == 0 and launcher) or _base(item) in POWERSHELLS or item.startswith(("$", "(", "."))):
             continue
         for k in range(j + 1, len(items)):
             name = _ps_option(items[k])

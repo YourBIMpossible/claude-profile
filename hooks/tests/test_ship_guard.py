@@ -338,6 +338,20 @@ def test_an_encoded_command_through_a_launcher_is_checked(tmp_path):
     assert decide(pwsh("Start-Process powershell -ExecutionPolicy Bypass -File x.ps1", cwd=str(tmp_path))) is None
 
 
+def test_an_encoded_command_is_checked_whatever_the_launched_executable(tmp_path):
+    import base64
+    ship = base64.b64encode("git push --no-verify".encode("utf-16-le")).decode()
+    quiet = base64.b64encode("Get-Date".encode("utf-16-le")).decode()
+    for command in (f"Start-Process $exe -ArgumentList '-enc','{ship}'",
+                    f"saps C:/tools/ps.exe -ArgumentList '-EncodedCommand','{ship}'",
+                    f"cmd /c start renamed.exe -ec {ship}", f"$p = 'pwsh'; & $p -enc {ship}",
+                    f"& (Get-Command pwsh).Source -e {ship}"):
+        assert "encoded command" in (decide(pwsh(command, cwd=str(tmp_path))) or ""), command
+    assert "decode" in decide(pwsh("Start-Process $exe -ArgumentList '-enc','!!notbase64!!'", cwd=str(tmp_path)))
+    assert decide(pwsh(f"Start-Process $exe -ArgumentList '-enc','{quiet}'", cwd=str(tmp_path))) is None
+    assert decide(pwsh("Start-Process notepad.exe -ArgumentList notes.txt", cwd=str(tmp_path))) is None
+
+
 @pytest.mark.parametrize("command", ["D:; git push", 'cmd /c "D: && git push"', "q: ; git -C x push"])
 def test_a_bare_drive_switch_makes_the_directory_unknown(command, tmp_path):
     assert "git -C <dir> push" in (decide(pwsh(command, cwd=str(tmp_path))) or ""), command
