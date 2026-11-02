@@ -256,6 +256,12 @@ def is_draft(path: str, markers: "list[str]") -> bool:
     return any(lower.endswith(m) for m in markers)
 
 
+def _canonical_path(path: str) -> str:
+    """One spelling per folder for comparison: links, junctions and 8.3 short
+    names resolved (where the path exists), then case-folded on Windows."""
+    return os.path.normcase(os.path.realpath(path))
+
+
 def classify_worktree_location(wt_path: str, repo_root: str) -> "dict | None":
     """Return None when `wt_path` is canonical for `repo_root`: either the
     repo's own primary checkout, or a lane under its `.claude/worktrees/`
@@ -266,14 +272,19 @@ def classify_worktree_location(wt_path: str, repo_root: str) -> "dict | None":
     concurrent-mutation investigation: worktrees named `main-check` /
     `t6-rebase` registered under %TEMP%, invisible to this convention).
 
-    Read-only: string/path comparison only, no filesystem or git call.
+    Paths are compared after os.path.realpath, so two spellings of one folder
+    match: `git worktree list` reports the long path while the configured root
+    or %TEMP% may be an 8.3 short name (GitHub's Windows runners put
+    `RUNNER~1` in TEMP), a symlink or a junction.
+
+    Read-only: resolves paths, no git call, writes nothing.
     """
-    norm_path = os.path.normcase(os.path.normpath(wt_path))
-    norm_root = os.path.normcase(os.path.normpath(repo_root))
+    norm_path = _canonical_path(wt_path)
+    norm_root = _canonical_path(repo_root)
     if norm_path == norm_root:
         return None
 
-    worktrees_root = os.path.normcase(os.path.normpath(os.path.join(repo_root, ".claude", "worktrees")))
+    worktrees_root = _canonical_path(os.path.join(repo_root, ".claude", "worktrees"))
     if norm_path == worktrees_root or norm_path.startswith(worktrees_root + os.sep):
         return None
 
@@ -282,7 +293,7 @@ def classify_worktree_location(wt_path: str, repo_root: str) -> "dict | None":
         temp_dir = os.environ.get(var)
         if not temp_dir:
             continue
-        norm_temp = os.path.normcase(os.path.normpath(temp_dir))
+        norm_temp = _canonical_path(temp_dir)
         if norm_path == norm_temp or norm_path.startswith(norm_temp + os.sep):
             under_temp = True
             break
