@@ -80,7 +80,7 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 # Cheap prefilters: anything that could be a merge, or a push / commit / hooks-path / bypass. Everything else exits 0.
 MAYBE_MERGE = re.compile(r"\bmerge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge", re.IGNORECASE)
 MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|BIMP_\w*BYPASS", re.IGNORECASE)
-MAYBE_ENCODED = re.compile(r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*\s(-|--|/)e", re.IGNORECASE)
+MAYBE_ENCODED = re.compile(r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*[\s'\",](-|--|/)e", re.IGNORECASE)
 REST_MERGE = re.compile(r"repos/([^/\s'\"`]+)/([^/\s'\"`]+)/pulls/(\d+)/merge\b")
 GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|COUNT)")
@@ -620,15 +620,17 @@ def _heredoc_reader(before: str) -> str:
 
 
 def _split_heredocs(command: str) -> tuple:
-    """The command without its here-document bodies, and the bodies a shell reads (those run as commands).
+    """The command without its here-document bodies; the bodies a shell reads (those run as commands); and the command
+    with only those shell-read bodies taken out, the text a command reading its input can still be fed.
 
     A body fed to a command that is not known to only read it (python, node, a shell found in a variable, ...) and
     that holds a git push / commit / merge is refused: whatever reads it could run it."""
     lines = command.replace("\r\n", "\n").split("\n")
-    kept, shell_bodies, i = [], [], 0
+    kept, unread, shell_bodies, i = [], [], [], 0
     while i < len(lines):
         line = lines[i]
         kept.append(line)
+        unread.append(line)
         i += 1
         for delimiter, before in _heredoc_openers(line):
             body = []
@@ -637,13 +639,22 @@ def _split_heredocs(command: str) -> tuple:
                 i += 1
             i += 1  # the terminator
             text = "\n".join(body)
-            if any(_base(w) in SHELLS_C | POWERSHELLS | CMDS for w in re.split(r"[\s|;&()]+", line) if w):
+            # The body goes to the command before `<<`, and through a `|` on to the commands after it; an opener line
+            # ending in `|`, `&&` or `||` continues on the line after the terminator, which reads it too.
+            reach = line
+            if re.search(r"(\|\|?|&&)\s*$", line) and i < len(lines):
+                reach += "\n" + lines[i]
+            readers = [_heredoc_reader(before)] + [r for r in (_heredoc_reader(after) for after in
+                                                   re.findall(r"\|&?\s*([^|;&()\n]*)", reach)) if r]
+            if any(_base(w) in SHELLS_C | POWERSHELLS | CMDS for w in re.split(r"[\s|;&()]+", reach) if w):
                 shell_bodies.append(text)
-            elif _heredoc_reader(before) not in HEREDOC_READERS and _mentions_ship(text):
-                reader = _heredoc_reader(before) or "its reader"
+                continue
+            unread.append(text)
+            if any(r not in HEREDOC_READERS for r in readers) and _mentions_ship(text):
+                reader = next((r for r in readers if r not in HEREDOC_READERS), "") or "its reader"
                 raise Refuse(f"a here-document fed to `{reader}` holds a git push / commit / merge the guard cannot "
                              "check, and that command could run it. Run git or gh directly.")
-    return "\n".join(kept), shell_bodies
+    return "\n".join(kept), shell_bodies, "\n".join(unread)
 
 
 def _ps_option(word: str) -> Optional[str]:
@@ -653,6 +664,36 @@ def _ps_option(word: str) -> Optional[str]:
     if word.startswith(("-", "/")) and len(word) > 1:
         return word[1:].lower()
     return None
+
+
+def _is_encoded_option(name: str) -> bool:
+    """True for a powershell parameter name (from `_ps_option`) that is -EncodedCommand or one of its abbreviations."""
+    return name in ("e", "ec") or (name.startswith("en") and "encodedcommand".startswith(name))
+
+
+def _check_launched_encoded(words: list) -> None:
+    """Refuse an encoded command that a launcher the guard does not follow (Start-Process, cmd's `start`, ...) hands to
+    a powershell word among `words`, when it cannot be decoded or holds a push / commit / merge. Values are read past
+    the quotes and commas of `-ArgumentList '-EncodedCommand','<base64>'`."""
+    items = [i for w in words for i in re.split(r"[,\s]+", w) if i.strip("'\"")]
+    items = [i.strip("'\"") for i in items]
+    for j, item in enumerate(items):
+        if _base(item) not in POWERSHELLS:
+            continue
+        for k in range(j + 1, len(items)):
+            name = _ps_option(items[k])
+            if name is None or not _is_encoded_option(name):
+                continue
+            value = items[k + 1] if k + 1 < len(items) else ""
+            try:
+                decoded = base64.b64decode(value, validate=True).decode("utf-16-le")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise Refuse(f"`{words[0]}` starts a powershell with an encoded command the guard cannot decode, so it "
+                             "cannot check it. Run the decoded command directly.") from exc
+            _check_text(decoded)
+            if _mentions_ship(decoded) or MAYBE_ENCODED.search(decoded):
+                raise Refuse(f"`{words[0]}` starts a powershell whose encoded command holds a git push / commit / merge "
+                             "the guard does not follow. Run git or gh directly.")
 
 
 def _powershell_command(words: list, here: Optional[str], why: str) -> tuple:
@@ -668,7 +709,7 @@ def _powershell_command(words: list, here: Optional[str], why: str) -> tuple:
         if name == "cwa" or (name.startswith("c") and ("command".startswith(name) or "commandwithargs".startswith(name))):
             rest = " ".join(words[k + 1:])
             return (None if rest in ("", "-") else rest), here, why
-        if name in ("e", "ec") or (name.startswith("en") and "encodedcommand".startswith(name)):
+        if _is_encoded_option(name):
             try:
                 decoded = base64.b64decode(value, validate=True).decode("utf-16-le")
             except (ValueError, UnicodeDecodeError) as exc:
@@ -693,15 +734,18 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
     if depth > 4:
         raise Refuse("the command nests shells too deeply for the guard to follow.")
     nested = _substitutions(command, powershell)
+    # Checks for a command that reads its input look at `original`: here-document bodies stay in it (whatever reads that
+    # input still gets them) except those already scanned below as the commands a shell runs.
+    original = command
     if not powershell:
-        command, shell_bodies = _split_heredocs(command)
+        command, shell_bodies, original = _split_heredocs(command)
         nested += shell_bodies + BACKTICKS.findall(command)
     for inner in nested:
         scan_shell(inner, cwd, powershell, scan, depth + 1)
     try:
         tokens = _tokens(command, powershell)
     except ValueError as exc:
-        if _mentions_ship(command):
+        if _mentions_ship(original):
             raise Refuse(f"could not parse the command to check its git push / commit / merge ({exc}). Run that "
                          "command on its own.") from exc
         return
@@ -715,10 +759,15 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
         _record_merges(segment, here, why, scan)
         if not words or words[0].startswith("#"):
             continue
-        if "xargs" in via and GIT_OR_GH_WORD.search(" ".join(words)):
+        name = _base(words[0])
+        # xargs adds words from its input: git / gh under it, or anything that runs them (a shell, python) fed from a
+        # command that mentions a push or merge, is out of the guard's sight.
+        if "xargs" in via and (GIT_OR_GH_WORD.search(" ".join(words)) or
+                               (name not in NON_EXEC and _mentions_ship(original))):
             raise Refuse("`xargs` adds arguments from its input that the guard cannot see (a push, a --no-verify, a PR "
                          "number). Run git or gh directly.")
-        name = _base(words[0])
+        if name not in POWERSHELLS | NON_EXEC:
+            _check_launched_encoded(words)
         if powershell and len(words) == 1 and DRIVE_WORD.fullmatch(words[0]):
             here, why = None, f"`{words[0]}` switches to that drive's current directory, which the guard does not track"
         elif name in CD_COMMANDS:
@@ -733,7 +782,7 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
                 scan.decoded.append(inner)
             if inner:
                 scan_shell(inner, ps_here, True, scan, depth + 1)
-            elif inner is None and GIT_SHIP_LINE.search(command):
+            elif inner is None and GIT_SHIP_LINE.search(original):
                 raise Refuse(reads_input.format(words[0]))
         elif name in SHELLS_C or name in CMDS:
             is_cmd, ran = name in CMDS, False
@@ -747,9 +796,9 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
                     ran = True
                     break
             operands = [w for w in words[1:] if not w.startswith(("-", "<", "/"))]
-            if not ran and (is_cmd or not operands) and GIT_SHIP_LINE.search(command):
+            if not ran and (is_cmd or not operands) and GIT_SHIP_LINE.search(original):
                 raise Refuse(reads_input.format(words[0]))
-        elif name in EXPRESSION_RUNNERS and GIT_SHIP_LINE.search(command):
+        elif name in EXPRESSION_RUNNERS and GIT_SHIP_LINE.search(original):
             raise Refuse(f"`{words[0]}` runs a string the guard cannot follow, and this command holds a git push / "
                          "commit. Run git itself: git -C <dir> push ...")
         elif name not in NON_EXEC and GIT_SHIP_LINE.search(" ".join(words)):

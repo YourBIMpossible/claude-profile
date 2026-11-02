@@ -299,6 +299,45 @@ def test_xargs_anywhere_in_a_wrapper_chain_is_refused(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
 
 
+@pytest.mark.parametrize("command", ["echo 'git push --no-verify' | xargs sh -c",
+                                     "printf 'git push --no-verify' | xargs -0 bash -c",
+                                     "echo 'gh pr merge 7' | xargs -I{} python -c 'import os; os.system(\"{}\")'"])
+def test_xargs_feeding_a_shell_or_runner_a_push_is_refused(command, tmp_path):
+    assert "xargs" in (decide(bash(command, cwd=str(tmp_path))) or ""), command
+
+
+def test_xargs_that_only_reads_text_is_allowed(tmp_path):
+    assert decide(bash("git log --oneline | xargs echo commit", cwd=str(tmp_path))) is None
+    assert decide(bash("echo 'git push --no-verify' | xargs echo", cwd=str(tmp_path))) is None
+
+
+@pytest.mark.parametrize("command", [
+    "cat <<'EOF' |\ngit push --no-verify\nEOF\nbash",
+    "cat <<'EOF' | python3\nimport os; os.system('git push --no-verify')\nEOF",
+    "cat <<'EOF' |\nimport os; os.system('git push --no-verify')\nEOF\npython3",
+    "cat <<'EOF' | xargs -0 sh -c\ngit push --no-verify\nEOF",
+])
+def test_a_here_document_piped_on_to_a_runner_is_checked(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))), command
+
+
+def test_a_here_document_piped_on_to_a_reader_is_allowed(tmp_path):
+    assert decide(bash("cat <<'EOF' | grep push\nthen git push\nEOF", cwd=str(tmp_path))) is None
+    assert decide(bash("cat <<'EOF' |\nthen git push\nEOF\ntee notes.md", cwd=str(tmp_path))) is None
+
+
+def test_an_encoded_command_through_a_launcher_is_checked(tmp_path):
+    import base64
+    ship = base64.b64encode("git push --no-verify".encode("utf-16-le")).decode()
+    quiet = base64.b64encode("Get-Date".encode("utf-16-le")).decode()
+    for command in (f"Start-Process powershell -ArgumentList '-EncodedCommand','{ship}'",
+                    f'Start-Process pwsh -ArgumentList "-NoProfile -enc {ship}"', f"cmd /c start powershell -e {ship}"):
+        assert "encoded command" in (decide(pwsh(command, cwd=str(tmp_path))) or ""), command
+    assert "decode" in decide(pwsh("Start-Process powershell -ArgumentList '-ec','!!notbase64!!'", cwd=str(tmp_path)))
+    assert decide(pwsh(f"Start-Process powershell -ArgumentList '-EncodedCommand','{quiet}'", cwd=str(tmp_path))) is None
+    assert decide(pwsh("Start-Process powershell -ExecutionPolicy Bypass -File x.ps1", cwd=str(tmp_path))) is None
+
+
 @pytest.mark.parametrize("command", ["D:; git push", 'cmd /c "D: && git push"', "q: ; git -C x push"])
 def test_a_bare_drive_switch_makes_the_directory_unknown(command, tmp_path):
     assert "git -C <dir> push" in (decide(pwsh(command, cwd=str(tmp_path))) or ""), command
