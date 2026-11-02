@@ -13,7 +13,7 @@ package registered with the Claude CLI; -SkipRea skips it, -DryRun never runs it
 Run it from the clone, wherever the clone lives:
   powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 [-DryRun]
       [-ReposRoot <dir>] [-ToolsRoot <dir>] [-CollabMailbox <dir> | -NoCollabMailbox]
-      [-Yes] [-SkipRea]
+      [-NoGitHooks] [-Yes] [-SkipRea]
 #>
 param(
     [switch]$DryRun,
@@ -21,6 +21,7 @@ param(
     [string]$ToolsRoot,
     [string]$CollabMailbox,
     [switch]$NoCollabMailbox,
+    [switch]$NoGitHooks,
     [switch]$Yes,
     [switch]$SkipRea
 )
@@ -55,6 +56,7 @@ if ($ReposRoot) { $forward += @('--repos-root', $ReposRoot) }
 if ($ToolsRoot) { $forward += @('--tools-root', $ToolsRoot) }
 if ($NoCollabMailbox) { $forward += '--no-collab-mailbox' }
 elseif ($PSBoundParameters.ContainsKey('CollabMailbox')) { $forward += @('--collab-mailbox', $CollabMailbox) }
+if ($NoGitHooks) { $forward += '--no-git-hooks' }
 if ($Yes) { $forward += '--yes' }
 
 $exe = $python[0]

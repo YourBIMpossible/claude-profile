@@ -38,6 +38,7 @@ delete what bootstrap wrote and rename the backup back.
 | `~/.claude/skills` | moved aside, replaced by a junction (Windows) / symlink into this clone |
 | `~/.claude/settings.json` | merged with `settings.template.json`: hooks are registered to run from this clone (the template's hooks replace the ones it owns, including copies earlier bootstraps pinned under `~/.claude/hooks`), `permissions.additionalDirectories` gains the configured folders, missing plugin, marketplace and `env` entries are added, and every other existing key is kept. An empty or unparseable file is refused, never replaced |
 | Claude Desktop config (Windows: `%APPDATA%\Claude\claude_desktop_config.json`) | only its `mcpServers` value is replaced from `mcp/`; every other byte is kept |
+| `core.hooksPath` in this clone and the claude-tools clone (git config) | set to `.githooks` when unset, so the versioned hooks run: `pre-commit` (gitleaks secret scan, blocks without gitleaks) and `pre-push` (CI's machine-paths scan, blocks a push that would fail it). A value someone else set is left alone; `--no-git-hooks` skips this |
 | REA (`rea-agents` npm package, Windows via `bootstrap.ps1`) | installed globally and registered as the user-scope MCP server `rea` by `tools/Install-Rea.ps1` (`-SkipRea` to skip). Needs Node 22.19+/24.11+/26+ |
 
 Skills are *replaced, not merged*: a skill that exists only on this machine ends up in the
@@ -56,7 +57,8 @@ Close Claude Code and Claude Desktop before running bootstrap; re-running it is 
 
    Options (both entry points): `--repos-root` / `-ReposRoot`, `--tools-root` / `-ToolsRoot`,
    `--collab-mailbox` / `-CollabMailbox` (empty = not used; asked interactively when unset),
-   `--no-collab-mailbox`, `--yes` (never prompt).
+   `--no-collab-mailbox`, `--no-git-hooks` / `-NoGitHooks` (leave `core.hooksPath` alone),
+   `--yes` (never prompt).
 3. Restart Claude Code (and Claude Desktop on Windows). Verify with `/context` (CLAUDE.md
    and skills load) and `/plugin list`; the first session shows "Machine roots for this profile".
 
