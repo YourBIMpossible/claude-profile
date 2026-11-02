@@ -2,8 +2,9 @@
 # .githooks/pre-push - run the gate (tools/gate.py) on the commits being pushed, 2026-11-02.
 # ship-guard: gate   (hooks/ship_guard.py refuses a Claude session's push here while core.hooksPath is not .githooks)
 #
-# The gate is what CI's install-tests workflow runs on Linux and Windows: every pytest suite in the repository and the
-# machine-paths guard. So a failing test or a literal machine path fails here instead of on the PR.
+# The gate is what CI's install-tests workflow (manual dispatch only) runs on Linux and Windows: every pytest suite in
+# the repository and the machine-paths guard. The automatic PR check (machine-paths.yml) fires only when a PR opens or
+# leaves draft, so a failing test or a literal machine path is caught here, on each push.
 # bootstrap.py turns it on (tools/git_gate.py: gitleaks, then core.hooksPath = .githooks); by hand, once per clone:
 #     python tools/git_gate.py
 #
@@ -93,7 +94,7 @@ $targets
 EOF
 
 if [ "$failed" -ne 0 ]; then
-    echo "pre-push: BLOCKED - CI runs this same gate on the PR and would fail the same way." >&2
+    echo "pre-push: BLOCKED - CI's manual audit (install-tests.yml) runs this same gate and would fail the same way." >&2
     echo "pre-push: fix the failures above, commit, push again. A vetted machine-path exception goes in the" >&2
     echo "pre-push: scanner's allowlist (.machine-paths-allow.json), not a bypass." >&2
     exit 1

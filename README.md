@@ -100,15 +100,18 @@ This repo is the source of truth: change it here, commit, push, merge.
   so an in-app change (e.g. `/config`) is kept. MCP servers come from
   `mcp/claude_desktop_config.template.json`.
 - **Machine-specific values** belong in `~/.claude/profile-machine.json`, never in the repo.
-  Run `python .github/scripts/check_machine_paths.py` before pushing (CI runs it too).
+  Run `python .github/scripts/check_machine_paths.py` before pushing (CI runs it too, when a PR opens or leaves draft).
 - **Every push runs the gate.** The `pre-push` hook runs `tools/gate.py` on each pushed commit (in a throwaway clone, so the
   verdict is the commit's, never the working copy's) and blocks unless it ends `GATE PASS`. The gate is what CI's install-tests
-  workflow runs on Linux and Windows: pytest over `hooks/tests`, `tools/tests` and `skills/graphify/scripts`, then the
+  workflow (manual dispatch only: `gh workflow run install-tests.yml --ref <branch>`) runs on Linux and Windows: pytest over `hooks/tests`, `tools/tests` and `skills/graphify/scripts`, then the
   machine-paths guard (self-test and scan). Run it by hand any time: `python tools/gate.py`. The three tests that drive a
   claude-tools tool are left out, with a line saying so, on a machine without that clone (CI is one).
 - **Claude sessions cannot get around it.** `hooks/ship_guard.py` (PreToolUse) refuses a session's `git push` while
   `core.hooksPath` is not the gate, refuses `--no-verify` and the bypass variables, and refuses `gh pr merge`, the merge API
-  and auto-merge unless every check on the PR head is green. The owner's own terminal keeps the logged emergency bypass,
+  and auto-merge unless every check on the PR head is green (the PR's checks plus the head commit's own check runs, where a
+  dispatched workflow reports). A push to an open PR fires no check on the new head: dispatch install-tests on the
+  final head before such a merge (flipping the PR draft->ready re-runs only machine-paths, not the tests). The owner's
+  own terminal keeps the logged emergency bypass,
   `BIMP_PREPUSH_BYPASS="<reason>" git push`.
 - **Turning the gate on, per machine** (once; bootstrap does it): `python tools/git_gate.py`, then
   `python tools/git_gate.py --check` must print `git gate: ON`.
