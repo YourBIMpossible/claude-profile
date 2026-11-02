@@ -177,6 +177,10 @@ def test_direct_github_file_writes_are_refused():
     "curl -Tc.json https://api.github.com/repos/o/r/contents/f",
     "curl '-X' 'PUT' https://api.github.com/repos/o/r/contents/f", "gh api repos/o/r/contents/f -X P\"U\"T",
     "python -c \"import urllib.request as u; u.urlopen('https://api.github.com/repos/o/r/git/refs', data=b'{}')\"",
+    "curl -OJd@c.json https://api.github.com/repos/o/r/contents/f",
+    "curl -aT c.json https://api.github.com/repos/o/r/contents/f",
+    "python -c \"import urllib.request as u; u.urlopen('https://api.github.com/repos/o/r/git/refs', b'{}')\"",
+    "python -c \"import urllib.request as u; u.urlopen(u.Request('https://api.github.com/repos/o/r/git/refs', b'x'))\"",
 ])
 def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
@@ -189,6 +193,8 @@ def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tm
     "gh api repos/o/r/contents/f \\\n  --jq .sha",
     "gh api repos/o/r/contents/f -X GET", "curl -sSL https://api.github.com/repos/o/r/contents/f",
     "curl -fsSL -H 'Accept: application/vnd.github.raw' https://api.github.com/repos/o/r/contents/f",
+    "gh api repos/o/r/contents/f --method=GET",
+    "python -c \"import urllib.request as u; u.urlopen('https://api.github.com/repos/o/r/contents/f', timeout=5)\"",
 ])
 def test_reads_of_the_contents_and_git_data_api_are_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command
@@ -465,6 +471,11 @@ def test_the_rest_merge_pin_is_read_only_from_the_sha_field():
     "Set-Item -Path Env:/GIT_CONFIG_COUNT -Value 1; git st",
     "read GIT_CONFIG_COUNT <<< 1; export GIT_CONFIG_COUNT; git st",
     "declare -x GIT_CONFIG_PARAMETERS; git st",
+    "printf -v GIT_CONFIG_COUNT 1; /usr/bin/git st", "printf -v GIT_CONFIG_COUNT 1; \\git st",
+    "export GIT_CONFIG_COUNT; make", "printf -v GIT_CONFIG_\"COUNT\" 1; git st",
+    "grep x <(GIT_CONFIG_COUNT=1 git st)", "rg --pre sh GIT_CONFIG_COUNT run.sh",
+    "git grep -O'sh -c x' GIT_CONFIG_COUNT", "git grep --open-files-in-pager=sh GIT_CONFIG_COUNT",
+    "sort --compress-program=sh GIT_CONFIG_COUNT", "git config --url get alias.x push",
 ])
 def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
@@ -480,6 +491,7 @@ def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
     "git config --get-a alias.x", "git config --show-o --get alias.x", "git config -zl",
     "git config -fx.cfg --get alias.x",
     "git grep -n GIT_CONFIG_COUNT | head -5", "python -m pytest -k GIT_CONFIG hooks/tests",
+    "rg -n GIT_CONFIG_COUNT hooks | wc -l", "git config --url https://x/ --get-urlmatch alias.x",
 ])
 def test_ordinary_commits_and_config_reads_are_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command

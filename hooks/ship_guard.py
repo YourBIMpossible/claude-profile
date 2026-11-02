@@ -72,6 +72,7 @@ import json
 import os
 import re
 import shlex
+import string
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace
@@ -105,16 +106,22 @@ REST_WRITE_PATH = re.compile(r"repos/[^/\s'\"`]+/[^/\s'\"`]+/(contents\b|git/(re
 # command, not per piece, so a path and its write flag on different lines or in different pieces still refuse.
 WRITE_REQUEST = re.compile(
     r"(^|[\s'\"])(-X|--method|--request|-Method)[\s=:]*['\"]?(PUT|POST|PATCH|DELETE)\b"
-    r"|(^|[\s'\"])(--field|--raw-field|--input|--data[\w-]*|--json|--form[\w-]*|--upload-file|-Body|-InFile)(\s|=|$)"
-    r"|\.(put|post|patch|delete)\(|\brequest\(\s*['\"](PUT|POST|PATCH|DELETE)\b"
-    r"|\bmethod(-override)?['\"]?\s*[=:]\s*['\"]?(PUT|POST|PATCH|DELETE)\b"
+    r"|(^|[\s'\"])(--field|--raw-field|--input|--data[\w-]*|--json|--form[\w-]*|--upload-file|-Body|-InFile|-Form)"
+    r"(\s|=|$)"
+    r"|\.(put|post|patch|delete)\(|\brequest\(\s*(['\"](PUT|POST|PATCH|DELETE)\b|[a-z_])"
+    r"|\bmethod(-override)?['\"]?\s*[=:]\s*(['\"]?(PUT|POST|PATCH|DELETE)\b|(?!(GET|HEAD)\b)[a-z_])"
     r"|[(,]\s*data\s*=", re.IGNORECASE)
+# urllib's `urlopen(url, body)` / `Request(url, body)`: a second positional argument is the request body.
+URLLIB_CALL = re.compile(r"\b(urlopen|Request)\s*\(")
 # gh's -f / -F field flags, alone or with the field attached (`-fmessage=x`), curl's -d / -F / -T, attached
-# (`-d@f`, `-Tfile`) or at the end of a cluster of curl's no-argument flags (`-sd@f`, `-sSLT f`, `-sXPUT`).
+# (`-d@f`, `-Tfile`) or after a cluster of curl's flags (`-sd@f`, `-sSLT f`, `-OJd@f`, `-sXPUT`). A cluster ends at
+# curl's first value-taking letter, which takes the rest of the word, so every other letter or digit counts as a flag.
 # Case-sensitive, so PowerShell's `-Force` / `-TimeoutSec` / `-Debug` / `-Headers` are not read as one.
-CURL_NOARG = r"sSLfikvqgGNnjlRpI#0-9"
+CURL_VALUE_SHORT = "AbcCDeEHKmoPQrtuUwxyz"
+CURL_FLAG = re.escape("".join(c for c in string.ascii_letters + string.digits + "#:"
+                              if c not in CURL_VALUE_SHORT + "dFTX"))
 SHORT_WRITE_FLAG = re.compile(r"(^|[\s'\"])(-[fFdT](\s|=|$)|-[fF][\w.\[\]-]+=|-d[@'\"{\w]|-T(?!imeoutSec)\S"
-                              rf"|-[{CURL_NOARG}]+[dFT]|-[{CURL_NOARG}]*X[\s=:]*(PUT|POST|PATCH|DELETE)\b)")
+                              rf"|-[{CURL_FLAG}]+[dFT]|-[{CURL_FLAG}]*X[\s=:]*(PUT|POST|PATCH|DELETE)\b)")
 # What the shell strips before a program sees its words: quotes, `\` and PowerShell's backtick escapes, so `'-X' 'PUT'`
 # and `-X P"U"T` read as the `-X PUT` they are.
 SHELL_QUOTING = re.compile(r"['\"\\`]")
@@ -134,7 +141,7 @@ CONFIG_LONG_OPTS = frozenset(
                           "rename-section", "remove-section", "list", "edit", "get-color", "get-colorbool", "bool",
                           "int", "bool-or-int", "bool-or-str", "path", "expiry-date")})
 # `git config` options that take the next word as their value, so that word is never the key or a subcommand.
-CONFIG_VALUE_OPTS = {"--file", "--blob", "--comment", "--type", "--default", "--value"}
+CONFIG_VALUE_OPTS = {"--file", "--blob", "--comment", "--type", "--default", "--value", "--url"}
 CONFIG_VALUE_SHORT = {"f": "--file", "t": "--type"}  # the rest of the word, or else the next word, is the value
 CONFIG_SHORT_FLAGS = {"e": "--edit", "l": "--list", "z": "--null"}
 CONFIG_READ_SUBS = {"get", "list", "unset", "remove-section", "get-color", "get-colorbool"}
@@ -145,12 +152,10 @@ GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLO
 # Setting one: `NAME=`, `$env:NAME =`, `"NAME": ` / `"NAME", ` (a mapping or SetEnvironmentVariable), or the env drive.
 GIT_CONFIG_SET = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)['\"]?\]?\s*[=:,]"
                             r"|\benv:GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
-# git run as a program: `printf -v`, `read`, `declare`, `Set-Item Env:/…` and the like can set GIT_CONFIG_* with no
-# `NAME=`, so naming one at all in a command that runs git is refused.
-GIT_INVOKED = re.compile(r"(^|[\s;&|(){}'\"`])git(\.exe)?([\s;&|)'\"`]|$)", re.IGNORECASE)
+# `printf -v`, `read`, `declare`, `Set-Item Env:/…` and the like set GIT_CONFIG_* with no `NAME=`, and git may run
+# under any path or through another program, so naming one at all is refused unless the command only searches text.
 # Programs that only search or page text, so a command made of nothing else names GIT_CONFIG_* without setting it.
-SEARCH_PROGRAMS = {"grep", "egrep", "fgrep", "rg", "findstr", "select-string", "sls", "head", "tail", "sort", "uniq",
-                   "wc"}
+SEARCH_PROGRAMS = {"grep", "egrep", "fgrep", "rg", "findstr", "select-string", "sls", "head", "tail", "wc"}
 GIT_REDIRECT_ENV = re.compile(r"\bGIT_(DIR|WORK_TREE|COMMON_DIR)\b")
 GIT_REDIRECT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 GH_TARGET_ENV = re.compile(r"\bGH_(REPO|HOST)\b")
@@ -521,16 +526,49 @@ def _config_long_opt(word: str) -> Optional[str]:
     return hits[0] if len(hits) == 1 else None
 
 
+def _urllib_body(text: str) -> bool:
+    """True when a `urlopen(...)` / `Request(...)` call in the text has a second positional argument, its body."""
+    for match in URLLIB_CALL.finditer(text):
+        depth, quote, args, current = 0, "", [], ""
+        for ch in text[match.end():]:
+            if quote:
+                quote = "" if ch == quote else quote
+            elif ch in "'\"":
+                quote = ch
+            elif ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif ch == "," and depth == 0:
+                args.append(current)
+                current = ""
+                continue
+            current += ch
+        args.append(current)
+        if len(args) > 1 and args[1].strip() and not re.match(r"\s*\w+\s*=(?!=)", args[1]):
+            return True
+    return False
+
+
 def _only_searches(command: str) -> bool:
-    """True when the command is nothing but text searches piped together, so a GIT_CONFIG_* in it is a pattern."""
-    if re.search(r"[;&\r\n`]|\$\(", command):
+    """True when the command is nothing but text searches piped together, so a GIT_CONFIG_* in it is a pattern.
+    Any separator, substitution, redirect, group or variable fails it, and so do the options that make a search run
+    another program: rg's `--pre` and git grep's `-O` / `--open-files-in-pager`."""
+    if re.search(r"[;&\r\n`<>(){}$]", command):
         return False
     for piece in command.split("|"):
         words = piece.split()
         if not words:
             return False
         first = words[0].lower()
-        if not (first in SEARCH_PROGRAMS or first in ("git", "git.exe") and words[1:2] == ["grep"]):
+        git_grep = first in ("git", "git.exe") and words[1:2] == ["grep"]
+        if not (first in SEARCH_PROGRAMS or git_grep):
+            return False
+        if first == "rg" and any(w.startswith("--pre") for w in words):
+            return False
+        if git_grep and any(w.startswith("--op") or re.match(r"-[^-]*O", w) for w in words):
             return False
     return True
 
@@ -1013,13 +1051,13 @@ def _check_text(command: str) -> None:
         if var in command:
             raise Refuse(f"{var} is the owner's audited bypass, typed in the owner's own terminal; a session does not "
                          "set it. Fix what the gate reports instead.")
-    if GIT_CONFIG_ENV.search(command) and "hookspath" in command.lower():
+    named_config_env = any(GIT_CONFIG_ENV.search(t) for t in (command, SHELL_QUOTING.sub("", command)))
+    if named_config_env and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
-    if ((GIT_CONFIG_SET.search(command) or GIT_CONFIG_ENV.search(command) and GIT_INVOKED.search(command))
-            and not _only_searches(command)):
+    if GIT_CONFIG_SET.search(command) or named_config_env and not _only_searches(command):
         raise Refuse("setting GIT_CONFIG_* (PARAMETERS / COUNT / KEY_n / VALUE_n / GLOBAL / SYSTEM), or naming one in "
-                     "a command that runs git, injects git config the guard cannot check: an alias that turns any "
-                     "subcommand into a push, an include, or core.hooksPath. Run git without it.")
+                     "anything but a plain text search, injects git config the guard cannot check: an alias that "
+                     "turns any subcommand into a push, an include, or core.hooksPath. Run git without it.")
     if REST_BRANCH_MERGE.search(command):
         raise Refuse("GitHub's branch merge (`repos/OWNER/REPO/merges`) puts commits on a branch with no PR and no "
                      "checks. Open a PR and merge it once every check is green.")
@@ -1029,7 +1067,7 @@ def _check_text(command: str) -> None:
                      "`git push`.")
     joined = LINE_CONTINUATION.sub(" ", command)
     unquoted = SHELL_QUOTING.sub("", joined)
-    if any(REST_WRITE_PATH.search(t) and (WRITE_REQUEST.search(t) or SHORT_WRITE_FLAG.search(t))
+    if any(REST_WRITE_PATH.search(t) and (WRITE_REQUEST.search(t) or SHORT_WRITE_FLAG.search(t) or _urllib_body(t))
            for t in (joined, unquoted)):
         raise Refuse("a write to GitHub's contents or git-data API (`contents/`, `git/refs`, `git/commits`, "
                      "`git/trees`, `git/blobs`) puts code on a branch without a push, so no local gate runs. "
