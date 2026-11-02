@@ -38,6 +38,7 @@ live entirely inside settings.json.
 | `ctxdex_autoindex.py` | PostToolUse Bash | convenience | clone |
 | `decay_reminder.py` | UserPromptSubmit | **advisory** reminder (C2) | clone |
 | `protect_paths_gate.py` | PreToolUse Write\|Edit\|MultiEdit\|NotebookEdit | **control** — fail-closed (C3; live `NORTHSTAR*.md` edits raise an owner approval prompt, `*.draft.md` free) | clone |
+| `ship_guard.py` | PreToolUse Bash\|PowerShell + the MCP merge, auto-merge and GitHub file-write tools | **control** — fail-closed. Replaces required checks (owner ruling 2026-11-02: no GitHub settings): refuses `gh pr merge`, the REST merge endpoint and MCP merges unless every check on the PR head is green; GraphQL merges, auto-merge on, and MCP file writes to GitHub always. Refuses `git push` in a repository whose `.githooks/pre-push` carries `ship-guard: gate` unless its `core.hooksPath` is that `.githooks` (fix: `python tools/git_gate.py`), and everywhere `--no-verify` / `commit -n`, `-c core.hooksPath=`, a `git config` that redirects or unsets it, and the `BIMP_PREPUSH_BYPASS` / `BIMP_SECRETS_BYPASS` variables. Self-test: `pytest hooks/tests/test_ship_guard.py`. | clone |
 | `northstar_inject.py` | SessionStart (`startup\|resume\|clear`) + UserPromptSubmit | **advisory** — injects the active locked mission(s) at session start and re-injects them each turn (scope-governor v3, multi-star) | clone |
 | `skill-detection-hook.json` | PostToolUse (Revit MCP) | prompt-type, enabled 2026-08-08 | n/a (JSON in settings.json) |
 | `evidence_evacuate.py` | Stop + SessionEnd | **convenience** — Evidence Compiler measurement plan S0.1: copies any EC packet in `$CLAUDE_PROJECT_DIR`/payload `cwd` `.evidence-compiler/packets/` that `{repos}/Evidence-Archive/EC-LIVE` lacks, via `{tools}/evidence-archive/evacuate_worktree.py --apply` (sha256-verified, never deletes/overwrites, local-only). A packet counts as archived only when a byte-identical copy is in `packets/` or the evacuator's quarantine (a partial copy is retried). No-op = one listing + one stat per packet (a packet is hashed only against a same-size archive copy). One shared 25 s budget covers the pre-check hashing and evacuator calls across checkouts (a checkout it cannot finish checking is a surfaced deferral); one checkout's failure never skips the rest. Always exit 0 (a Stop hook exiting 2 would block the stop); any failure is surfaced as a `systemMessage`, not just logged; a SessionEnd failure is also appended as its own entry under `evidence_evacuate.pending/` and shown by the next Stop, which deletes only the entries it has printed (an interrupted Stop keeps them; an unreadable entry is shown, never dropped). SessionEnd also sweeps the repo root + every `<root>/.claude/worktrees/*` (the `--sweep` backstop's caller); `--sweep <repo-root>...` exits 1 on failure. Opt-out `EVIDENCE_EVACUATE=0`. Self-test: `python hooks/tests/test_evidence_evacuate.py` or `pytest hooks/tests` (needs the real evacuator; `EVIDENCE_TEST_EVACUATOR` overrides its path, a missing one fails). | clone |
@@ -83,13 +84,14 @@ removed on 2026-08-07 (`docs/adr/0002-defer-context-budget-automation.md`).
 
 ## Control vs advisory (from the fail-open lesson)
 
-One **control**, fail-closed (block on its own failure — malformed payload, missing
-field, any exception → exit 2): `protect_paths_gate.py` (protected paths on Write/Edit/MultiEdit/NotebookEdit,
+Two **controls**, fail-closed (block on its own failure — malformed payload, missing
+field, any exception → exit 2): `ship_guard.py` (see its row above) and `protect_paths_gate.py` (protected paths on Write/Edit/MultiEdit/NotebookEdit,
 plus an owner-approval prompt on every live north-star mission file — `NORTHSTAR.md` and
 `NORTHSTAR.<slug>.md`; `*.draft.md` is free; since 2026-10-10, see below). Everything else is advisory or
 convenience — a failure there changes nothing about safety.
 
 Scope honesty:
+- **ship_guard**: binds Claude sessions only (the owner's web-UI merge and own terminal are untouched, by design), and sees only what the command text shows: an alias, a script file or an encoded command that pushes or merges is not seen. The pre-push hook, the gate it runs (`tools/gate.py`) and CI are the layers behind it.
 - **protect_paths_gate**: covers only the file-writing tools Write, Edit, MultiEdit and
   NotebookEdit (one matcher in `settings.template.json`). **The Bash channel (`sed -i`,
   redirection, `tee`, `Set-Content`, `python -c`) is NOT covered and is advisory-only** —

@@ -15,6 +15,12 @@ What it writes (each replaced file is backed up first as
   ~/.claude/settings.json         merged with settings.template.json (tools/profile_setup.py);
                                   hooks run straight from this clone
   Claude Desktop config           Windows only: mcpServers replaced, every other byte kept
+  ~/.claude/bin/gitleaks[.exe]    the pinned, checksum-verified gitleaks, when none is installed
+  core.hooksPath = .githooks      in this clone and the claude-tools clone: the git gate
+                                  (tools/git_gate.py). pre-commit scans for secrets, pre-push
+                                  runs the repo's CI gate. Set only once gitleaks works; a value
+                                  someone else set is left alone and the run exits 1 ("GIT GATE
+                                  NOT ON"). --no-git-hooks skips it.
 
 After this one run, a merged change to the hooks, the settings template or the text
 reaches the machine through the session-start hook (hooks/session_start.py): it
@@ -26,7 +32,7 @@ it was. --dry-run stops there and prints what would be written.
 
 Usage:
   python bootstrap.py [--dry-run] [--repos-root DIR] [--tools-root DIR]
-                      [--collab-mailbox DIR | --no-collab-mailbox] [--yes]
+                      [--collab-mailbox DIR | --no-collab-mailbox] [--no-git-hooks] [--yes]
 """
 from __future__ import annotations
 
@@ -43,6 +49,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 import machine_config  # noqa: E402
 import profile_setup as ps  # noqa: E402
 from profile_setup import Refuse  # noqa: E402
+import git_gate  # noqa: E402
 
 
 def say(msg: str = "") -> None:
@@ -120,6 +127,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--tools-root", help="the claude-tools clone (default: <repos-root>/claude-tools if present)")
     ap.add_argument("--collab-mailbox", help="this machine's Claude Collab mailbox folder ('' = not used)")
     ap.add_argument("--no-collab-mailbox", action="store_true", help="clear the Collab mailbox setting")
+    ap.add_argument("--no-git-hooks", action="store_true", help="leave core.hooksPath unchanged in every clone")
     ap.add_argument("--yes", action="store_true", help="never prompt")
     opts = ap.parse_args(argv)
 
@@ -158,6 +166,11 @@ def main(argv: list[str]) -> int:
     skills_path = claude_dir / "skills"
     skills_target = REPO_ROOT / "skills"
 
+    hook_plans: list[git_gate.HooksPlan] = []
+    if not opts.no_git_hooks:
+        clones = git_gate.default_clones(cfg["tools_root"] or "")
+        hook_plans = [plan for plan in map(git_gate.plan_hooks, clones) if plan is not None]
+
     if opts.dry_run:
         say("")
         say("DRY RUN - nothing written. Would write:")
@@ -171,6 +184,10 @@ def main(argv: list[str]) -> int:
             say("  settings.json already correct")
         if desktop_plan is not None:
             say(f"  {desktop_plan.path}: {'update mcpServers' if desktop_plan.changed else 'already correct'}")
+        for plan in hook_plans:
+            say(f"  {git_gate.describe_plan(plan)}")
+        if hook_plans and git_gate.find_gitleaks() is None:
+            say(f"  {git_gate.installed_path()}: download gitleaks {git_gate.GITLEAKS_VERSION} (checksum-pinned)")
         return 0
 
     # ---- Writes. Every check has passed. ----
@@ -248,9 +265,27 @@ def main(argv: list[str]) -> int:
         say("Updated mcpServers in claude_desktop_config.json" + (
             f" (preserved {desktop_plan.kept_keys} top-level keys)" if desktop_plan.existed else " (new file)"))
 
+    # 6. The git gate: gitleaks, then core.hooksPath (tools/git_gate.py)
+    gate_ok = True
+    if opts.no_git_hooks:
+        say("git hooks: skipped (--no-git-hooks)")
+    elif hook_plans:
+        lines, gate_ok = git_gate.enable(hook_plans)
+        pytest_line, pytest_ok = git_gate.ensure_pytest()
+        lines.append(pytest_line)
+        gate_ok = gate_ok and pytest_ok
+        for line in lines:
+            say(line)
+
     say("")
     say("Bootstrap complete.")
     say("Restart Claude Code; verify with /context (CLAUDE.md and skills load) and /plugin list.")
+    if not gate_ok:
+        say("")
+        say("GIT GATE NOT ON - every other step is done, but commits and pushes are not gated in the clone(s) "
+            "named above, and Claude sessions are refused `git push` there until it is. Fix what those lines say, "
+            f"then run: python \"{REPO_ROOT / 'tools' / 'git_gate.py'}\"")
+        return 1
     return 0
 
 

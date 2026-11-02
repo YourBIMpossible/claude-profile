@@ -65,10 +65,15 @@ def fake_gitleaks(tmp_path: Path, exit_code: int) -> str:
     return fake.as_posix()
 
 
-def run_hook(repo: Path, *, gitleaks_bin: str | None = None, bypass: str | None = None) -> subprocess.CompletedProcess:
+def run_hook(repo: Path, *, gitleaks_bin: str | None = None, bypass: str | None = None,
+             home: Path | None = None) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith("GIT_") and k not in {"GITLEAKS_BIN", "BIMP_SECRETS_BYPASS"}}
     env["PATH"] = _minimal_path()
+    # A home with no ~/.claude/bin unless the test builds one, so this machine's own install never counts.
+    home = home or repo.parent / "home"
+    home.mkdir(exist_ok=True)
+    env["HOME"] = env["USERPROFILE"] = home.as_posix()
     if gitleaks_bin is not None:
         env["GITLEAKS_BIN"] = gitleaks_bin
     if bypass is not None:
@@ -88,6 +93,18 @@ def test_missing_gitleaks_blocks_with_clear_message(staged_repo: Path) -> None:
     assert "gitleaks not found" in proc.stderr
     assert "BLOCKED" in proc.stderr
     assert "BIMP_SECRETS_BYPASS" in proc.stderr  # the message names the audited way out
+
+
+def test_gitleaks_installed_by_the_git_gate_is_found(staged_repo: Path, tmp_path: Path) -> None:
+    """tools/git_gate.py installs gitleaks as ~/.claude/bin/gitleaks[.exe]; the hook finds it there off PATH."""
+    home = tmp_path / "gate-home"
+    fake = Path(fake_gitleaks(tmp_path, 77))
+    (home / ".claude" / "bin").mkdir(parents=True)
+    shutil.copyfile(fake, home / ".claude" / "bin" / "gitleaks")
+    (home / ".claude" / "bin" / "gitleaks").chmod(0o755)
+    proc = run_hook(staged_repo, home=home)
+    assert proc.returncode == 1, proc.stderr
+    assert "staged secret" in proc.stderr, proc.stderr
 
 
 def test_gitleaks_bin_pointing_nowhere_blocks(staged_repo: Path, tmp_path: Path) -> None:
