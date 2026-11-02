@@ -10,6 +10,7 @@ Run: python -m pytest tools/tests -q   (or directly: python tools/tests/test_gat
 """
 import importlib.util
 import io
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +25,60 @@ def load():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def workflow_code(text: str) -> str:
+    """A workflow with its comments stripped, so a commented-out trigger neither passes nor fails a check."""
+    return "\n".join(re.sub(r"(^|\s)#.*", "", line).rstrip() for line in text.splitlines())
+
+
+def workflow_events(code: str) -> set:
+    """The events under a workflow's top-level `on:`, inline (`on: [push, pull_request]`) or as a block. Anything it
+    cannot read comes back empty, which no posture check accepts."""
+    match = re.search(r"^on:[ \t]*(.*)\n((?:(?:[ \t]+.*)?\n)*)", code + "\n", re.M)
+    if not match:
+        return set()
+    inline, block = match.groups()
+    return set(re.findall(r"\w+", inline)) | set(re.findall(r"^  (\w+)\s*:", block, re.M))
+
+
+def workflow_jobs(code: str) -> dict:
+    """Each job under `jobs:`, by id, as its own block of code."""
+    match = re.search(r"^jobs:[ \t]*\n((?:(?:[ \t]+.*)?\n)*)", code + "\n", re.M)
+    parts = re.split(r"^  ([\w-]+):[ \t]*\n", match.group(1), flags=re.M) if match else []
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
+def pull_request_block(code: str) -> str:
+    """The body of the `pull_request:` event under `on:`, empty when there is none."""
+    match = re.search(r"^on:[ \t]*\n(?:(?:[ \t]+.*)?\n)*?  pull_request:[ \t]*\n((?:(?:    .*)?\n)*)", code + "\n", re.M)
+    return match.group(1) if match else ""
+
+
+def posture_problems(code: str) -> list:
+    """Why an automatic workflow breaks the cost posture: it must fire once per PR and skip drafts in every job, on
+    Linux only."""
+    problems = []
+    if "    types: [opened, reopened, ready_for_review]" not in pull_request_block(code):
+        problems.append("pull_request is not limited to opened, reopened, ready_for_review")
+    if "synchronize" in code:
+        problems.append("names synchronize")
+    jobs = workflow_jobs(code)
+    if not jobs:
+        problems.append("no jobs read")
+    for job, body in jobs.items():
+        if not re.search(r"^    if:.*github\.event\.pull_request\.draft == false", body, re.M):
+            problems.append(f"job {job} runs on drafts")
+        if re.findall(r"^    runs-on:\s*(\S.*)", body, re.M) != ["ubuntu-latest"]:
+            problems.append(f"job {job} is not ubuntu-latest only")
+    return problems
+
+
+# An automatic workflow whose second job forgot the draft skip and runs on Windows: the posture check must name both.
+SECOND_JOB = (
+    "on:\n  pull_request:\n    types: [opened, reopened, ready_for_review]\njobs:\n"
+    "  first:\n    if: ${{ github.event.pull_request.draft == false }}\n    runs-on: ubuntu-latest\n"
+    "  second:\n    runs-on: windows-latest\n")
 
 
 def py(code: str) -> list:
@@ -77,14 +132,24 @@ def test_ci_runs_this_gate_on_both_operating_systems():
 def test_ci_cost_posture():
     # The private repo bills every minute: the full gate is manual only, and the one automatic check fires once per PR.
     workflows = REPO / ".github" / "workflows"
-    assert (workflows / "install-tests.yml").read_text(encoding="utf-8").split("\non:\n", 1)[1].startswith(
-        "  workflow_dispatch:\n\n"), "install-tests must be workflow_dispatch only"
-    for path in workflows.glob("*.yml"):
-        text = path.read_text(encoding="utf-8")
-        if "pull_request:" in text:
-            assert "types: [opened, reopened, ready_for_review]" in text, f"{path.name} re-fires on every push"
-            assert "github.event.pull_request.draft == false" in text, f"{path.name} runs on drafts"
-            assert "windows-latest" not in text, f"{path.name} runs Windows on PRs"
+    automatic = {}
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        code = workflow_code(path.read_text(encoding="utf-8"))
+        events = workflow_events(code)
+        assert events and events <= {"pull_request", "workflow_dispatch"}, f"{path.name} fires on {events or 'unread'}"
+        if events != {"workflow_dispatch"}:
+            automatic[path.name] = code
+    assert set(automatic) == {"machine-paths.yml"}, f"automatic workflows: {sorted(automatic)}"
+    for name, code in automatic.items():
+        assert not posture_problems(code), f"{name}: {posture_problems(code)}"
+
+
+def test_the_posture_parser_reads_inline_and_block_triggers_and_ignores_comments():
+    assert workflow_events(workflow_code("on: [push, pull_request]\njobs:\n")) == {"push", "pull_request"}
+    assert workflow_events(workflow_code("on:\n  # push:\n  pull_request:\n    types: [opened]\njobs:\n")) == {
+        "pull_request"}
+    assert workflow_events(workflow_code('"on":\n  push:\n')) == set()
+    assert posture_problems(SECOND_JOB) == ["job second runs on drafts", "job second is not ubuntu-latest only"]
 
 
 def test_every_default_step_names_a_file_that_exists():

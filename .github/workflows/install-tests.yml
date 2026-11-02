@@ -8,7 +8,10 @@ name: install-tests
 # Cost posture (2026-11-02): this repo is private, so every minute is billed, Windows at double. This lane no longer
 # fires on pull requests; the pre-push hook (.githooks/pre-push) runs the same gate on every push. It stays as a
 # deliberate audit: `gh workflow run install-tests.yml --ref <branch>` when a clean-runner confirmation is wanted.
-# The only automatic remote check is .github/workflows/machine-paths.yml.
+# The only automatic remote check is .github/workflows/machine-paths.yml, when a PR opens or leaves draft. A push to an
+# open PR fires no check on the new head, and ship_guard lets a Claude session merge only when the head has green
+# checks: dispatch this workflow on the branch after the last push. Flipping the PR draft->ready re-runs only
+# machine-paths, not the tests.
 on:
   workflow_dispatch:
 

@@ -21,8 +21,9 @@ MERGES. A merge is allowed only when every check on the PR head is green, and th
 
 Green means: the head commit reports at least one check, and every check run has completed with SUCCESS, NEUTRAL or
 SKIPPED and every commit status is SUCCESS. Pending, failed, cancelled, timed out, action required, stale or missing all
-refuse the merge. The state comes from `gh pr view --json statusCheckRollup` at the moment of the merge, run in the
-directory the merge runs in (followed through `cd` like a push, below). The pinned SHA must be the full head the guard
+refuse the merge. The state comes from `gh pr view --json statusCheckRollup` plus the head commit's own check runs
+(`gh api repos/OWNER/REPO/commits/<head>/check-runs`: a manually dispatched workflow reports only there), at the moment of
+the merge, run in the directory the merge runs in (followed through `cd` like a push, below). The pinned SHA must be the full head the guard
 checked, so a commit pushed between the check and the merge makes GitHub refuse the merge. `GH_REPO` / `GH_HOST` in a
 merging command are refused: `--repo` is the form the guard reads.
 
@@ -93,6 +94,7 @@ MAYBE_ENCODED = re.compile(
     # a launcher, `$variable` or `(expression)` may start a powershell under any name: an exact -EncodedCommand word
     r"|(\b(start-process|saps|start)\b|[$(])[^|;&\n]*[\s'\",](-|--|/)"
     r"(e|ec|en(c(o(d(e(d(c(o(m(m(a(n(d)?)?)?)?)?)?)?)?)?)?)?)?)(?=[\s'\",]|$)", re.IGNORECASE)
+PR_URL = re.compile(r"https?://([^/\s]+)/([^/\s]+)/([^/\s]+)/pull/\d+")
 REST_MERGE = re.compile(r"repos/([^/\s'\"`]+)/([^/\s'\"`]+)/pulls/(\d+)/merge\b")
 GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
 # Writes that put code on a branch with no push, so no local gate runs: GitHub's branch merge (REST and GraphQL), the
@@ -400,6 +402,38 @@ def not_green(rollup: list) -> list:
     return problems
 
 
+def head_check_runs(pr_url: str, head: str, cwd: Optional[str], run: Runner) -> list:
+    """The head commit's own check runs, shaped like rollup items. A workflow_dispatch run on the head reports here and
+    not in the PR's statusCheckRollup: without these, a dispatched gate on the head would not count and a red one would
+    not refuse."""
+    match = PR_URL.match(pr_url)
+    if not match or not re.fullmatch(r"[0-9a-fA-F]{7,64}", head):
+        raise Refuse(f"could not read the head's check runs: no repository in {pr_url or 'the PR URL'!r} or no head "
+                     f"commit ({head or 'none'}).")
+    host, owner, name = match.groups()
+    # The host is always named, so a GH_HOST in the session's environment cannot point the read at another server.
+    argv = ["gh", "api", f"repos/{owner}/{name}/commits/{head}/check-runs?per_page=100", "--hostname", host]
+    try:
+        proc = run(argv, cwd)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Refuse(f"could not read the check runs of {pr_url} at {head[:12]} ({exc}).") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or [f"exit {proc.returncode}"]
+        raise Refuse(f"could not read the check runs of {pr_url} at {head[:12]}: {detail[0]}")
+    try:
+        data = json.loads(proc.stdout)
+        runs = data.get("check_runs")
+        if not isinstance(runs, list) or not all(isinstance(item, dict) for item in runs):
+            raise TypeError("check_runs is not a list of objects")
+        total = int(data.get("total_count", len(runs)))
+    except (json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
+        raise Refuse(f"the check runs of {pr_url} at {head[:12]} came back unreadable.") from exc
+    if total > len(runs):
+        raise Refuse(f"{pr_url} has {total} check runs at {head[:12]}, more than the guard reads in one page.")
+    return [{"__typename": "CheckRun", "name": item.get("name") or "check", "status": item.get("status") or "",
+             "conclusion": item.get("conclusion") or ""} for item in runs]
+
+
 def check_target(target: Target, cwd: Optional[str], run: Runner = _run) -> None:
     """Return when the PR's head is green and the merge pins that head; raise Refuse otherwise."""
     by_url = bool(target.selector and re.match(r"https?://", target.selector))
@@ -424,7 +458,8 @@ def check_target(target: Target, cwd: Optional[str], run: Runner = _run) -> None
         raise Refuse(f"`gh pr view` returned unreadable output for {target.describe()}.") from exc
     head = pr.get("headRefOid") or ""
     shown = pr.get("url") or target.describe()
-    problems = not_green(pr.get("statusCheckRollup") or [])
+    checks = (pr.get("statusCheckRollup") or []) + head_check_runs(pr.get("url") or "", head, where, run)
+    problems = list(dict.fromkeys(not_green(checks)))
     if problems:
         listed = "; ".join(problems[:8]) + (f"; and {len(problems) - 8} more" if len(problems) > 8 else "")
         raise Refuse(f"{shown} is not green at head {head[:12]}: {listed}. Fix the code and push again; a known or "

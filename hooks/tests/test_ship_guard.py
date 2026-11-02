@@ -27,16 +27,23 @@ HEAD = "abc123def4567890"
 
 
 class FakeGh:
-    """A runner whose `gh pr view` answers with a fixed rollup; git calls go to the real git."""
+    """A runner whose `gh pr view` answers with a fixed rollup and whose head check-runs call answers with fixed runs
+    (`runs_out` replaces that answer's text); git calls go to the real git."""
 
-    def __init__(self, rollup=None, returncode: int = 0, stdout: str | None = None):
+    def __init__(self, rollup=None, returncode: int = 0, stdout: str | None = None, runs=(), runs_returncode: int = 0,
+                 runs_out: str | None = None):
         self.rollup, self.returncode, self.stdout, self.calls, self.cwds = rollup, returncode, stdout, [], []
+        self.runs, self.runs_returncode, self.runs_out = list(runs), runs_returncode, runs_out
 
     def __call__(self, argv, cwd):
         if argv[0] == "git":
             return ship_guard._run(argv, cwd)
         self.calls.append(argv)
         self.cwds.append(cwd)
+        if argv[1] == "api" and "/check-runs" in argv[2]:
+            out = self.runs_out if self.runs_out is not None else json.dumps(
+                {"total_count": len(self.runs), "check_runs": self.runs})
+            return subprocess.CompletedProcess(argv, self.runs_returncode, out, "boom" if self.runs_returncode else "")
         out = self.stdout if self.stdout is not None else json.dumps(
             {"number": 7, "url": "https://github.com/o/r/pull/7", "headRefOid": HEAD, "statusCheckRollup": self.rollup})
         return subprocess.CompletedProcess(argv, self.returncode, out, "boom" if self.returncode else "")
@@ -86,6 +93,58 @@ def test_gh_pr_merge_on_a_green_pinned_head_is_allowed():
     fake = FakeGh(GREEN)
     assert decide(bash(f"gh pr merge 7 --repo o/r --squash --delete-branch --match-head-commit {HEAD}"), run=fake) is None
     assert fake.calls[0][:5] == ["gh", "pr", "view", "7", "--repo"]
+
+
+DISPATCHED_GREEN = [{"name": "gate (Linux)", "status": "completed", "conclusion": "success"},
+                    {"name": "gate (Windows)", "status": "completed", "conclusion": "success"}]
+
+
+def test_a_manually_dispatched_run_on_the_head_counts_when_the_pr_rollup_is_empty():
+    # A workflow_dispatch run reports on the commit, not in the PR's statusCheckRollup.
+    fake = FakeGh([], runs=DISPATCHED_GREEN)
+    assert decide(bash(f"gh pr merge 7 --repo o/r --squash --match-head-commit {HEAD}"), run=fake) is None
+    assert fake.calls[1] == ["gh", "api", f"repos/o/r/commits/{HEAD}/check-runs?per_page=100", "--hostname", "github.com"]
+
+
+@pytest.mark.parametrize("run", [{"name": "gate (Windows)", "status": "completed", "conclusion": conclusion}
+                                 for conclusion in ("failure", "action_required", "stale", "cancelled", "timed_out",
+                                                    None)]
+                         + [{"name": "gate (Windows)", "status": "in_progress", "conclusion": None}],
+                         ids=["failed", "action-required", "stale", "cancelled", "timed-out", "no-conclusion",
+                              "running"])
+def test_a_red_or_running_dispatched_run_on_the_head_refuses_even_with_a_green_rollup(run):
+    reason = decide(bash(f"gh pr merge 7 --repo o/r --match-head-commit {HEAD}"), run=FakeGh(GREEN, runs=[run]))
+    assert reason and "not green" in reason and "gate (Windows)" in reason
+
+
+def test_head_check_runs_that_cannot_be_read_in_full_refuse_the_merge():
+    merge = bash(f"gh pr merge 7 --repo o/r --match-head-commit {HEAD}")
+    assert "could not read the check runs" in decide(merge, run=FakeGh(GREEN, runs_returncode=1))
+    assert "unreadable" in decide(merge, run=FakeGh(GREEN, runs_out="not json"))
+    assert "more than the guard reads" in decide(merge, run=FakeGh(GREEN, runs_out=json.dumps(
+        {"total_count": 101, "check_runs": DISPATCHED_GREEN})))
+    for malformed in ({"total_count": 1}, {"total_count": 1, "check_runs": {"name": "gate"}},
+                      {"total_count": 2, "check_runs": [DISPATCHED_GREEN[0], "gate"]}):
+        assert "unreadable" in decide(merge, run=FakeGh(GREEN, runs_out=json.dumps(malformed))), malformed
+
+    class Unstartable(FakeGh):
+        def __call__(self, argv, cwd):
+            if argv[:2] == ["gh", "api"]:
+                raise OSError("gh vanished")
+            return super().__call__(argv, cwd)
+
+    assert "could not read the check runs" in decide(merge, run=Unstartable(GREEN))
+
+
+def test_head_check_runs_are_read_from_the_repository_and_host_the_pr_is_on():
+    fake = FakeGh(GREEN, stdout=json.dumps({"number": 7, "url": "https://git.example.com/acme/tool/pull/7",
+                                            "headRefOid": HEAD, "statusCheckRollup": GREEN}))
+    assert decide(bash(f"gh pr merge 7 --match-head-commit {HEAD}"), run=fake) is None
+    assert fake.calls[1] == ["gh", "api", f"repos/acme/tool/commits/{HEAD}/check-runs?per_page=100",
+                             "--hostname", "git.example.com"]
+    no_head = FakeGh(GREEN, stdout=json.dumps({"number": 7, "url": "https://github.com/o/r/pull/7",
+                                               "headRefOid": "", "statusCheckRollup": GREEN}))
+    assert "no head commit" in decide(bash("gh pr merge 7 --match-head-commit abc1234"), run=no_head)
 
 
 def test_a_merge_must_pin_the_exact_head_it_was_checked_at():
