@@ -161,6 +161,16 @@ def test_direct_github_file_writes_are_refused():
     "gh api repos/o/r/git/commits --input c.json",
     "curl -X POST https://api.github.com/repos/o/r/git/trees -d @t.json",
     "Invoke-RestMethod -Method Put https://api.github.com/repos/o/r/contents/f -Body $b",
+    "gh api repos/o/r/contents/f -fmessage=m -fcontent=eA==",
+    "gh api repos/o/r/git/refs/heads/main -Fsha=1",
+    "gh api repos/o/r/git/refs -XPATCH",
+    "gh api repos/o/r/contents/f \\\n  -X PUT \\\n  -f message=m",
+    "gh api repos/o/r/contents/f `\n  -Method PUT",
+    "p=repos/o/r/contents/f\ngh api -X PUT $p -f message=m",
+    "curl https://api.github.com/repos/o/r/git/blobs -d@blob.json",
+    "curl https://api.github.com/repos/o/r/git/blobs --form f=@x",
+    "python -c \"import requests; requests.request('PUT', 'https://api.github.com/repos/o/r/contents/f')\"",
+    "node -e \"fetch('https://api.github.com/repos/o/r/contents/f', {method: 'PUT'})\"",
 ])
 def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
@@ -170,9 +180,16 @@ def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tm
     "gh api repos/o/r/contents/f", "gh api repos/o/r/git/refs/heads/main --jq .object.sha",
     "curl https://api.github.com/repos/o/r/git/trees/main", "grep -n updateRef hooks/ship_guard.py",
     "gh api repos/o/r/contents/f | jq -r .content",
+    "gh api repos/o/r/contents/f \\\n  --jq .sha",
+    "gh api repos/o/r/contents/f -X GET",
 ])
 def test_reads_of_the_contents_and_git_data_api_are_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command
+
+
+def test_powershell_reads_of_the_contents_api_are_allowed(tmp_path):
+    read = "Invoke-RestMethod https://api.github.com/repos/o/r/contents/f -TimeoutSec 5 | Out-File c.json -Force"
+    assert decide(pwsh(read, cwd=str(tmp_path))) is None
 
 
 def test_unrelated_calls_are_allowed_untouched():
@@ -425,6 +442,13 @@ def test_the_rest_merge_pin_is_read_only_from_the_sha_field():
     "git -c alias.p='push --no-verify' p", "git -c Alias.st=push st", "git --config-env include.path=X status",
     "git --config-env=includeIf.onbranch:main.path=X log", "git config alias.x 'push --no-verify'",
     "git config --global alias.x '!git push'", "git config set alias.x push", "git config --add include.path h.cfg",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.st GIT_CONFIG_VALUE_0=push git st",
+    "GIT_CONFIG_PARAMETERS=\"'alias.st'='push'\" git st", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$k git st",
+    "export GIT_CONFIG_GLOBAL=evil.cfg; git status", "$env:GIT_CONFIG_COUNT = '1'; git st",
+    "git config --file get alias.x push", "git config --comment unset alias.x push", "git config -f list include.path h",
+    "git config --default list alias.x push", "git config --type=bool alias.x push", "git config $k push",
+    "git config rename-section old alias", "git config --rename-section old include", "git config edit",
+    "git config --global -e",
 ])
 def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
@@ -434,7 +458,9 @@ def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
     "git commit -m 'ship it'", "git commit -am 'no verify needed'","git commit -m x -- -n",
     "git config core.hooksPath .githooks", "git config --get core.hooksPath", "git push --dry-run",
     "git config --get alias.x", "git config alias.x", "git config --unset alias.x", "git config --get-regexp alias",
-    "git config get include.path",
+    "git config get include.path", "git config --file x.cfg --get alias.x", "git config --show-origin --get alias.x",
+    "git config unset alias.x", "git config --remove-section alias", "git config rename-section old new",
+    "git config --file x.cfg user.name me", "grep -n GIT_CONFIG_COUNT hooks/ship_guard.py",
 ])
 def test_ordinary_commits_and_config_reads_are_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command

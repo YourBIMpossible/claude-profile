@@ -85,7 +85,8 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 
 # Cheap prefilters: anything that could be a merge, or a push / commit / hooks-path / bypass. Everything else exits 0.
 MAYBE_MERGE = re.compile(r"\bmerge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge", re.IGNORECASE)
-MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|\b(alias|include|includeif)\.|BIMP_\w*BYPASS", re.IGNORECASE)
+MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|\b(alias|include|includeif)\.|BIMP_\w*BYPASS|GIT_CONFIG_|\bconfig\b",
+                        re.IGNORECASE)
 MAYBE_ENCODED = re.compile(
     r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*[\s'\",](-|--|/)e"
     # a launcher, `$variable` or `(expression)` may start a powershell under any name: an exact -EncodedCommand word
@@ -100,13 +101,30 @@ MAYBE_GH_WRITE = re.compile(r"/merges\b|\bmergeBranch\b|\bcreateCommitOnBranch\b
 REST_BRANCH_MERGE = re.compile(r"repos/[^/\s'\"`]+/[^/\s'\"`]+/merges\b")
 GRAPHQL_WRITE = re.compile(r"\b(mergeBranch|createCommitOnBranch|updateRefs?|createRef)\b")
 REST_WRITE_PATH = re.compile(r"repos/[^/\s'\"`]+/[^/\s'\"`]+/(contents\b|git/(refs|commits|trees|blobs)\b)")
+# A writing request anywhere in the command (gh api sends POST once any field is given). Checked across the whole
+# command, not per piece, so a path and its write flag on different lines or in different pieces still refuse.
 WRITE_REQUEST = re.compile(
-    r"(^|[\s'\"])(-X|--method|--request|-Method)[\s=]*['\"]?(PUT|POST|PATCH|DELETE)\b"
-    r"|(^|\s)(-f|--field|--raw-field|--input|-d|--data[\w-]*|--json|-T|--upload-file|-Body|-InFile)(\s|=|$)"
-    r"|\.(put|post|patch|delete)\(", re.IGNORECASE)
+    r"(^|[\s'\"])(-X|--method|--request|-Method)[\s=:]*['\"]?(PUT|POST|PATCH|DELETE)\b"
+    r"|(^|[\s'\"])(--field|--raw-field|--input|--data[\w-]*|--json|--form[\w-]*|--upload-file|-Body|-InFile)(\s|=|$)"
+    r"|\.(put|post|patch|delete)\(|\brequest\(\s*['\"](PUT|POST|PATCH|DELETE)\b"
+    r"|\bmethod(-override)?['\"]?\s*[=:]\s*['\"]?(PUT|POST|PATCH|DELETE)\b", re.IGNORECASE)
+# gh's -f / -F field flags, alone or with the field attached (`-fmessage=x`), curl's -d / -F / -T. Case-sensitive, so
+# PowerShell's `-Force` / `-TimeoutSec` / `-Debug` are not read as one.
+SHORT_WRITE_FLAG = re.compile(r"(^|[\s'\"])(-[fFdT](\s|=|$)|-[fF][\w.\[\]-]+=|-d[@'\"{\w])")
+LINE_CONTINUATION = re.compile(r"[\\`]\r?\n")
 # `-c` / `git config` keys that change what a git subcommand means or where config is read from.
 CONFIG_REDIRECT_KEY = re.compile(r"(alias|include|includeif)\.", re.IGNORECASE)
-GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|COUNT)")
+CONFIG_REDIRECT_SECTION = re.compile(r"(alias|include|includeif)(\.|$)", re.IGNORECASE)
+# `git config` options that take the next word as their value, so that word is never the key or a subcommand.
+CONFIG_VALUE_OPTS = {"-f", "--file", "--blob", "--comment", "--type", "--default", "--value"}
+CONFIG_READ_SUBS = {"get", "list", "unset", "remove-section", "get-color", "get-colorbool"}
+CONFIG_SUBS = CONFIG_READ_SUBS | {"set", "rename-section", "edit"}
+CONFIG_READ_FLAGS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--unset",
+                     "--unset-all", "--remove-section", "--get-color", "--get-colorbool"}
+GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
+# Setting one: `NAME=`, `$env:NAME =`, `"NAME": ` / `"NAME", ` (a mapping or SetEnvironmentVariable), or the env drive.
+GIT_CONFIG_SET = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)['\"]?\]?\s*[=:,]"
+                            r"|\benv:GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
 GIT_REDIRECT_ENV = re.compile(r"\bGIT_(DIR|WORK_TREE|COMMON_DIR)\b")
 GIT_REDIRECT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 GH_TARGET_ENV = re.compile(r"\bGH_(REPO|HOST)\b")
@@ -469,18 +487,34 @@ def _config_writes_hooks_path(args: list) -> bool:
 
 
 def _config_sets_redirect(args: list) -> bool:
-    """True when `git config <args>` would set an alias.*, include.* or includeIf.* key (reads and unsets are allowed)."""
-    low = [a.lower() for a in args]
-    keys = [k for k, a in enumerate(low) if CONFIG_REDIRECT_KEY.match(a)]
-    if not keys:
+    """True when `git config <args>` would set an alias.*, include.* or includeIf.* key, a key the guard cannot read,
+    or anything through `edit` / `rename-section` into those sections. Reads and unsets are allowed.
+
+    The arguments are parsed as git does: a value-taking option consumes the next word, and a subcommand is only the
+    first word that is not an option, so `git config --file get alias.x push` is the write it is."""
+    flags, positional, i = set(), [], 0
+    while i < len(args):
+        word = args[i]
+        if word.startswith("-") and len(word) > 1:
+            opt = word.split("=")[0].lower()
+            flags.add(opt)
+            if opt in CONFIG_VALUE_OPTS and "=" not in word:
+                i += 1
+        else:
+            positional.append(word)
+        i += 1
+    sub = positional[0].lower() if positional and positional[0].lower() in CONFIG_SUBS else None
+    rest = positional[1:] if sub else positional
+    if sub == "edit" or flags & {"-e", "--edit"}:
+        return True  # an editor can write any key
+    if sub == "rename-section" or "--rename-section" in flags:
+        return any(CONFIG_REDIRECT_SECTION.match(a) or any(ch in a for ch in "$`%") for a in rest)
+    if sub in CONFIG_READ_SUBS or flags & CONFIG_READ_FLAGS or not rest:
         return False
-    k = keys[0]
-    flags = {a.split("=")[0] for a in low if a.startswith("-")}
-    if {"get", "unset", "list"} & set(low[:k]) or flags & {"--get", "--get-all", "--get-regexp", "--list", "-l",
-                                                           "--show-origin", "--unset", "--unset-all"}:
-        return False
-    # `git config alias.x` with no value is a read.
-    return any(not a.startswith("-") for a in args[k + 1:])
+    key, values = rest[0], rest[1:]
+    if not values and sub != "set":
+        return False  # `git config alias.x` with no value is a read
+    return bool(CONFIG_REDIRECT_KEY.match(key)) or any(ch in key for ch in "$`%")
 
 
 def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
@@ -524,8 +558,9 @@ def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
             raise Refuse("core.hooksPath is the gate's switch: only `python <profile>/tools/git_gate.py` (or "
                          "`git config core.hooksPath .githooks`) sets it, and a session never unsets or redirects it.")
         if _config_sets_redirect(args):
-            raise Refuse("`git config alias.* / include.* / includeIf.*` can turn any subcommand into a push the guard "
-                         "cannot see, or pull in config it cannot check. A session does not set them.")
+            raise Refuse("`git config alias.* / include.* / includeIf.*` (or a key the guard cannot read, `edit`, or a "
+                         "`rename-section` into them) can turn any subcommand into a push the guard cannot see, or pull "
+                         "in config it cannot check. A session does not set them.")
 
 
 def _unwrap(words: list, here: Optional[str], why: str) -> tuple:
@@ -911,6 +946,10 @@ def _check_text(command: str) -> None:
                          "set it. Fix what the gate reports instead.")
     if GIT_CONFIG_ENV.search(command) and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
+    if GIT_CONFIG_SET.search(command):
+        raise Refuse("setting GIT_CONFIG_* (PARAMETERS / COUNT / KEY_n / VALUE_n / GLOBAL / SYSTEM) injects git config "
+                     "the guard cannot check: an alias that turns any subcommand into a push, an include, or "
+                     "core.hooksPath. Run git without it.")
     if REST_BRANCH_MERGE.search(command):
         raise Refuse("GitHub's branch merge (`repos/OWNER/REPO/merges`) puts commits on a branch with no PR and no "
                      "checks. Open a PR and merge it once every check is green.")
@@ -918,11 +957,11 @@ def _check_text(command: str) -> None:
         raise Refuse("a GraphQL branch merge, commit or ref write (mergeBranch / createCommitOnBranch / updateRef(s) / "
                      "createRef) puts code on a branch without a push, so no local gate runs. Commit in a clone and "
                      "`git push`.")
-    for piece in re.split(r"[\n;|&]", command):
-        if REST_WRITE_PATH.search(piece) and WRITE_REQUEST.search(piece):
-            raise Refuse("a write to GitHub's contents or git-data API (`contents/`, `git/refs`, `git/commits`, "
-                         "`git/trees`, `git/blobs`) puts code on a branch without a push, so no local gate runs. "
-                         "Commit in a clone and `git push`.")
+    joined = LINE_CONTINUATION.sub(" ", command)
+    if REST_WRITE_PATH.search(joined) and (WRITE_REQUEST.search(joined) or SHORT_WRITE_FLAG.search(joined)):
+        raise Refuse("a write to GitHub's contents or git-data API (`contents/`, `git/refs`, `git/commits`, "
+                     "`git/trees`, `git/blobs`) puts code on a branch without a push, so no local gate runs. "
+                     "Commit in a clone and `git push`.")
 
 
 def check_pushes(command: str, pushes: list, environ: Mapping[str, str], run: Runner = _run) -> None:
