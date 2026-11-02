@@ -343,7 +343,7 @@ def test_an_encoded_command_is_checked_whatever_the_launched_executable(tmp_path
     ship = base64.b64encode("git push --no-verify".encode("utf-16-le")).decode()
     quiet = base64.b64encode("Get-Date".encode("utf-16-le")).decode()
     for command in (f"Start-Process $exe -ArgumentList '-enc','{ship}'",
-                    f"saps C:/tools/ps.exe -ArgumentList '-EncodedCommand','{ship}'",
+                    f"saps tools/ps.exe -ArgumentList '-EncodedCommand','{ship}'",
                     f"cmd /c start renamed.exe -ec {ship}", f"$p = 'pwsh'; & $p -enc {ship}",
                     f"& (Get-Command pwsh).Source -e {ship}"):
         assert "encoded command" in (decide(pwsh(command, cwd=str(tmp_path))) or ""), command
