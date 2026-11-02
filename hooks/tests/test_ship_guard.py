@@ -258,8 +258,83 @@ def test_text_that_only_mentions_git_is_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command
 
 
+@pytest.mark.parametrize("command", ["echo hi\ngit push --no-verify", "ls\r\ngit commit -n -m x",
+                                     "git push \\\n  --no-verify origin main"])
+def test_a_line_break_separates_commands_and_a_continuation_does_not(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))), command
+    assert decide(pwsh(command.replace("\\\n", "`\n"), cwd=str(tmp_path))), command
+
+
+def test_an_encoded_command_is_checked_like_a_typed_one(tmp_path):
+    import base64
+    for inner in ("$env:BIMP_PREPUSH_BYPASS='x'; git push", "git -c core.hooksPath=/dev/null push"):
+        encoded = base64.b64encode(inner.encode("utf-16-le")).decode()
+        assert decide(pwsh(f"powershell -e {encoded}", cwd=str(tmp_path))), inner
+
+
 def test_a_here_document_a_shell_reads_is_checked(repo):
     assert "is not set" in decide(bash("bash <<'EOF'\ngit push\nEOF", cwd=str(repo)))
+
+
+def test_here_documents_are_found_the_way_bash_finds_them(repo, tmp_path):
+    for command in ('echo "<<EOF"\ngit push\nEOF', "echo '<<EOF' # x\ngit push\nEOF", "(( x << 2 ))\ngit push",
+                    "# cat <<EOF\ngit push\nEOF", "cat <<< EOF\ngit push"):
+        assert "is not set" in (decide(bash(command, cwd=str(repo))) or ""), command
+    assert decide(bash("cat > notes.md <<EOF\nthen git push\nEOF", cwd=str(tmp_path))) is None
+    assert decide(bash("tee x <<-EOF\n\tgit push\n\tEOF", cwd=str(tmp_path))) is None
+
+
+@pytest.mark.parametrize("command", [
+    "python - <<'EOF'\nimport os\nos.system('git push --no-verify')\nEOF",
+    "node <<EOF\nrequire('child_process').execSync('gh pr merge 7')\nEOF",
+    "X=1 ruby <<EOF\nsystem 'git push'\nEOF",
+])
+def test_a_here_document_fed_to_another_program_that_ships_is_refused(command, tmp_path):
+    assert "here-document" in (decide(bash(command, cwd=str(tmp_path))) or ""), command
+
+
+@pytest.mark.parametrize("command", ["nice xargs git push", "echo x | timeout 5 xargs -n1 git push",
+                                     "echo push | xargs -I{} sh -c 'git {}'", "ls | xargs gh pr merge"])
+def test_xargs_anywhere_in_a_wrapper_chain_is_refused(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))), command
+
+
+@pytest.mark.parametrize("command", ["D:; git push", 'cmd /c "D: && git push"', "q: ; git -C x push"])
+def test_a_bare_drive_switch_makes_the_directory_unknown(command, tmp_path):
+    assert "git -C <dir> push" in (decide(pwsh(command, cwd=str(tmp_path))) or ""), command
+
+
+@pytest.mark.parametrize("command", ['echo "$(cd x && (git push --no-verify))"', "echo $( (git push --no-verify) )",
+                                     'x="$(echo "(" ; git push --no-verify)"', "echo $(git push --no-verify"])
+def test_nested_substitutions_are_scanned_whole(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))), command
+
+
+def test_powershell_command_forms_are_followed(tmp_path, repo):
+    import base64
+    elsewhere = tmp_path / "plain"
+    elsewhere.mkdir()
+    inner = f"git -C '{repo}' push"
+    encoded = base64.b64encode(inner.encode("utf-16-le")).decode()
+    for command in (f'powershell -NoProfile "{inner}"', f'pwsh -cwa "{inner}"', f"pwsh -NoLogo -ec {encoded}",
+                    f"powershell /EncodedCommand {encoded}", f'pwsh -ExecutionPolicy Bypass --command "{inner}"',
+                    f"pwsh -wd '{repo}' -c \"git push\""):
+        assert "is not set" in (decide(pwsh(command, cwd=str(elsewhere))) or ""), command
+    assert "decode" in decide(pwsh("powershell -EncodedCommand !!notbase64!!", cwd=str(elsewhere)))
+    assert decide(pwsh("echo 'git push' | powershell -Command -", cwd=str(elsewhere)))
+    assert decide(pwsh("'git push' | iex", cwd=str(elsewhere)))
+    assert decide(pwsh("powershell -NoProfile -Command Get-Date", cwd=str(elsewhere))) is None
+
+
+def test_the_rest_merge_pin_is_read_only_from_the_sha_field():
+    route = "gh api -X PUT repos/o/r/pulls/7/merge"
+    assert "does not pin it" in decide(bash(f'{route} -f commit_message="sha={HEAD}"'))
+    assert "does not pin it" in decide(bash(f"{route} -f sha={HEAD} -f sha=1234567abc"))
+    assert decide(bash(f"{route} --raw-field sha={HEAD}")) is None
+    assert decide(bash(f"{route} -fsha={HEAD}")) is None
+    curl = "curl -X PUT https://api.github.com/repos/o/r/pulls/7/merge"
+    assert decide(bash(f"{curl} -d '{{\"sha\": \"{HEAD}\", \"merge_method\": \"squash\"}}'")) is None
+    assert "does not pin it" in decide(bash(f"{curl} -d '{{\"commit_title\": \"sha={HEAD}\"}}'"))
 
 
 @pytest.mark.parametrize("command", [

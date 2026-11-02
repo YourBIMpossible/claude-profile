@@ -8,8 +8,9 @@ MERGES. A merge is allowed only when every check on the PR head is green, and th
 
   - `gh pr merge [<number> | <url> | <branch>] [--repo OWNER/REPO] --match-head-commit <sha> ...`, including `--auto`
     and `--admin` (`--disable-auto` only turns auto-merge off and is allowed);
-  - the REST merge endpoint, `.../repos/OWNER/REPO/pulls/N/merge` with `sha=<sha>`, through `gh api`, curl,
-    Invoke-RestMethod or anything else that names it;
+  - the REST merge endpoint, `.../repos/OWNER/REPO/pulls/N/merge`, through `gh api`, curl, Invoke-RestMethod or anything
+    else that names it; the pin is read only from a `-f` / `-F` / `--field` / `--raw-field` named exactly `sha`, or the
+    `sha` key of a JSON body (`-d` / `--data` / `--json` / `-Body`);
   - GraphQL `mergePullRequest` / `enablePullRequestAutoMerge`: always refused, because the guard cannot tell which PR a
     node id is; `gh pr merge` is the route it can check;
   - an MCP tool named `*merge_pull_request` (owner, repo, pull number and `sha` in its input);
@@ -39,11 +40,15 @@ runs its whole local gate, CI's tests included, on every push. This hook makes s
     local gate. Push from a clone instead.
 
 The directory a push or merge runs in is followed through `cd` (cmd's `cd /d` too), `pushd`, `Set-Location` / `sl` /
-`Push-Location`, `git -C`, and into `bash -c` / `sh -c` / `powershell -Command` / `pwsh -c` / `cmd /c` arguments, `$(...)`
-and backtick substitutions, and here-documents a shell reads. Wrappers that run their arguments (`env`, `timeout`,
-`nice`, `nohup`, `time`, `sudo`, `stdbuf`, `command`, `exec`, ...) are looked through. A directory it cannot know (a
-variable, `cd -`, `popd`, `env -C`) refuses the push with the literal form to use instead; git run by something the guard
-does not follow (`xargs`, `eval`, `iex`, `find -exec`, `Start-Process`, a shell reading its input) is refused.
+`Push-Location`, `git -C`, and into `bash -c` / `sh -c` / `cmd /c` arguments, powershell / pwsh `-Command`,
+`-CommandWithArgs`, `-EncodedCommand` (decoded), a positional command and `-WorkingDirectory`, `$(...)` substitutions
+(nested parentheses counted) and backticks, and here-documents a shell reads. Here-documents are found the way bash finds
+them (not inside quotes, comments or arithmetic); one fed to anything but a shell or a command that only reads it (`cat`,
+`tee`, `git commit -F -`, ...) is refused when it holds a git push / commit / merge. Wrappers that run their arguments
+(`env`, `timeout`, `nice`, `nohup`, `time`, `sudo`, `stdbuf`, `command`, `exec`, ...) are looked through. A directory it
+cannot know (a variable, `cd -`, `popd`, `env -C`, a bare `D:` in cmd or PowerShell) refuses the push with the literal
+form to use instead; git or gh run by something the guard does not follow (`xargs` anywhere in a wrapper chain, `eval`,
+`iex`, `find -exec`, `Start-Process`, a shell reading its input) is refused.
 
 FAIL-CLOSED CONTRACT (as hooks/protect_paths_gate.py): a payload it cannot read, a merge or push command it cannot parse,
 or a `gh` call that fails all block. Exit 0 = allow, exit 2 = block (stderr is shown to Claude). A command that mentions no
@@ -52,10 +57,11 @@ any other tool (Write, Read, ...) is allowed untouched.
 
 SCOPE HONESTY: this binds Claude sessions on machines that run this profile. The owner merging in the GitHub web UI or
 pushing from a terminal is not affected, by design. A command that hides the git or gh call from the text (a git alias, a
-script file, an encoded command) is not seen; the hooks themselves, the gate they run and CI are the layers behind it.
+script file, a command decoded at run time other than `-EncodedCommand`) is not seen; the hooks themselves, the gate they run and CI are the layers behind it.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -74,18 +80,18 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 # Cheap prefilters: anything that could be a merge, or a push / commit / hooks-path / bypass. Everything else exits 0.
 MAYBE_MERGE = re.compile(r"\bmerge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge", re.IGNORECASE)
 MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|BIMP_\w*BYPASS", re.IGNORECASE)
+MAYBE_ENCODED = re.compile(r"\b(powershell|pwsh)(\.exe)?\b[^|;&\n]*\s(-|--|/)e", re.IGNORECASE)
 REST_MERGE = re.compile(r"repos/([^/\s'\"`]+)/([^/\s'\"`]+)/pulls/(\d+)/merge\b")
-REST_SHA = re.compile(r"""\bsha["']?\s*[=:]\s*["']?([0-9a-fA-F]{7,64})""")
 GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|COUNT)")
 GIT_REDIRECT_ENV = re.compile(r"\bGIT_(DIR|WORK_TREE|COMMON_DIR)\b")
 GIT_REDIRECT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 GH_TARGET_ENV = re.compile(r"\bGH_(REPO|HOST)\b")
 GIT_SHIP_LINE = re.compile(r"\bgit(\.exe)?\b.*\b(push|commit|config)\b", re.IGNORECASE)
+GIT_OR_GH_WORD = re.compile(r"\b(git|gh)(\.exe)?\b", re.IGNORECASE)
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
 BACKTICKS = re.compile(r"`([^`]*)`")
-HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+DRIVE_WORD = re.compile(r"[A-Za-z]:")
 OPERATORS = {";", "&", "&&", "|", "||", "(", ")", "\n"}
 # `gh pr merge` flags that take a value (gh 2.x); every other flag is a switch.
 VALUE_FLAGS = {"-R", "--repo", "-b", "--body", "-F", "--body-file", "-t", "--subject", "-A", "--author-email",
@@ -122,6 +128,16 @@ WRAPPER_SPLIT = {"env": {"-S", "--split-string"}}
 NON_EXEC = {"echo", "printf", "write-host", "write-output", "write-error", "write-verbose", "grep", "egrep", "fgrep",
             "rg", "findstr", "select-string", "sls", "gh", "cat", "type", "get-content", "gc", "head", "tail", "less",
             "more", "man"}
+# Commands that read a here-document without running it as commands (a commit message, a file being written).
+HEREDOC_READERS = NON_EXEC | {"git", "git.exe", "tee", ":", "set-content", "out-file", "add-content"}
+# `gh api` / curl / Invoke-RestMethod options whose value is a `key=value` field, or a JSON request body.
+FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field"}
+JSON_BODY_FLAGS = {"-d", "--data", "--data-raw", "--data-binary", "--json", "-body"}
+# powershell / pwsh parameters that take the next word as a value (full names match on any 3+ letter prefix).
+PS_VALUE_SHORT = {"ep", "ex", "w", "o", "of", "if", "v", "wd"}
+PS_VALUE_LONG = ("executionpolicy", "windowstyle", "outputformat", "inputformat", "version", "configurationname",
+                 "configurationfile", "settingsfile", "custompipename", "psconsolefile", "workingdirectory")
+EXPRESSION_RUNNERS = {"iex", "invoke-expression"}
 DIRECT_WRITE_TOOLS = re.compile(r"(push_files|create_or_update_file)$")
 
 Runner = Callable[[list, Optional[str]], "subprocess.CompletedProcess[str]"]
@@ -159,10 +175,13 @@ class Scan:
     """What one shell command would push and merge."""
     pushes: list = field(default_factory=list)
     merges: list = field(default_factory=list)
+    decoded: list = field(default_factory=list)  # command text decoded from -EncodedCommand, checked like the command
 
 
 def _tokens(command: str, powershell: bool = False) -> list:
-    lexer = shlex.shlex(command.replace("\r\n", "\n"), posix=True, punctuation_chars=";&|()")
+    """The command's words and operators; a line break separates commands, as `;` does (a continued line does not)."""
+    command = command.replace("\r\n", "\n").replace("`\n" if powershell else "\\\n", " ")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -227,13 +246,37 @@ def _target_from_args(args: list) -> Optional[Target]:
     return Target(selector, repo, head)
 
 
+def _rest_sha(segment: list) -> Optional[str]:
+    """The `sha` a REST merge call sends: a `-f sha=...` field, or the `sha` key of a JSON body. None when it sends none,
+    or more than one value, or a body the guard cannot read."""
+    found = set()
+    for k, word in enumerate(segment):
+        flag, eq, value = word.partition("=")
+        if word[:2] in ("-f", "-F", "-d") and len(word) > 2 and word[2] != "=" and not word.startswith("--"):
+            flag, eq, value = word[:2], "=", word[2:]  # `-fsha=...`: the value is attached
+        if flag in FIELD_FLAGS or flag in JSON_BODY_FLAGS or flag.lower() in JSON_BODY_FLAGS:
+            if not eq:
+                value = segment[k + 1] if k + 1 < len(segment) else ""
+            if flag in FIELD_FLAGS:
+                key, _, field_value = value.partition("=")
+                if key == "sha":
+                    found.add(field_value)
+                continue
+            try:
+                body = json.loads(value)
+            except ValueError:
+                continue
+            if isinstance(body, dict) and "sha" in body:
+                found.add(str(body["sha"]))
+    return found.pop() if len(found) == 1 else None
+
+
 def _record_merges(segment: list, here: Optional[str], why: str, scan: Scan) -> None:
     """Add every merge one simple command would run, with the directory it runs in."""
     text = " ".join(segment)
     for owner, name, number in REST_MERGE.findall(text):
         repo = None if (owner, name) == ("{owner}", "{repo}") else f"{owner}/{name}"
-        sha = REST_SHA.search(text)
-        scan.merges.append(Target(number, repo, sha.group(1) if sha else None, here, why))
+        scan.merges.append(Target(number, repo, _rest_sha(segment), here, why))
     for args in _gh_pr_merge_args(segment):
         target = _target_from_args(args)
         if target is not None:
@@ -443,8 +486,8 @@ def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
 def _unwrap(words: list, here: Optional[str], why: str) -> tuple:
     """The command a simple command runs, past `NAME=value` assignments, shell KEYWORDS and WRAPPERS.
 
-    Returns (words, directory, why_unknown, the first wrapper's name or "", the `env -S` strings it runs)."""
-    via, split = "", []
+    Returns (words, directory, why_unknown, the name of every wrapper passed, the `env -S` strings it runs)."""
+    via, split = set(), []
     while words:
         if ASSIGNMENT.match(words[0]) or words[0] in KEYWORDS:
             words = words[1:]
@@ -452,7 +495,7 @@ def _unwrap(words: list, here: Optional[str], why: str) -> tuple:
         name = _base(words[0])
         if name not in WRAPPERS:
             break
-        via = via or name
+        via.add(name)
         chdir, splits = WRAPPER_CHDIR.get(name, set()), WRAPPER_SPLIT.get(name, set())
         k = 1
         while k < len(words) and words[k].startswith("-") and words[k] != "-":
@@ -474,23 +517,174 @@ def _unwrap(words: list, here: Optional[str], why: str) -> tuple:
     return words, here, why, via, split
 
 
+def _mentions_ship(text: str) -> bool:
+    """True when the text holds anything the guard checks: a git push / commit / config, or a merge."""
+    return any(GIT_SHIP_LINE.search(line) for line in text.splitlines()) or bool(REST_MERGE.search(text)) or \
+        bool(GRAPHQL_MERGE.search(text)) or bool(re.search(r"\bpr\b", text) and re.search(r"\bmerge\b", text))
+
+
+def _substitutions(command: str, powershell: bool) -> list:
+    """The text inside each outermost `$(...)`, found by counting parentheses (quoted ones do not count), so a nested
+    `$( (...) )` is found whole; an unclosed one yields the rest of the command, which the caller then checks."""
+    found, i = [], 0
+    while True:
+        start = command.find("$(", i)
+        if start < 0:
+            return found
+        depth, k, quote = 1, start + 2, ""
+        while k < len(command) and depth:
+            ch = command[k]
+            if quote:
+                if ch == quote:
+                    quote = ""
+                elif ch == "\\" and quote == '"' and not powershell:
+                    k += 1
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "\\" and not powershell:
+                k += 1
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            k += 1
+        found.append(command[start + 2:k - 1] if depth == 0 else command[start + 2:])
+        i = k
+
+
+def _heredoc_openers(line: str) -> list:
+    """Each here-document a bash line opens, as (delimiter, the simple command before its `<<`). Only a `<<` bash reads
+    counts: not one inside quotes, a comment or `((...))` arithmetic, and not a `<<<` here-string."""
+    found, quote, k, seg = [], "", 0, 0
+    while k < len(line):
+        ch = line[k]
+        if quote:
+            if ch == quote:
+                quote = ""
+            elif ch == "\\" and quote == '"':
+                k += 1
+        elif ch == "\\":
+            k += 1
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (k == 0 or line[k - 1] in " \t;&|()"):
+            break
+        elif ch in ";&|()":
+            if line.startswith("((", k):
+                depth, j = 0, k
+                while j < len(line):
+                    depth += {"(": 1, ")": -1}.get(line[j], 0)
+                    if depth == 0:
+                        break
+                    j += 1
+                k = j
+            seg = k + 1
+        elif line.startswith("<<<", k):
+            k += 2
+        elif line.startswith("<<", k):
+            j = k + 2 + (line[k + 2:k + 3] == "-")
+            while j < len(line) and line[j] in " \t":
+                j += 1
+            word, q = [], ""
+            while j < len(line) and (q or line[j] not in " \t;&|()<>"):
+                c = line[j]
+                if q:
+                    if c == q:
+                        q = ""
+                    else:
+                        word.append(c)
+                elif c in "'\"":
+                    q = c
+                elif c == "\\" and j + 1 < len(line):
+                    j += 1
+                    word.append(line[j])
+                else:
+                    word.append(c)
+                j += 1
+            if word:
+                found.append(("".join(word), line[seg:k]))
+            k = j - 1
+        k += 1
+    return found
+
+
+def _heredoc_reader(before: str) -> str:
+    """The command name that reads a here-document, from the simple command written before its `<<`."""
+    try:
+        words = [w for w in _tokens(before) if not (ASSIGNMENT.match(w) or w in KEYWORDS)]
+    except ValueError:
+        return ""
+    while words and _base(words[0]) in WRAPPERS:
+        words = words[1:]
+    return _base(words[0]) if words else ""
+
+
 def _split_heredocs(command: str) -> tuple:
-    """The command without its here-document bodies, and the bodies a shell reads (those run as commands)."""
+    """The command without its here-document bodies, and the bodies a shell reads (those run as commands).
+
+    A body fed to a command that is not known to only read it (python, node, a shell found in a variable, ...) and
+    that holds a git push / commit / merge is refused: whatever reads it could run it."""
     lines = command.replace("\r\n", "\n").split("\n")
     kept, shell_bodies, i = [], [], 0
     while i < len(lines):
         line = lines[i]
         kept.append(line)
         i += 1
-        for match in HEREDOC.finditer(line):
+        for delimiter, before in _heredoc_openers(line):
             body = []
-            while i < len(lines) and lines[i].strip() != match.group(2):
+            while i < len(lines) and lines[i].strip() != delimiter:
                 body.append(lines[i])
                 i += 1
             i += 1  # the terminator
+            text = "\n".join(body)
             if any(_base(w) in SHELLS_C | POWERSHELLS | CMDS for w in re.split(r"[\s|;&()]+", line) if w):
-                shell_bodies.append("\n".join(body))
+                shell_bodies.append(text)
+            elif _heredoc_reader(before) not in HEREDOC_READERS and _mentions_ship(text):
+                reader = _heredoc_reader(before) or "its reader"
+                raise Refuse(f"a here-document fed to `{reader}` holds a git push / commit / merge the guard cannot "
+                             "check, and that command could run it. Run git or gh directly.")
     return "\n".join(kept), shell_bodies
+
+
+def _ps_option(word: str) -> Optional[str]:
+    """The lower-case parameter name of a powershell / pwsh command-line word (`-`, `--` or `/`), None for an operand."""
+    if word.startswith("--") and len(word) > 2:
+        return word[2:].lower()
+    if word.startswith(("-", "/")) and len(word) > 1:
+        return word[1:].lower()
+    return None
+
+
+def _powershell_command(words: list, here: Optional[str], why: str) -> tuple:
+    """What `powershell` / `pwsh <words>` runs: (the command text, or "" for a script file, or None when it reads its
+    commands from its input; the directory it runs in; why that is unknown). -Command / -c, -CommandWithArgs / -cwa,
+    -EncodedCommand (decoded) and Windows PowerShell's positional command are all read; -WorkingDirectory is followed."""
+    k = 1
+    while k < len(words):
+        name = _ps_option(words[k])
+        if name is None:
+            return " ".join(words[k:]), here, why  # Windows PowerShell runs a positional operand as -Command
+        value = words[k + 1] if k + 1 < len(words) else ""
+        if name == "cwa" or (name.startswith("c") and ("command".startswith(name) or "commandwithargs".startswith(name))):
+            rest = " ".join(words[k + 1:])
+            return (None if rest in ("", "-") else rest), here, why
+        if name in ("e", "ec") or (name.startswith("en") and "encodedcommand".startswith(name)):
+            try:
+                decoded = base64.b64decode(value, validate=True).decode("utf-16-le")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise Refuse(f"`{words[0]} -EncodedCommand` carries a value the guard cannot decode, so it cannot "
+                             "check it.") from exc
+            _check_text(decoded)
+            return decoded, here, why
+        if name == "f" or (len(name) >= 2 and "file".startswith(name)):
+            return "", here, why
+        if name == "wd" or (len(name) >= 2 and "workingdirectory".startswith(name)):
+            here = _join(here, value)
+            why = why if here else f"`{words[0]} -WorkingDirectory {value}` names a directory the guard cannot resolve"
+        if name in PS_VALUE_SHORT or any(len(name) >= 3 and full.startswith(name) for full in PS_VALUE_LONG):
+            k += 1
+        k += 1
+    return None, here, why
 
 
 def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, depth: int = 0,
@@ -498,7 +692,7 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
     """Walk one shell command for pushes, merges and hook-skipping forms; nested shells and substitutions too."""
     if depth > 4:
         raise Refuse("the command nests shells too deeply for the guard to follow.")
-    nested = SUBSTITUTION.findall(command)
+    nested = _substitutions(command, powershell)
     if not powershell:
         command, shell_bodies = _split_heredocs(command)
         nested += shell_bodies + BACKTICKS.findall(command)
@@ -507,11 +701,12 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
     try:
         tokens = _tokens(command, powershell)
     except ValueError as exc:
-        if any(GIT_SHIP_LINE.search(line) for line in command.splitlines()) or REST_MERGE.search(command) or \
-                (re.search(r"\bpr\b", command) and re.search(r"\bmerge\b", command)):
+        if _mentions_ship(command):
             raise Refuse(f"could not parse the command to check its git push / commit / merge ({exc}). Run that "
                          "command on its own.") from exc
         return
+    reads_input = (f"`{{}}` reads its commands from its input here, where the guard cannot check the git push / commit "
+                   "in them. Run git directly.")
     here, why = cwd, ""
     for segment in _segments(tokens):
         words, here, why, via, split = _unwrap(segment, here, why)
@@ -520,32 +715,43 @@ def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, d
         _record_merges(segment, here, why, scan)
         if not words or words[0].startswith("#"):
             continue
+        if "xargs" in via and GIT_OR_GH_WORD.search(" ".join(words)):
+            raise Refuse("`xargs` adds arguments from its input that the guard cannot see (a push, a --no-verify, a PR "
+                         "number). Run git or gh directly.")
         name = _base(words[0])
-        if name in CD_COMMANDS:
+        if powershell and len(words) == 1 and DRIVE_WORD.fullmatch(words[0]):
+            here, why = None, f"`{words[0]}` switches to that drive's current directory, which the guard does not track"
+        elif name in CD_COMMANDS:
             here, why = _cd(words, here, why, powershell, cmd)
         elif name in ("popd", "pop-location"):
             here, why = None, f"`{words[0]}` returns to a directory the guard does not track"
         elif name in ("git", "git.exe"):
-            if via == "xargs":
-                raise Refuse("`xargs git ...` adds arguments from its input that the guard cannot see (a push, a "
-                             "--no-verify). Run git directly.")
             _git_call(words, here, why, scan.pushes)
-        elif name in SHELLS_C or name in POWERSHELLS or name in CMDS:
-            nested_ps, is_cmd, ran = name in POWERSHELLS, name in CMDS, False
+        elif name in POWERSHELLS:
+            inner, ps_here, ps_why = _powershell_command(words, here, why)
+            if inner and inner not in " ".join(words):
+                scan.decoded.append(inner)
+            if inner:
+                scan_shell(inner, ps_here, True, scan, depth + 1)
+            elif inner is None and GIT_SHIP_LINE.search(command):
+                raise Refuse(reads_input.format(words[0]))
+        elif name in SHELLS_C or name in CMDS:
+            is_cmd, ran = name in CMDS, False
             for k, w in enumerate(words[1:], 1):
                 low = w.lower()
-                if (name in SHELLS_C and low.startswith("-") and not low.startswith("--") and "c" in low) or \
-                   (nested_ps and low.startswith("-c") and "-command".startswith(low)) or \
+                if (not is_cmd and low.startswith("-") and not low.startswith("--") and "c" in low) or \
                    (is_cmd and low in ("/c", "/k")):
-                    inner = words[k + 1] if name in SHELLS_C and k + 1 < len(words) else " ".join(words[k + 1:])
+                    inner = words[k + 1] if not is_cmd and k + 1 < len(words) else " ".join(words[k + 1:])
                     if inner:
-                        scan_shell(inner, here, nested_ps or is_cmd, scan, depth + 1, cmd=is_cmd)
+                        scan_shell(inner, here, is_cmd, scan, depth + 1, cmd=is_cmd)
                     ran = True
                     break
             operands = [w for w in words[1:] if not w.startswith(("-", "<", "/"))]
-            if not ran and not operands and GIT_SHIP_LINE.search(command):
-                raise Refuse(f"`{words[0]}` reads its commands from its input here, where the guard cannot check the "
-                             "git push / commit in them. Run git directly.")
+            if not ran and (is_cmd or not operands) and GIT_SHIP_LINE.search(command):
+                raise Refuse(reads_input.format(words[0]))
+        elif name in EXPRESSION_RUNNERS and GIT_SHIP_LINE.search(command):
+            raise Refuse(f"`{words[0]}` runs a string the guard cannot follow, and this command holds a git push / "
+                         "commit. Run git itself: git -C <dir> push ...")
         elif name not in NON_EXEC and GIT_SHIP_LINE.search(" ".join(words)):
             raise Refuse(f"`{words[0]}` runs a git push / commit / config the guard cannot follow. Run git itself: "
                          "git -C <dir> push ...")
@@ -586,8 +792,15 @@ def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
 def scan_command(command: str, cwd: Optional[str], powershell: bool) -> Scan:
     """What a shell command would push and merge. Raises Refuse for a form the guard refuses outright."""
     scan = Scan()
-    if not (MAYBE_MERGE.search(command) or MAYBE_SHIP.search(command)):
+    if not (MAYBE_MERGE.search(command) or MAYBE_SHIP.search(command) or MAYBE_ENCODED.search(command)):
         return scan
+    _check_text(command)
+    scan_shell(command, cwd, powershell, scan)
+    return scan
+
+
+def _check_text(command: str) -> None:
+    """Refuse the forms the command's text alone shows: a GraphQL merge, a bypass, GIT_CONFIG_* carrying hooksPath."""
     if GRAPHQL_MERGE.search(command):
         raise Refuse("a GraphQL merge (mergePullRequest / enablePullRequestAutoMerge) names the PR by node id, which "
                      "this guard cannot check. Use `gh pr merge <number> --repo OWNER/REPO --match-head-commit <sha>` "
@@ -598,8 +811,6 @@ def scan_command(command: str, cwd: Optional[str], powershell: bool) -> Scan:
                          "set it. Fix what the gate reports instead.")
     if GIT_CONFIG_ENV.search(command) and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
-    scan_shell(command, cwd, powershell, scan)
-    return scan
 
 
 def check_pushes(command: str, pushes: list, environ: Mapping[str, str], run: Runner = _run) -> None:
@@ -658,8 +869,9 @@ def decide(payload: dict, run: Runner = _run, environ: Optional[Mapping[str, str
             if not isinstance(command, str):
                 return f"{tool_name}: the payload has no command string, so it cannot be checked."
             scan = scan_command(command, cwd, tool_name == "PowerShell")
-            check_pushes(command, scan.pushes, environ, run)
-            check_merges(command, scan.merges, cwd, run)
+            seen = "\n".join([command, *scan.decoded])
+            check_pushes(seen, scan.pushes, environ, run)
+            check_merges(seen, scan.merges, cwd, run)
     except Refuse as exc:
         return str(exc)
     return None
