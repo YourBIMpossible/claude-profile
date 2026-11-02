@@ -15,9 +15,12 @@ What it writes (each replaced file is backed up first as
   ~/.claude/settings.json         merged with settings.template.json (tools/profile_setup.py);
                                   hooks run straight from this clone
   Claude Desktop config           Windows only: mcpServers replaced, every other byte kept
-  core.hooksPath = .githooks      in this clone and the claude-tools clone, so their versioned
-                                  git hooks run (pre-commit secret scan, pre-push path scan).
-                                  A value someone else set is left alone. --no-git-hooks skips it.
+  ~/.claude/bin/gitleaks[.exe]    the pinned, checksum-verified gitleaks, when none is installed
+  core.hooksPath = .githooks      in this clone and the claude-tools clone: the git gate
+                                  (tools/git_gate.py). pre-commit scans for secrets, pre-push
+                                  runs the repo's CI gate. Set only once gitleaks works; a value
+                                  someone else set is left alone and the run exits 1 ("GIT GATE
+                                  NOT ON"). --no-git-hooks skips it.
 
 After this one run, a merged change to the hooks, the settings template or the text
 reaches the machine through the session-start hook (hooks/session_start.py): it
@@ -38,9 +41,7 @@ import json
 import os
 import shutil
 import stat
-import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -48,6 +49,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 import machine_config  # noqa: E402
 import profile_setup as ps  # noqa: E402
 from profile_setup import Refuse  # noqa: E402
+import git_gate  # noqa: E402
 
 
 def say(msg: str = "") -> None:
@@ -86,51 +88,6 @@ def make_dir_link(link: Path, target: Path) -> str:
         return "junction"
     link.symlink_to(target, target_is_directory=True)
     return "symlink"
-
-
-HOOKS_DIR = ".githooks"
-
-
-@dataclass
-class HooksPlan:
-    """core.hooksPath in one clone: "set" (unset now), "already" (.githooks) or "foreign" (left alone)."""
-    clone: Path
-    action: str
-    current: str
-
-
-def _git(clone: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(clone), *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=30)
-
-
-def plan_git_hooks(clone: Path) -> HooksPlan | None:
-    """None when `clone` is not the top of a git work tree that ships .githooks/pre-push, or git is missing."""
-    if not (clone / HOOKS_DIR / "pre-push").is_file() or shutil.which("git") is None:
-        return None
-    try:
-        top = _git(clone, "rev-parse", "--show-toplevel")
-        if top.returncode != 0 or not same_path(Path(top.stdout.strip()), clone):
-            return None
-        current = _git(clone, "config", "--local", "--get", "core.hooksPath").stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if not current:
-        return HooksPlan(clone, "set", "")
-    resolved = Path(current) if Path(current).is_absolute() else clone / current
-    return HooksPlan(clone, "already" if same_path(resolved, clone / HOOKS_DIR) else "foreign", current)
-
-
-def apply_git_hooks(plan: HooksPlan) -> str:
-    if plan.action == "already":
-        return f"git hooks already on in {plan.clone} (core.hooksPath = {plan.current})"
-    if plan.action == "foreign":
-        return (f"Note: {plan.clone} has core.hooksPath = {plan.current} - left alone, so its {HOOKS_DIR} "
-                f"hooks do not run. To use them: git -C \"{plan.clone}\" config core.hooksPath {HOOKS_DIR}")
-    proc = _git(plan.clone, "config", "--local", "core.hooksPath", HOOKS_DIR)
-    if proc.returncode != 0:
-        raise Refuse(f"git config core.hooksPath failed in {plan.clone}:\n{proc.stderr.strip()}")
-    return f"Turned on git hooks in {plan.clone} (core.hooksPath = {HOOKS_DIR})"
 
 
 def given_folder(flag: str, value: str) -> str:
@@ -209,11 +166,10 @@ def main(argv: list[str]) -> int:
     skills_path = claude_dir / "skills"
     skills_target = REPO_ROOT / "skills"
 
-    hook_plans: list[HooksPlan] = []
+    hook_plans: list[git_gate.HooksPlan] = []
     if not opts.no_git_hooks:
-        clones = [REPO_ROOT] + ([Path(cfg["tools_root"])] if cfg["tools_root"] else [])
-        hook_plans = [plan for plan in map(plan_git_hooks, clones) if plan is not None]
-    gitleaks_missing = not (os.environ.get("GITLEAKS_BIN") or shutil.which("gitleaks"))
+        clones = git_gate.default_clones(cfg["tools_root"] or "")
+        hook_plans = [plan for plan in map(git_gate.plan_hooks, clones) if plan is not None]
 
     if opts.dry_run:
         say("")
@@ -229,8 +185,9 @@ def main(argv: list[str]) -> int:
         if desktop_plan is not None:
             say(f"  {desktop_plan.path}: {'update mcpServers' if desktop_plan.changed else 'already correct'}")
         for plan in hook_plans:
-            say(f"  {plan.clone}: core.hooksPath " + {"set": f"-> {HOOKS_DIR}", "already": "already correct",
-                                                       "foreign": f"= {plan.current} (left alone)"}[plan.action])
+            say(f"  {git_gate.describe_plan(plan)}")
+        if hook_plans and git_gate.find_gitleaks() is None:
+            say(f"  {git_gate.installed_path()}: download gitleaks {git_gate.GITLEAKS_VERSION} (checksum-pinned)")
         return 0
 
     # ---- Writes. Every check has passed. ----
@@ -308,18 +265,27 @@ def main(argv: list[str]) -> int:
         say("Updated mcpServers in claude_desktop_config.json" + (
             f" (preserved {desktop_plan.kept_keys} top-level keys)" if desktop_plan.existed else " (new file)"))
 
-    # 6. Versioned git hooks (core.hooksPath)
+    # 6. The git gate: gitleaks, then core.hooksPath (tools/git_gate.py)
+    gate_ok = True
     if opts.no_git_hooks:
         say("git hooks: skipped (--no-git-hooks)")
-    for plan in hook_plans:
-        say(apply_git_hooks(plan))
-    if gitleaks_missing and any(plan.action != "foreign" for plan in hook_plans):
-        say(f"Note: gitleaks is not on PATH (or GITLEAKS_BIN). The {HOOKS_DIR}/pre-commit secret scan needs it; "
-            "this profile's pre-commit blocks every commit until it is installed.")
+    elif hook_plans:
+        lines, gate_ok = git_gate.enable(hook_plans)
+        pytest_line, pytest_ok = git_gate.ensure_pytest()
+        lines.append(pytest_line)
+        gate_ok = gate_ok and pytest_ok
+        for line in lines:
+            say(line)
 
     say("")
     say("Bootstrap complete.")
     say("Restart Claude Code; verify with /context (CLAUDE.md and skills load) and /plugin list.")
+    if not gate_ok:
+        say("")
+        say("GIT GATE NOT ON - every other step is done, but commits and pushes are not gated in the clone(s) "
+            "named above, and Claude sessions are refused `git push` there until it is. Fix what those lines say, "
+            f"then run: python \"{REPO_ROOT / 'tools' / 'git_gate.py'}\"")
+        return 1
     return 0
 
 

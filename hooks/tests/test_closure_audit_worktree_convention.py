@@ -20,6 +20,10 @@ spec = importlib.util.spec_from_file_location("session_closure_audit", HOOK_PATH
 sca = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sca)
 
+# %TEMP% in the platform's own separator: the hook compares with os.path.normpath, which turns "/" into "\" on Windows
+# and leaves a "\" alone on Linux, where "\" is an ordinary filename character.
+FIXTURE_TEMP = "X:/fixture/Temp".replace("/", os.sep)
+
 results = []
 
 
@@ -42,10 +46,11 @@ def run_checks() -> list:
         sca.classify_worktree_location(REPO_ROOT, REPO_ROOT) is None,
     )
 
-    check(
-        "canonical primary checkout, backslash form -> None",
-        sca.classify_worktree_location("X:\\fixture\\BIMpossible", REPO_ROOT) is None,
-    )
+    if os.name == "nt":  # a backslash separates path parts only on Windows; on Linux it is part of a filename
+        check(
+            "canonical primary checkout, backslash form -> None",
+            sca.classify_worktree_location("X:\\fixture\\BIMpossible", REPO_ROOT) is None,
+        )
 
     check(
         "canonical .claude/worktrees/<lane> -> None (no warning)",
@@ -62,8 +67,8 @@ def run_checks() -> list:
     _orig_temp = os.environ.get("TEMP")
     _orig_tmp = os.environ.get("TMP")
     try:
-        os.environ["TEMP"] = "X:\\fixture\\Temp"
-        os.environ["TMP"] = "X:\\fixture\\Temp"
+        os.environ["TEMP"] = FIXTURE_TEMP
+        os.environ["TMP"] = FIXTURE_TEMP
 
         temp_result = sca.classify_worktree_location(
             "X:/fixture/Temp/main-check", REPO_ROOT
@@ -129,8 +134,8 @@ def run_checks() -> list:
     )
     check("canonical lane worktree, clean status -> zero findings", lane_findings == [], repr(lane_findings))
 
-    os.environ["TEMP"] = "X:\\fixture\\Temp"
-    os.environ["TMP"] = "X:\\fixture\\Temp"
+    os.environ["TEMP"] = FIXTURE_TEMP
+    os.environ["TMP"] = FIXTURE_TEMP
     try:
         temp_findings = sca.audit_worktree(
             "BIMpossible",
@@ -199,8 +204,8 @@ def run_checks() -> list:
     #    git status needed) — must not be silently skipped by the truncation path
     # ---------------------------------------------------------------------------
 
-    os.environ["TEMP"] = "X:\\fixture\\Temp"
-    os.environ["TMP"] = "X:\\fixture\\Temp"
+    os.environ["TEMP"] = FIXTURE_TEMP
+    os.environ["TMP"] = FIXTURE_TEMP
     try:
         truncated_findings = sca.audit_worktree(
             "BIMpossible",

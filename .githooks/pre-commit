@@ -2,8 +2,8 @@
 # .githooks/pre-commit - secret scan of the STAGED diff (gitleaks), 2026-10-13.
 #
 # Closes the gap between "typed a key" and "pre-push / PR scan": a secret never enters a
-# local commit, so it never has to be purged from history. Enable once per clone:
-#     git config core.hooksPath .githooks
+# local commit, so it never has to be purged from history. bootstrap.py (tools/git_gate.py) installs
+# gitleaks when it is missing and then turns this on; by hand: git config core.hooksPath .githooks
 #
 # Behavior:
 #   - A finding BLOCKS the commit (exit 1). Output is redacted; the value is never printed.
@@ -13,7 +13,7 @@
 #   - Emergency bypass, explicit and audited:  BIMP_SECRETS_BYPASS="<reason>" git commit ...
 #     appends a line to <git-common-dir>/secrets-bypass.log. `--no-verify` skips all hooks and
 #     leaves no trail; prefer the variable.
-# Resolution order for the binary: $GITLEAKS_BIN, then PATH.
+# Resolution order for the binary: $GITLEAKS_BIN, PATH, then ~/.claude/bin (where tools/git_gate.py installs it).
 # Uses the repo's .gitleaks.toml when present (gitleaks also finds it by default).
 # POSIX sh, LF endings.
 
@@ -29,15 +29,21 @@ fi
 # Block when the scan cannot run (gitleaks missing or broken), naming the fix and the audited bypass.
 cannot_scan() {
     echo "pre-commit: BLOCKED - $1; the staged-secret scan could not run, so the commit is stopped." >&2
-    echo "pre-commit: fix: install gitleaks on PATH, or set GITLEAKS_BIN to a working gitleaks binary." >&2
+    echo "pre-commit: fix: python <profile>/tools/git_gate.py (installs the pinned gitleaks), or set GITLEAKS_BIN." >&2
     echo "pre-commit: emergency only: BIMP_SECRETS_BYPASS=\"<reason>\" git commit ...  (logged to secrets-bypass.log)" >&2
     exit 1
 }
 
 gl="${GITLEAKS_BIN:-}"
 [ -n "$gl" ] || gl=$(command -v gitleaks 2>/dev/null || command -v gitleaks.exe 2>/dev/null || true)
+if [ -z "$gl" ] && [ -n "${HOME:-}" ]; then
+    # Where tools/git_gate.py (run by bootstrap) installs the pinned gitleaks.
+    for c in "$HOME/.claude/bin/gitleaks" "$HOME/.claude/bin/gitleaks.exe"; do
+        if [ -f "$c" ]; then gl=$c; break; fi
+    done
+fi
 if [ -z "$gl" ]; then
-    cannot_scan "gitleaks not found (GITLEAKS_BIN or PATH)"
+    cannot_scan "gitleaks not found (GITLEAKS_BIN, PATH, ~/.claude/bin)"
 fi
 
 # gitleaks >= 8.19 spells it `git --staged`; the 8.18.x line (pinned by the BIMpossible repos)

@@ -35,6 +35,8 @@ POWERSHELL = os.environ.get("BOOTSTRAP_TEST_POWERSHELL", "powershell.exe")
 PY_NAME = "python" if os.name == "nt" else "python3"
 # Every tool that writes a file by path goes through the path gate (CP-10).
 PATH_GATE_MATCHER = "Write|Edit|MultiEdit|NotebookEdit"
+SHIP_GUARD_MATCHER = ("Bash|PowerShell|mcp__.*merge_pull_request|mcp__.*push_files|mcp__.*create_or_update_file|"
+                      "mcp__ccd_pr__set_auto_merge")
 
 
 def is_link(path: Path) -> bool:
@@ -103,19 +105,22 @@ class Sandbox(unittest.TestCase):
             self.assertTrue(sandboxed.is_relative_to(temp), f"{sandboxed} is not a sandbox path")
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROFILE_MACHINE_CONFIG"}
         env.update({"HOME": str(self.home), "USERPROFILE": str(self.home), "APPDATA": str(self.appdata),
-                    "CLAUDE_PROFILE_PULL": "0"})
+                    "CLAUDE_PROFILE_PULL": "0",
+                    # Any existing file counts as "gitleaks is installed", so the git gate step never downloads.
+                    "GITLEAKS_BIN": sys.executable})
         env.update(extra)
         return env
 
     def run_bootstrap(self, *args: str, repo: Path | None = None, expect_ok: bool = True,
-                      default_roots: bool = True, git_hooks: bool = False) -> subprocess.CompletedProcess:
+                      default_roots: bool = True, git_hooks: bool = False,
+                      env: dict | None = None) -> subprocess.CompletedProcess:
         repo = repo or self.repo
         extra = ["--repos-root", str(self.repos)] if default_roots and "--repos-root" not in args else []
         if not git_hooks:
             # core.hooksPath is clone config: a run against this live clone must never change it.
             extra.append("--no-git-hooks")
         proc = subprocess.run([sys.executable, "-I", str(repo / "bootstrap.py"), "--yes", *extra, *args],
-                              env=self.env(), cwd=self.root, capture_output=True, text=True,
+                              env=self.env(**(env or {})), cwd=self.root, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=120)
         if expect_ok:
             self.assertEqual(proc.returncode, 0, f"bootstrap failed:\n{proc.stdout}\n{proc.stderr}")
@@ -191,6 +196,7 @@ class CleanInstall(Sandbox):
         seen = {(event, matcher, Path(h["args"][-1]).name) for event, matcher, h in handlers(self.settings())
                 if h["type"] == "command"}
         self.assertIn(("PreToolUse", PATH_GATE_MATCHER, "protect_paths_gate.py"), seen)
+        self.assertIn(("PreToolUse", SHIP_GUARD_MATCHER, "ship_guard.py"), seen)
         self.assertIn(("SessionStart", "startup|resume|clear|compact", "session_start.py"), seen)
         self.assertIn(("SessionStart", "startup|resume|clear|compact", "graphify_hint.py"), seen)
         self.assertIn(("SubagentStart", None, "graphify_hint.py"), seen)
@@ -729,7 +735,8 @@ class Preflight(FixtureClone):
 
 
 class GitHooksActivation(FixtureClone):
-    """Step 6: core.hooksPath = .githooks in the profile clone and a claude-tools clone that ships the hooks."""
+    """Step 6, the git gate: core.hooksPath = .githooks in the profile clone and a claude-tools clone that ships the
+    hooks, set only once gitleaks works (the profile's pre-commit blocks every commit without it)."""
 
     def hooks_path(self, clone: Path) -> str:
         proc = subprocess.run(["git", "-C", str(clone), "config", "--local", "--get", "core.hooksPath"],
@@ -743,19 +750,36 @@ class GitHooksActivation(FixtureClone):
         (tools / ".githooks" / "pre-push").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         return tools
 
+    def no_gitleaks_env(self) -> dict:
+        """No gitleaks anywhere the gate looks, and a download source that has nothing to download."""
+        path = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+                               if d and shutil.which("gitleaks", path=d) is None)
+        empty = self.root / "empty-mirror"
+        empty.mkdir(exist_ok=True)
+        return {"GITLEAKS_BIN": "", "PATH": path, "CLAUDE_PROFILE_GITLEAKS_BASE_URL": str(empty)}
+
     def test_unset_is_turned_on_and_a_rerun_reports_it(self) -> None:
         proc = self.run_bootstrap(git_hooks=True)
         self.assertEqual(self.hooks_path(self.repo), ".githooks")
-        self.assertIn("Turned on git hooks", proc.stdout)
+        self.assertIn("Turned on the git gate", proc.stdout)
         proc = self.run_bootstrap(git_hooks=True)
-        self.assertIn("git hooks already on", proc.stdout)
+        self.assertIn("git gate on in", proc.stdout)
         self.assertEqual(self.hooks_path(self.repo), ".githooks")
 
-    def test_a_value_someone_else_set_is_left_alone(self) -> None:
+    def test_a_value_someone_else_set_is_left_alone_and_the_run_fails(self) -> None:
         git(self.repo, "config", "core.hooksPath", "custom-hooks")
-        proc = self.run_bootstrap(git_hooks=True)
+        proc = self.run_bootstrap(git_hooks=True, expect_ok=False)
         self.assertEqual(self.hooks_path(self.repo), "custom-hooks")
         self.assertIn("left alone", proc.stdout)
+        self.assertIn("GIT GATE NOT ON", proc.stdout)
+        self.assertIn("Bootstrap complete.", proc.stdout)  # every other step still ran
+
+    def test_without_gitleaks_the_hooks_stay_off_so_commits_keep_working(self) -> None:
+        proc = self.run_bootstrap(git_hooks=True, expect_ok=False, env=self.no_gitleaks_env())
+        self.assertEqual(self.hooks_path(self.repo), "")
+        self.assertIn("gitleaks: NOT AVAILABLE", proc.stdout)
+        self.assertIn("GIT GATE NOT ON", proc.stdout)
+        self.assertFalse((self.claude / "bin").exists(), "a failed download left a file behind")
 
     def test_no_git_hooks_flag_and_dry_run_change_nothing(self) -> None:
         proc = self.run_bootstrap()
@@ -764,6 +788,11 @@ class GitHooksActivation(FixtureClone):
         proc = self.run_bootstrap("--dry-run", git_hooks=True)
         self.assertIn("core.hooksPath -> .githooks", proc.stdout)
         self.assertEqual(self.hooks_path(self.repo), "")
+
+    def test_dry_run_names_the_gitleaks_download_when_none_is_installed(self) -> None:
+        proc = self.run_bootstrap("--dry-run", git_hooks=True, env=self.no_gitleaks_env())
+        self.assertIn("download gitleaks 8.18.4", proc.stdout)
+        self.assertFalse((self.claude / "bin").exists())
 
     def test_tools_clone_shipping_the_hooks_is_turned_on_too(self) -> None:
         tools = self.tools_clone()

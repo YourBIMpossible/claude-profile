@@ -1,6 +1,7 @@
 name: install-tests
 
-# The installer, the session-start sync, the machine config and the graphify scripts on Linux and Windows.
+# The gate (tools/gate.py) on Linux and Windows: every pytest suite in the repository (hooks, tools, graphify scripts)
+# and the machine-paths guard. It is the same command the pre-push hook runs, so local and CI checks cannot drift.
 # Every test runs in a sandboxed HOME/USERPROFILE; no secrets, read-only token. The graphify tests need no graphify:
 # the wrapper's own logic runs against stubbed graphify modules, and the tests that need the package, its binary or a
 # real graph skip themselves.
@@ -38,8 +39,5 @@ jobs:
       - name: Install pytest
         run: python -m pip install pytest==8.3.3
 
-      - name: Installer, session-start sync, vendored pins, tools
-        run: python -m pytest hooks/tests/test_bootstrap_install.py hooks/tests/test_vendor_pins.py tools/tests -q -p no:cacheprovider
-
-      - name: Graphify scripts (the query wrapper and the graph resolver)
-        run: python -m pytest skills/graphify/scripts -q -p no:cacheprovider
+      - name: The gate (what the pre-push hook runs)
+        run: python tools/gate.py --verbose

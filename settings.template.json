@@ -211,6 +211,19 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell|mcp__.*merge_pull_request|mcp__.*push_files|mcp__.*create_or_update_file|mcp__ccd_pr__set_auto_merge",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PYTHON__",
+            "args": [
+              "__PROFILE_ROOT__/hooks/ship_guard.py"
+            ],
+            "timeout": 60
+          }
+        ]
       }
     ],
     "Stop": [
