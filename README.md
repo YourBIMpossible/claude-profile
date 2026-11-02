@@ -100,10 +100,10 @@ This repo is the source of truth: change it here, commit, push, merge.
   so an in-app change (e.g. `/config`) is kept. MCP servers come from
   `mcp/claude_desktop_config.template.json`.
 - **Machine-specific values** belong in `~/.claude/profile-machine.json`, never in the repo.
-  Run `python .github/scripts/check_machine_paths.py` before pushing (CI runs it too).
+  Run `python .github/scripts/check_machine_paths.py` before pushing (CI runs it too, when a PR opens or leaves draft).
 - **Every push runs the gate.** The `pre-push` hook runs `tools/gate.py` on each pushed commit (in a throwaway clone, so the
   verdict is the commit's, never the working copy's) and blocks unless it ends `GATE PASS`. The gate is what CI's install-tests
-  workflow runs on Linux and Windows: pytest over `hooks/tests`, `tools/tests` and `skills/graphify/scripts`, then the
+  workflow (manual dispatch only: `gh workflow run install-tests.yml --ref <branch>`) runs on Linux and Windows: pytest over `hooks/tests`, `tools/tests` and `skills/graphify/scripts`, then the
   machine-paths guard (self-test and scan). Run it by hand any time: `python tools/gate.py`. The three tests that drive a
   claude-tools tool are left out, with a line saying so, on a machine without that clone (CI is one).
 - **Claude sessions cannot get around it.** `hooks/ship_guard.py` (PreToolUse) refuses a session's `git push` while

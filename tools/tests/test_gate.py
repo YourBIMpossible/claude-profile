@@ -74,6 +74,19 @@ def test_ci_runs_this_gate_on_both_operating_systems():
     assert "ubuntu-latest" in workflow and "windows-latest" in workflow
 
 
+def test_ci_cost_posture():
+    # The private repo bills every minute: the full gate is manual only, and the one automatic check fires once per PR.
+    workflows = REPO / ".github" / "workflows"
+    assert (workflows / "install-tests.yml").read_text(encoding="utf-8").split("\non:\n", 1)[1].startswith(
+        "  workflow_dispatch:\n\n"), "install-tests must be workflow_dispatch only"
+    for path in workflows.glob("*.yml"):
+        text = path.read_text(encoding="utf-8")
+        if "pull_request:" in text:
+            assert "types: [opened, reopened, ready_for_review]" in text, f"{path.name} re-fires on every push"
+            assert "github.event.pull_request.draft == false" in text, f"{path.name} runs on drafts"
+            assert "windows-latest" not in text, f"{path.name} runs Windows on PRs"
+
+
 def test_every_default_step_names_a_file_that_exists():
     gate = load()
     for label, argv in gate.default_steps(REPO, "python"):

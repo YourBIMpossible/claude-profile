@@ -3,9 +3,10 @@
 
 It runs, from the repository root:
 
-  1. pytest over hooks/tests, over tools/tests and over skills/graphify/scripts. CI's install-tests workflow runs this
-     gate on Linux and on Windows, so the gate is the one list of what CI checks; a test added under those folders
-     is checked on the pushing machine and in CI with no second list to update. The few tests that drive a tool from
+  1. pytest over hooks/tests, over tools/tests and over skills/graphify/scripts. CI's install-tests workflow (manual
+     dispatch only, the clean-runner audit) runs this gate on Linux and on Windows, so the gate is the one list of
+     what CI checks; a test added under those folders is checked on the pushing machine and in CI with no second list
+     to update. The few tests that drive a tool from
      the claude-tools clone (NEEDS_CLAUDE_TOOLS) are left out, with a line saying so, where there is no such clone.
   2. the machine-paths guard's self-test (what .github/workflows/machine-paths.yml runs first);
   3. the machine-paths guard's scan of this repository (what that workflow runs second).
