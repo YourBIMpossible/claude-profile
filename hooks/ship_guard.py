@@ -107,24 +107,50 @@ WRITE_REQUEST = re.compile(
     r"(^|[\s'\"])(-X|--method|--request|-Method)[\s=:]*['\"]?(PUT|POST|PATCH|DELETE)\b"
     r"|(^|[\s'\"])(--field|--raw-field|--input|--data[\w-]*|--json|--form[\w-]*|--upload-file|-Body|-InFile)(\s|=|$)"
     r"|\.(put|post|patch|delete)\(|\brequest\(\s*['\"](PUT|POST|PATCH|DELETE)\b"
-    r"|\bmethod(-override)?['\"]?\s*[=:]\s*['\"]?(PUT|POST|PATCH|DELETE)\b", re.IGNORECASE)
-# gh's -f / -F field flags, alone or with the field attached (`-fmessage=x`), curl's -d / -F / -T. Case-sensitive, so
-# PowerShell's `-Force` / `-TimeoutSec` / `-Debug` are not read as one.
-SHORT_WRITE_FLAG = re.compile(r"(^|[\s'\"])(-[fFdT](\s|=|$)|-[fF][\w.\[\]-]+=|-d[@'\"{\w])")
+    r"|\bmethod(-override)?['\"]?\s*[=:]\s*['\"]?(PUT|POST|PATCH|DELETE)\b"
+    r"|[(,]\s*data\s*=", re.IGNORECASE)
+# gh's -f / -F field flags, alone or with the field attached (`-fmessage=x`), curl's -d / -F / -T, attached
+# (`-d@f`, `-Tfile`) or at the end of a cluster of curl's no-argument flags (`-sd@f`, `-sSLT f`, `-sXPUT`).
+# Case-sensitive, so PowerShell's `-Force` / `-TimeoutSec` / `-Debug` / `-Headers` are not read as one.
+CURL_NOARG = r"sSLfikvqgGNnjlRpI#0-9"
+SHORT_WRITE_FLAG = re.compile(r"(^|[\s'\"])(-[fFdT](\s|=|$)|-[fF][\w.\[\]-]+=|-d[@'\"{\w]|-T(?!imeoutSec)\S"
+                              rf"|-[{CURL_NOARG}]+[dFT]|-[{CURL_NOARG}]*X[\s=:]*(PUT|POST|PATCH|DELETE)\b)")
+# What the shell strips before a program sees its words: quotes, `\` and PowerShell's backtick escapes, so `'-X' 'PUT'`
+# and `-X P"U"T` read as the `-X PUT` they are.
+SHELL_QUOTING = re.compile(r"['\"\\`]")
 LINE_CONTINUATION = re.compile(r"[\\`]\r?\n")
 # `-c` / `git config` keys that change what a git subcommand means or where config is read from.
 CONFIG_REDIRECT_KEY = re.compile(r"(alias|include|includeif)\.", re.IGNORECASE)
 CONFIG_REDIRECT_SECTION = re.compile(r"(alias|include|includeif)(\.|$)", re.IGNORECASE)
+# `git config`'s long options (git 2.54 `-h`, plus the older single-action forms), so the unique-prefix abbreviations
+# git accepts (`--fil` is `--file`, `--ed` is `--edit`) are read as git reads them. A `no-` form is listed only where
+# git lists `--[no-]x`.
+_CONFIG_NEGATABLE = {"all", "append", "blob", "comment", "default", "file", "fixed-value", "global", "includes",
+                     "local", "name-only", "null", "regexp", "show-names", "show-origin", "show-scope", "system", "type",
+                     "url", "value", "worktree"}
+CONFIG_LONG_OPTS = frozenset(
+    {f"--{o}" for o in _CONFIG_NEGATABLE} | {f"--no-{o}" for o in _CONFIG_NEGATABLE}
+    | {f"--{o}" for o in ("get", "get-all", "get-regexp", "get-urlmatch", "replace-all", "add", "unset", "unset-all",
+                          "rename-section", "remove-section", "list", "edit", "get-color", "get-colorbool", "bool",
+                          "int", "bool-or-int", "bool-or-str", "path", "expiry-date")})
 # `git config` options that take the next word as their value, so that word is never the key or a subcommand.
-CONFIG_VALUE_OPTS = {"-f", "--file", "--blob", "--comment", "--type", "--default", "--value"}
+CONFIG_VALUE_OPTS = {"--file", "--blob", "--comment", "--type", "--default", "--value"}
+CONFIG_VALUE_SHORT = {"f": "--file", "t": "--type"}  # the rest of the word, or else the next word, is the value
+CONFIG_SHORT_FLAGS = {"e": "--edit", "l": "--list", "z": "--null"}
 CONFIG_READ_SUBS = {"get", "list", "unset", "remove-section", "get-color", "get-colorbool"}
 CONFIG_SUBS = CONFIG_READ_SUBS | {"set", "rename-section", "edit"}
-CONFIG_READ_FLAGS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--unset",
+CONFIG_READ_FLAGS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "--unset",
                      "--unset-all", "--remove-section", "--get-color", "--get-colorbool"}
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
 # Setting one: `NAME=`, `$env:NAME =`, `"NAME": ` / `"NAME", ` (a mapping or SetEnvironmentVariable), or the env drive.
 GIT_CONFIG_SET = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)['\"]?\]?\s*[=:,]"
                             r"|\benv:GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
+# git run as a program: `printf -v`, `read`, `declare`, `Set-Item Env:/…` and the like can set GIT_CONFIG_* with no
+# `NAME=`, so naming one at all in a command that runs git is refused.
+GIT_INVOKED = re.compile(r"(^|[\s;&|(){}'\"`])git(\.exe)?([\s;&|)'\"`]|$)", re.IGNORECASE)
+# Programs that only search or page text, so a command made of nothing else names GIT_CONFIG_* without setting it.
+SEARCH_PROGRAMS = {"grep", "egrep", "fgrep", "rg", "findstr", "select-string", "sls", "head", "tail", "sort", "uniq",
+                   "wc"}
 GIT_REDIRECT_ENV = re.compile(r"\bGIT_(DIR|WORK_TREE|COMMON_DIR)\b")
 GIT_REDIRECT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 GH_TARGET_ENV = re.compile(r"\bGH_(REPO|HOST)\b")
@@ -486,26 +512,69 @@ def _config_writes_hooks_path(args: list) -> bool:
     return bool(values) and values[0] != ".githooks"
 
 
+def _config_long_opt(word: str) -> Optional[str]:
+    """The `git config` long option `word` names, exactly or as git's unique prefix; None if unknown or ambiguous."""
+    name = word.split("=")[0].lower()
+    if name in CONFIG_LONG_OPTS:
+        return name
+    hits = [o for o in CONFIG_LONG_OPTS if o.startswith(name)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _only_searches(command: str) -> bool:
+    """True when the command is nothing but text searches piped together, so a GIT_CONFIG_* in it is a pattern."""
+    if re.search(r"[;&\r\n`]|\$\(", command):
+        return False
+    for piece in command.split("|"):
+        words = piece.split()
+        if not words:
+            return False
+        first = words[0].lower()
+        if not (first in SEARCH_PROGRAMS or first in ("git", "git.exe") and words[1:2] == ["grep"]):
+            return False
+    return True
+
+
 def _config_sets_redirect(args: list) -> bool:
     """True when `git config <args>` would set an alias.*, include.* or includeIf.* key, a key the guard cannot read,
     or anything through `edit` / `rename-section` into those sections. Reads and unsets are allowed.
 
-    The arguments are parsed as git does: a value-taking option consumes the next word, and a subcommand is only the
-    first word that is not an option, so `git config --file get alias.x push` is the write it is."""
-    flags, positional, i = set(), [], 0
+    The arguments are parsed as git does: a long option may be any unique prefix of its name, a value-taking option
+    consumes the next word (or the rest of a short-option cluster), and a subcommand is only the first word that is not
+    an option, so `git config --fil get alias.x push` and `git config -zt bool alias.x push` are the writes they are.
+    An option the guard does not know fails closed when any word could name one of those sections."""
+    flags, positional, unknown, i = set(), [], False, 0
     while i < len(args):
         word = args[i]
-        if word.startswith("-") and len(word) > 1:
-            opt = word.split("=")[0].lower()
-            flags.add(opt)
-            if opt in CONFIG_VALUE_OPTS and "=" not in word:
-                i += 1
+        if word == "--":
+            positional.extend(args[i + 1:])
+            break
+        if word.startswith("--"):
+            opt = _config_long_opt(word)
+            if opt is None:
+                unknown = True  # git refuses an unknown or ambiguous option, unless it is newer than this table
+            else:
+                flags.add(opt)
+                if opt in CONFIG_VALUE_OPTS and "=" not in word:
+                    i += 1
+        elif word.startswith("-") and len(word) > 1:
+            for k, ch in enumerate(word[1:], 1):
+                if ch in CONFIG_VALUE_SHORT:
+                    flags.add(CONFIG_VALUE_SHORT[ch])
+                    if k == len(word) - 1:
+                        i += 1
+                    break
+                if ch not in CONFIG_SHORT_FLAGS:
+                    unknown = True
+                flags.add(CONFIG_SHORT_FLAGS.get(ch, f"-{ch}"))
         else:
             positional.append(word)
         i += 1
+    if unknown and any(CONFIG_REDIRECT_SECTION.match(a) or any(ch in a for ch in "$`%") for a in positional):
+        return True
     sub = positional[0].lower() if positional and positional[0].lower() in CONFIG_SUBS else None
     rest = positional[1:] if sub else positional
-    if sub == "edit" or flags & {"-e", "--edit"}:
+    if sub == "edit" or "--edit" in flags:
         return True  # an editor can write any key
     if sub == "rename-section" or "--rename-section" in flags:
         return any(CONFIG_REDIRECT_SECTION.match(a) or any(ch in a for ch in "$`%") for a in rest)
@@ -946,10 +1015,11 @@ def _check_text(command: str) -> None:
                          "set it. Fix what the gate reports instead.")
     if GIT_CONFIG_ENV.search(command) and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
-    if GIT_CONFIG_SET.search(command):
-        raise Refuse("setting GIT_CONFIG_* (PARAMETERS / COUNT / KEY_n / VALUE_n / GLOBAL / SYSTEM) injects git config "
-                     "the guard cannot check: an alias that turns any subcommand into a push, an include, or "
-                     "core.hooksPath. Run git without it.")
+    if ((GIT_CONFIG_SET.search(command) or GIT_CONFIG_ENV.search(command) and GIT_INVOKED.search(command))
+            and not _only_searches(command)):
+        raise Refuse("setting GIT_CONFIG_* (PARAMETERS / COUNT / KEY_n / VALUE_n / GLOBAL / SYSTEM), or naming one in "
+                     "a command that runs git, injects git config the guard cannot check: an alias that turns any "
+                     "subcommand into a push, an include, or core.hooksPath. Run git without it.")
     if REST_BRANCH_MERGE.search(command):
         raise Refuse("GitHub's branch merge (`repos/OWNER/REPO/merges`) puts commits on a branch with no PR and no "
                      "checks. Open a PR and merge it once every check is green.")
@@ -958,7 +1028,9 @@ def _check_text(command: str) -> None:
                      "createRef) puts code on a branch without a push, so no local gate runs. Commit in a clone and "
                      "`git push`.")
     joined = LINE_CONTINUATION.sub(" ", command)
-    if REST_WRITE_PATH.search(joined) and (WRITE_REQUEST.search(joined) or SHORT_WRITE_FLAG.search(joined)):
+    unquoted = SHELL_QUOTING.sub("", joined)
+    if any(REST_WRITE_PATH.search(t) and (WRITE_REQUEST.search(t) or SHORT_WRITE_FLAG.search(t))
+           for t in (joined, unquoted)):
         raise Refuse("a write to GitHub's contents or git-data API (`contents/`, `git/refs`, `git/commits`, "
                      "`git/trees`, `git/blobs`) puts code on a branch without a push, so no local gate runs. "
                      "Commit in a clone and `git push`.")
