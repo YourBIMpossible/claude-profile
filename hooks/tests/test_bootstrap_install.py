@@ -74,7 +74,7 @@ def copy_profile(dest: Path) -> Path:
     for name in ("bootstrap.py", "bootstrap.ps1", "settings.template.json", "CLAUDE.md", ".gitattributes"):
         shutil.copy2(REPO / name, dest / name)
     ignore = shutil.ignore_patterns("__pycache__", "tests", "*.log*")
-    for name in ("hooks", "tools", "vendor", "mcp"):
+    for name in ("hooks", "tools", "vendor", "mcp", ".githooks"):
         shutil.copytree(REPO / name, dest / name, ignore=ignore)
     (dest / "skills").mkdir()
     (dest / "skills" / "README.md").write_text("fixture\n", encoding="utf-8")
@@ -108,9 +108,12 @@ class Sandbox(unittest.TestCase):
         return env
 
     def run_bootstrap(self, *args: str, repo: Path | None = None, expect_ok: bool = True,
-                      default_roots: bool = True) -> subprocess.CompletedProcess:
+                      default_roots: bool = True, git_hooks: bool = False) -> subprocess.CompletedProcess:
         repo = repo or self.repo
         extra = ["--repos-root", str(self.repos)] if default_roots and "--repos-root" not in args else []
+        if not git_hooks:
+            # core.hooksPath is clone config: a run against this live clone must never change it.
+            extra.append("--no-git-hooks")
         proc = subprocess.run([sys.executable, "-I", str(repo / "bootstrap.py"), "--yes", *extra, *args],
                               env=self.env(), cwd=self.root, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=120)
@@ -723,6 +726,55 @@ class Preflight(FixtureClone):
                 self.assertEqual(proc.stdout.strip().splitlines()[-1],
                                  "REA: skipped: Node v18.0.0 is below REA's floor (22.19+/24.11+/26+)",
                                  proc.stdout + proc.stderr)
+
+
+class GitHooksActivation(FixtureClone):
+    """Step 6: core.hooksPath = .githooks in the profile clone and a claude-tools clone that ships the hooks."""
+
+    def hooks_path(self, clone: Path) -> str:
+        proc = subprocess.run(["git", "-C", str(clone), "config", "--local", "--get", "core.hooksPath"],
+                              capture_output=True, text=True)
+        return proc.stdout.strip()
+
+    def tools_clone(self) -> Path:
+        tools = self.repos / "Claude-Tools"
+        git(tools, "init", "-q")
+        (tools / ".githooks").mkdir()
+        (tools / ".githooks" / "pre-push").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        return tools
+
+    def test_unset_is_turned_on_and_a_rerun_reports_it(self) -> None:
+        proc = self.run_bootstrap(git_hooks=True)
+        self.assertEqual(self.hooks_path(self.repo), ".githooks")
+        self.assertIn("Turned on git hooks", proc.stdout)
+        proc = self.run_bootstrap(git_hooks=True)
+        self.assertIn("git hooks already on", proc.stdout)
+        self.assertEqual(self.hooks_path(self.repo), ".githooks")
+
+    def test_a_value_someone_else_set_is_left_alone(self) -> None:
+        git(self.repo, "config", "core.hooksPath", "custom-hooks")
+        proc = self.run_bootstrap(git_hooks=True)
+        self.assertEqual(self.hooks_path(self.repo), "custom-hooks")
+        self.assertIn("left alone", proc.stdout)
+
+    def test_no_git_hooks_flag_and_dry_run_change_nothing(self) -> None:
+        proc = self.run_bootstrap()
+        self.assertIn("git hooks: skipped (--no-git-hooks)", proc.stdout)
+        self.assertEqual(self.hooks_path(self.repo), "")
+        proc = self.run_bootstrap("--dry-run", git_hooks=True)
+        self.assertIn("core.hooksPath -> .githooks", proc.stdout)
+        self.assertEqual(self.hooks_path(self.repo), "")
+
+    def test_tools_clone_shipping_the_hooks_is_turned_on_too(self) -> None:
+        tools = self.tools_clone()
+        self.run_bootstrap(git_hooks=True)
+        self.assertEqual(self.hooks_path(tools), ".githooks")
+
+    def test_tools_clone_without_the_hooks_is_untouched(self) -> None:
+        tools = self.repos / "Claude-Tools"
+        git(tools, "init", "-q")
+        self.run_bootstrap(git_hooks=True)
+        self.assertEqual(self.hooks_path(tools), "")
 
 
 class SessionStartSync(FixtureClone):

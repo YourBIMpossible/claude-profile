@@ -15,6 +15,9 @@ What it writes (each replaced file is backed up first as
   ~/.claude/settings.json         merged with settings.template.json (tools/profile_setup.py);
                                   hooks run straight from this clone
   Claude Desktop config           Windows only: mcpServers replaced, every other byte kept
+  core.hooksPath = .githooks      in this clone and the claude-tools clone, so their versioned
+                                  git hooks run (pre-commit secret scan, pre-push path scan).
+                                  A value someone else set is left alone. --no-git-hooks skips it.
 
 After this one run, a merged change to the hooks, the settings template or the text
 reaches the machine through the session-start hook (hooks/session_start.py): it
@@ -26,7 +29,7 @@ it was. --dry-run stops there and prints what would be written.
 
 Usage:
   python bootstrap.py [--dry-run] [--repos-root DIR] [--tools-root DIR]
-                      [--collab-mailbox DIR | --no-collab-mailbox] [--yes]
+                      [--collab-mailbox DIR | --no-collab-mailbox] [--no-git-hooks] [--yes]
 """
 from __future__ import annotations
 
@@ -35,7 +38,9 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -83,6 +88,51 @@ def make_dir_link(link: Path, target: Path) -> str:
     return "symlink"
 
 
+HOOKS_DIR = ".githooks"
+
+
+@dataclass
+class HooksPlan:
+    """core.hooksPath in one clone: "set" (unset now), "already" (.githooks) or "foreign" (left alone)."""
+    clone: Path
+    action: str
+    current: str
+
+
+def _git(clone: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(clone), *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=30)
+
+
+def plan_git_hooks(clone: Path) -> HooksPlan | None:
+    """None when `clone` is not the top of a git work tree that ships .githooks/pre-push, or git is missing."""
+    if not (clone / HOOKS_DIR / "pre-push").is_file() or shutil.which("git") is None:
+        return None
+    try:
+        top = _git(clone, "rev-parse", "--show-toplevel")
+        if top.returncode != 0 or not same_path(Path(top.stdout.strip()), clone):
+            return None
+        current = _git(clone, "config", "--local", "--get", "core.hooksPath").stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not current:
+        return HooksPlan(clone, "set", "")
+    resolved = Path(current) if Path(current).is_absolute() else clone / current
+    return HooksPlan(clone, "already" if same_path(resolved, clone / HOOKS_DIR) else "foreign", current)
+
+
+def apply_git_hooks(plan: HooksPlan) -> str:
+    if plan.action == "already":
+        return f"git hooks already on in {plan.clone} (core.hooksPath = {plan.current})"
+    if plan.action == "foreign":
+        return (f"Note: {plan.clone} has core.hooksPath = {plan.current} - left alone, so its {HOOKS_DIR} "
+                f"hooks do not run. To use them: git -C \"{plan.clone}\" config core.hooksPath {HOOKS_DIR}")
+    proc = _git(plan.clone, "config", "--local", "core.hooksPath", HOOKS_DIR)
+    if proc.returncode != 0:
+        raise Refuse(f"git config core.hooksPath failed in {plan.clone}:\n{proc.stderr.strip()}")
+    return f"Turned on git hooks in {plan.clone} (core.hooksPath = {HOOKS_DIR})"
+
+
 def given_folder(flag: str, value: str) -> str:
     """An explicitly passed root, resolved; a typo must not be stored as a root."""
     path = Path(value).expanduser().resolve()
@@ -120,6 +170,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--tools-root", help="the claude-tools clone (default: <repos-root>/claude-tools if present)")
     ap.add_argument("--collab-mailbox", help="this machine's Claude Collab mailbox folder ('' = not used)")
     ap.add_argument("--no-collab-mailbox", action="store_true", help="clear the Collab mailbox setting")
+    ap.add_argument("--no-git-hooks", action="store_true", help="leave core.hooksPath unchanged in every clone")
     ap.add_argument("--yes", action="store_true", help="never prompt")
     opts = ap.parse_args(argv)
 
@@ -158,6 +209,12 @@ def main(argv: list[str]) -> int:
     skills_path = claude_dir / "skills"
     skills_target = REPO_ROOT / "skills"
 
+    hook_plans: list[HooksPlan] = []
+    if not opts.no_git_hooks:
+        clones = [REPO_ROOT] + ([Path(cfg["tools_root"])] if cfg["tools_root"] else [])
+        hook_plans = [plan for plan in map(plan_git_hooks, clones) if plan is not None]
+    gitleaks_missing = not (os.environ.get("GITLEAKS_BIN") or shutil.which("gitleaks"))
+
     if opts.dry_run:
         say("")
         say("DRY RUN - nothing written. Would write:")
@@ -171,6 +228,9 @@ def main(argv: list[str]) -> int:
             say("  settings.json already correct")
         if desktop_plan is not None:
             say(f"  {desktop_plan.path}: {'update mcpServers' if desktop_plan.changed else 'already correct'}")
+        for plan in hook_plans:
+            say(f"  {plan.clone}: core.hooksPath " + {"set": f"-> {HOOKS_DIR}", "already": "already correct",
+                                                       "foreign": f"= {plan.current} (left alone)"}[plan.action])
         return 0
 
     # ---- Writes. Every check has passed. ----
@@ -247,6 +307,15 @@ def main(argv: list[str]) -> int:
         ps.atomic_write(desktop_plan.path, desktop_plan.text)
         say("Updated mcpServers in claude_desktop_config.json" + (
             f" (preserved {desktop_plan.kept_keys} top-level keys)" if desktop_plan.existed else " (new file)"))
+
+    # 6. Versioned git hooks (core.hooksPath)
+    if opts.no_git_hooks:
+        say("git hooks: skipped (--no-git-hooks)")
+    for plan in hook_plans:
+        say(apply_git_hooks(plan))
+    if gitleaks_missing and any(plan.action != "foreign" for plan in hook_plans):
+        say(f"Note: gitleaks is not on PATH (or GITLEAKS_BIN). The {HOOKS_DIR}/pre-commit secret scan needs it; "
+            "this profile's pre-commit blocks every commit until it is installed.")
 
     say("")
     say("Bootstrap complete.")
