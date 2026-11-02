@@ -23,21 +23,22 @@ GREEN = [{"__typename": "CheckRun", "name": "tests (ubuntu)", "status": "COMPLET
          {"__typename": "StatusContext", "context": "ci/legacy", "state": "SUCCESS"}]
 RED = GREEN[:1] + [{"__typename": "CheckRun", "name": "tests (windows)", "status": "COMPLETED", "conclusion": "FAILURE"}]
 PENDING = GREEN[:1] + [{"__typename": "CheckRun", "name": "tests (windows)", "status": "IN_PROGRESS", "conclusion": ""}]
+HEAD = "abc123def4567890"
 
 
 class FakeGh:
     """A runner whose `gh pr view` answers with a fixed rollup; git calls go to the real git."""
 
     def __init__(self, rollup=None, returncode: int = 0, stdout: str | None = None):
-        self.rollup, self.returncode, self.stdout, self.calls = rollup, returncode, stdout, []
+        self.rollup, self.returncode, self.stdout, self.calls, self.cwds = rollup, returncode, stdout, [], []
 
     def __call__(self, argv, cwd):
         if argv[0] == "git":
             return ship_guard._run(argv, cwd)
         self.calls.append(argv)
+        self.cwds.append(cwd)
         out = self.stdout if self.stdout is not None else json.dumps(
-            {"number": 7, "url": "https://github.com/o/r/pull/7", "headRefOid": "abc123def4567890",
-             "statusCheckRollup": self.rollup})
+            {"number": 7, "url": "https://github.com/o/r/pull/7", "headRefOid": HEAD, "statusCheckRollup": self.rollup})
         return subprocess.CompletedProcess(argv, self.returncode, out, "boom" if self.returncode else "")
 
 
@@ -81,10 +82,30 @@ def test_gh_pr_merge_is_refused_unless_every_check_is_green(rollup):
     assert reason and "not green" in reason
 
 
-def test_gh_pr_merge_on_a_green_head_is_allowed():
+def test_gh_pr_merge_on_a_green_pinned_head_is_allowed():
     fake = FakeGh(GREEN)
-    assert decide(bash("gh pr merge 7 --repo o/r --squash --delete-branch"), run=fake) is None
+    assert decide(bash(f"gh pr merge 7 --repo o/r --squash --delete-branch --match-head-commit {HEAD}"), run=fake) is None
     assert fake.calls[0][:5] == ["gh", "pr", "view", "7", "--repo"]
+
+
+def test_a_merge_must_pin_the_exact_head_it_was_checked_at():
+    reason = decide(bash("gh pr merge 7 --repo o/r --squash"))
+    assert reason and f"--match-head-commit {HEAD}" in reason
+    assert "the head the checks ran on" in decide(bash("gh pr merge 7 --repo o/r --match-head-commit 1234567abc"))
+    assert decide(bash(f"gh api -X PUT repos/o/r/pulls/7/merge -f sha={HEAD}")) is None
+    assert "does not pin it" in decide(bash("gh api -X PUT repos/o/r/pulls/7/merge"))
+
+
+def test_a_merge_runs_its_check_in_the_directory_the_merge_runs_in(tmp_path):
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    fake = FakeGh(GREEN)
+    assert decide(bash(f'cd "{lane.as_posix()}" && gh pr merge 7 --match-head-commit {HEAD}', cwd=str(tmp_path)),
+                  run=fake) is None
+    assert os.path.normcase(fake.cwds[0]) == os.path.normcase(os.path.normpath(str(lane)))
+    assert "--repo OWNER/REPO" in decide(bash(f"cd $X && gh pr merge 7 --match-head-commit {HEAD}"))
+    assert decide(bash(f"cd $X && gh pr merge 7 --repo o/r --match-head-commit {HEAD}")) is None
+    assert "GH_REPO" in decide(bash(f"GH_REPO=o/r gh pr merge 7 --match-head-commit {HEAD}"))
 
 
 @pytest.mark.parametrize("command", [
@@ -115,6 +136,8 @@ def test_a_gh_failure_refuses_the_merge():
 def test_mcp_merge_and_auto_merge():
     merge = {"tool_name": "mcp__github__merge_pull_request", "tool_input": {"owner": "o", "repo": "r", "pullNumber": 7}}
     assert "not green" in decide(merge, run=FakeGh(RED))
+    assert "does not pin it" in decide(merge, run=FakeGh(GREEN))
+    merge["tool_input"]["sha"] = HEAD
     assert decide(merge, run=FakeGh(GREEN)) is None
     assert "owner, repo and pull number" in decide({"tool_name": "mcp__github__merge_pull_request", "tool_input": {}})
     assert "auto-merge" in decide({"tool_name": "mcp__ccd_pr__set_auto_merge", "tool_input": {"enabled": True}})
@@ -191,9 +214,52 @@ def test_git_bash_drive_paths_are_followed(tmp_path, repo):
 
 
 @pytest.mark.parametrize("command", ["cd $REPO && git push", "pushd x; popd; git push", "git -C \"$d\" push",
-                                     "git --git-dir=x/.git push"])
+                                     "git --git-dir=x/.git push", "cd - && git push", "GIT_DIR=x/.git git push",
+                                     "export GIT_WORK_TREE=x; git push", "env -C x git push"])
 def test_a_push_directory_the_guard_cannot_know_is_refused(command, tmp_path):
     assert "git -C <dir> push" in decide(bash(command, cwd=str(tmp_path)))
+
+
+def test_git_redirected_by_the_session_environment_is_refused(repo):
+    git("config", "core.hooksPath", ".githooks", cwd=repo)
+    assert "GIT_DIR" in decide(bash("git push", cwd=str(repo)), environ={"GIT_DIR": "x"})
+
+
+@pytest.mark.parametrize("command", [
+    "timeout 60 git push", "nice -n 5 git push", "nohup git push", "time git push", "sudo -u me git push",
+    "stdbuf -o0 git push", "env -i PATH=x git push", "command git push", "exec git push", "env -u X git push",
+    'env -S "git push"', "X=1 Y=2 git push", "if true; then git push; fi",
+])
+def test_wrappers_are_looked_through(command, repo):
+    assert "is not set" in (decide(bash(command, cwd=str(repo))) or ""), command
+
+
+def test_cmd_cd_switches_drive_only_with_d(tmp_path, repo):
+    elsewhere = tmp_path / "plain"
+    elsewhere.mkdir()
+    assert "is not set" in decide(pwsh(f'cmd /c "cd /d {repo} && git push"', cwd=str(elsewhere)))
+
+
+@pytest.mark.parametrize("command", [
+    "echo --no-verify | xargs git push", 'iex "git push"', "find . -exec git push ;",
+    "Start-Process git -ArgumentList push", 'eval "git push"', "echo `git push --no-verify`",
+    'echo "$(git push --no-verify)"', 'echo "git push" | bash', 'git -c "$k=$v" push',
+])
+def test_git_run_where_the_guard_cannot_follow_is_refused(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))), command
+
+
+@pytest.mark.parametrize("command", [
+    'echo "remember to git push"', 'grep -r "git push" docs', 'gh pr create --body "then git push"',
+    "# git push --no-verify later\nls", "git commit -F - <<'EOF'\nsubject\n\ngit push --no-verify is refused\nEOF",
+    "if git diff --quiet; then git commit -m x; fi",
+])
+def test_text_that_only_mentions_git_is_allowed(command, tmp_path):
+    assert decide(bash(command, cwd=str(tmp_path))) is None, command
+
+
+def test_a_here_document_a_shell_reads_is_checked(repo):
+    assert "is not set" in decide(bash("bash <<'EOF'\ngit push\nEOF", cwd=str(repo)))
 
 
 @pytest.mark.parametrize("command", [

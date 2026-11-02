@@ -4,21 +4,24 @@ GitHub branch protection is not used in these repositories (owner ruling, 2026-1
 GitHub settings), so nothing on GitHub stops a red PR from merging; claude-profile #53 and #55 merged with a failing check.
 This hook replaces required checks for every merge and push a Claude session can start.
 
-MERGES. A merge is allowed only when every check on the PR head is green:
+MERGES. A merge is allowed only when every check on the PR head is green, and the merge pins that head:
 
-  - `gh pr merge [<number> | <url> | <branch>] [--repo OWNER/REPO] ...`, including `--auto` and `--admin`
-    (`--disable-auto` only turns auto-merge off and is allowed);
-  - the REST merge endpoint, `.../repos/OWNER/REPO/pulls/N/merge`, through `gh api`, curl, Invoke-RestMethod or anything
-    else that names it;
+  - `gh pr merge [<number> | <url> | <branch>] [--repo OWNER/REPO] --match-head-commit <sha> ...`, including `--auto`
+    and `--admin` (`--disable-auto` only turns auto-merge off and is allowed);
+  - the REST merge endpoint, `.../repos/OWNER/REPO/pulls/N/merge` with `sha=<sha>`, through `gh api`, curl,
+    Invoke-RestMethod or anything else that names it;
   - GraphQL `mergePullRequest` / `enablePullRequestAutoMerge`: always refused, because the guard cannot tell which PR a
     node id is; `gh pr merge` is the route it can check;
-  - an MCP tool named `*merge_pull_request` (owner, repo and pull number in its input);
+  - an MCP tool named `*merge_pull_request` (owner, repo, pull number and `sha` in its input);
   - the app's auto-merge switch (`mcp__ccd_pr__set_auto_merge`) when it turns auto-merge on: with no required checks,
     auto-merge has nothing to wait for.
 
 Green means: the head commit reports at least one check, and every check run has completed with SUCCESS, NEUTRAL or
 SKIPPED and every commit status is SUCCESS. Pending, failed, cancelled, timed out, action required, stale or missing all
-refuse the merge. The state comes from `gh pr view --json statusCheckRollup` at the moment of the merge.
+refuse the merge. The state comes from `gh pr view --json statusCheckRollup` at the moment of the merge, run in the
+directory the merge runs in (followed through `cd` like a push, below). The pinned SHA must be the full head the guard
+checked, so a commit pushed between the check and the merge makes GitHub refuse the merge. `GH_REPO` / `GH_HOST` in a
+merging command are refused: `--repo` is the form the guard reads.
 
 PUSHES AND COMMITS. A repository that ships the gate (its `.githooks/pre-push` carries the marker `ship-guard: gate`)
 runs its whole local gate, CI's tests included, on every push. This hook makes sure a session cannot step around it:
@@ -26,16 +29,21 @@ runs its whole local gate, CI's tests included, on every push. This hook makes s
   - `git push` in such a repository is refused unless its `core.hooksPath` resolves to the repository's `.githooks`
     (turn it on with `python <profile>/tools/git_gate.py`, which bootstrap runs);
   - `git push --no-verify` and `git commit --no-verify` / `-n` are refused everywhere;
-  - `git -c core.hooksPath=...`, `--config-env` for it, `GIT_CONFIG_*` carrying it, and `git config` writing any value
-    other than `.githooks` (or unsetting it) are refused;
+  - `git -c core.hooksPath=...` (or a `-c` key it cannot read), `--config-env` for it, `GIT_CONFIG_*` carrying it or set
+    in a pushing command, and `git config` writing any value other than `.githooks` (or unsetting it) are refused;
+  - `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` in a pushing command or in the session's environment are refused:
+    they point git somewhere the guard does not follow;
   - the audited bypass variables (BIMP_PREPUSH_BYPASS, BIMP_SECRETS_BYPASS) are refused in a command and while they are
     set in the session's environment: they are for the owner, typed in the owner's own terminal;
   - an MCP tool that writes files straight to GitHub (`*push_files`, `*create_or_update_file`) is refused: it skips every
     local gate. Push from a clone instead.
 
-The directory a push runs in is followed through `cd`, `pushd`, `Set-Location` / `sl` / `Push-Location`, and `git -C`, and
-into `bash -c` / `sh -c` / `powershell -Command` / `pwsh -c` / `cmd /c` arguments. A directory it cannot know (a variable,
-`popd`) refuses the push with the literal form to use instead.
+The directory a push or merge runs in is followed through `cd` (cmd's `cd /d` too), `pushd`, `Set-Location` / `sl` /
+`Push-Location`, `git -C`, and into `bash -c` / `sh -c` / `powershell -Command` / `pwsh -c` / `cmd /c` arguments, `$(...)`
+and backtick substitutions, and here-documents a shell reads. Wrappers that run their arguments (`env`, `timeout`,
+`nice`, `nohup`, `time`, `sudo`, `stdbuf`, `command`, `exec`, ...) are looked through. A directory it cannot know (a
+variable, `cd -`, `popd`, `env -C`) refuses the push with the literal form to use instead; git run by something the guard
+does not follow (`xargs`, `eval`, `iex`, `find -exec`, `Start-Process`, a shell reading its input) is refused.
 
 FAIL-CLOSED CONTRACT (as hooks/protect_paths_gate.py): a payload it cannot read, a merge or push command it cannot parse,
 or a `gh` call that fails all block. Exit 0 = allow, exit 2 = block (stderr is shown to Claude). A command that mentions no
@@ -43,7 +51,7 @@ merge, push, commit, hooks path or bypass exits 0 after one regex test, so ordin
 any other tool (Write, Read, ...) is allowed untouched.
 
 SCOPE HONESTY: this binds Claude sessions on machines that run this profile. The owner merging in the GitHub web UI or
-pushing from a terminal is not affected, by design. A command that hides the git or gh call from the text (an alias, a
+pushing from a terminal is not affected, by design. A command that hides the git or gh call from the text (a git alias, a
 script file, an encoded command) is not seen; the hooks themselves, the gate they run and CI are the layers behind it.
 """
 from __future__ import annotations
@@ -54,7 +62,7 @@ import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional
 
@@ -67,9 +75,17 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 MAYBE_MERGE = re.compile(r"\bmerge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge", re.IGNORECASE)
 MAYBE_SHIP = re.compile(r"\bpush\b|\bcommit\b|hookspath|BIMP_\w*BYPASS", re.IGNORECASE)
 REST_MERGE = re.compile(r"repos/([^/\s'\"`]+)/([^/\s'\"`]+)/pulls/(\d+)/merge\b")
+REST_SHA = re.compile(r"""\bsha["']?\s*[=:]\s*["']?([0-9a-fA-F]{7,64})""")
 GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|COUNT)")
+GIT_REDIRECT_ENV = re.compile(r"\bGIT_(DIR|WORK_TREE|COMMON_DIR)\b")
+GIT_REDIRECT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+GH_TARGET_ENV = re.compile(r"\bGH_(REPO|HOST)\b")
 GIT_SHIP_LINE = re.compile(r"\bgit(\.exe)?\b.*\b(push|commit|config)\b", re.IGNORECASE)
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
+BACKTICKS = re.compile(r"`([^`]*)`")
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 OPERATORS = {";", "&", "&&", "|", "||", "(", ")", "\n"}
 # `gh pr merge` flags that take a value (gh 2.x); every other flag is a switch.
 VALUE_FLAGS = {"-R", "--repo", "-b", "--body", "-F", "--body-file", "-t", "--subject", "-A", "--author-email",
@@ -82,6 +98,30 @@ COMMIT_VALUE_LETTERS = set("mFCctSu")
 CD_COMMANDS = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
 SHELLS_C = {"bash", "sh", "zsh", "dash", "bash.exe", "sh.exe"}
 POWERSHELLS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+CMDS = {"cmd", "cmd.exe"}
+# Commands that run the rest of their words as a command, each with its own options that take the next word as a value.
+WRAPPERS = {
+    "command": set(), "exec": set(), "builtin": set(), "nohup": set(), "chronic": set(),
+    "time": {"-f", "--format", "-o", "--output"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "--class", "-n", "--classdata", "-p", "--pid"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-r", "--role", "-t", "--type",
+             "-U", "--other-user", "-C", "--close-from", "-T", "--command-timeout"},
+    "doas": {"-u", "-C"},
+    "xargs": {"-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "-n", "--max-args", "-P", "--max-procs",
+              "-s", "--max-chars"},
+    "env": {"-u", "--unset"},
+}
+# Shell keywords that start a simple command (`if git ...; then git commit ...; fi`): the command is the word after.
+KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{"}
+WRAPPER_CHDIR = {"env": {"-C", "--chdir"}, "sudo": {"-D", "--chdir"}}
+WRAPPER_SPLIT = {"env": {"-S", "--split-string"}}
+# Commands that print or search text without running it: a `git push` among their words is data.
+NON_EXEC = {"echo", "printf", "write-host", "write-output", "write-error", "write-verbose", "grep", "egrep", "fgrep",
+            "rg", "findstr", "select-string", "sls", "gh", "cat", "type", "get-content", "gc", "head", "tail", "less",
+            "more", "man"}
 DIRECT_WRITE_TOOLS = re.compile(r"(push_files|create_or_update_file)$")
 
 Runner = Callable[[list, Optional[str]], "subprocess.CompletedProcess[str]"]
@@ -93,13 +133,32 @@ class Refuse(Exception):
 
 @dataclass(frozen=True)
 class Target:
-    """One PR a command would merge: a selector `gh pr view` accepts, and the repository when it is not the cwd's."""
+    """One PR a call would merge: a selector `gh pr view` accepts, the repository when it is not the directory's, the
+    head SHA the call pins (None when it pins none), and the directory the call runs in (`why_unknown` says why the
+    guard cannot know it; empty with directory None means the session's own directory)."""
     selector: Optional[str]
     repo: Optional[str]
+    head: Optional[str] = None
+    directory: Optional[str] = None
+    why_unknown: str = ""
 
     def describe(self) -> str:
         what = self.selector or "the current branch's PR"
         return f"{what} in {self.repo}" if self.repo else what
+
+
+@dataclass(frozen=True)
+class Push:
+    """One `git push` a command would run, and the directory it runs in (None when the guard cannot know it)."""
+    directory: Optional[str]
+    why_unknown: str = ""
+
+
+@dataclass
+class Scan:
+    """What one shell command would push and merge."""
+    pushes: list = field(default_factory=list)
+    merges: list = field(default_factory=list)
 
 
 def _tokens(command: str, powershell: bool = False) -> list:
@@ -108,7 +167,7 @@ def _tokens(command: str, powershell: bool = False) -> list:
     lexer.whitespace_split = True
     lexer.commenters = ""
     if powershell:
-        lexer.escape = ""  # backslashes are path separators in PowerShell; its escape is the backtick
+        lexer.escape = ""  # backslashes are path separators in PowerShell and cmd; PowerShell's escape is the backtick
     return list(lexer)
 
 
@@ -124,6 +183,11 @@ def _segments(tokens: list) -> Iterable[list]:
             current.append(tok)
     if current:
         yield current
+
+
+def _base(word: str) -> str:
+    """The command name of a word, without its directory (either separator, on any OS), lower case."""
+    return re.split(r"[\\/]", word)[-1].lower()
 
 
 # ----------------------------------------------------------------------------------------------------------- merges --
@@ -143,7 +207,7 @@ def _gh_pr_merge_args(tokens: list) -> Iterable[list]:
 
 def _target_from_args(args: list) -> Optional[Target]:
     """The PR `gh pr merge <args>` merges, or None when the call only turns auto-merge off."""
-    selector, repo, i = None, None, 0
+    selector, repo, head, i = None, None, None, 0
     if "--disable-auto" in args:
         return None
     while i < len(args):
@@ -155,33 +219,25 @@ def _target_from_args(args: list) -> Optional[Target]:
                 value = args[i] if i < len(args) else ""
             if flag in ("-R", "--repo"):
                 repo = value or None
+            elif flag == "--match-head-commit":
+                head = value or None
         elif not arg.startswith("-") and selector is None:
             selector = arg
         i += 1
-    return Target(selector, repo)
+    return Target(selector, repo, head)
 
 
-def targets_in_command(command: str, powershell: bool = False) -> list:
-    """Every PR this shell command would merge. Raises Refuse for a merge the guard cannot check."""
-    if not MAYBE_MERGE.search(command):
-        return []
-    if GRAPHQL_MERGE.search(command):
-        raise Refuse("a GraphQL merge (mergePullRequest / enablePullRequestAutoMerge) names the PR by node id, which "
-                     "this guard cannot check. Use `gh pr merge <number> --repo OWNER/REPO` once every check is green.")
-    found = []
-    for owner, name, number in REST_MERGE.findall(command):
+def _record_merges(segment: list, here: Optional[str], why: str, scan: Scan) -> None:
+    """Add every merge one simple command would run, with the directory it runs in."""
+    text = " ".join(segment)
+    for owner, name, number in REST_MERGE.findall(text):
         repo = None if (owner, name) == ("{owner}", "{repo}") else f"{owner}/{name}"
-        found.append(Target(number, repo))
-    if re.search(r"\bpr\b", command) and re.search(r"\bmerge\b", command):
-        try:
-            tokens = _tokens(command, powershell)
-        except ValueError as exc:  # unbalanced quotes: the arguments cannot be trusted
-            raise Refuse(f"could not parse the command to find which PR it merges ({exc}).") from exc
-        for args in _gh_pr_merge_args(tokens):
-            target = _target_from_args(args)
-            if target is not None:
-                found.append(target)
-    return found
+        sha = REST_SHA.search(text)
+        scan.merges.append(Target(number, repo, sha.group(1) if sha else None, here, why))
+    for args in _gh_pr_merge_args(segment):
+        target = _target_from_args(args)
+        if target is not None:
+            scan.merges.append(replace(target, directory=here, why_unknown=why))
 
 
 def targets_in_mcp(tool_name: str, tool_input: dict) -> list:
@@ -196,7 +252,7 @@ def targets_in_mcp(tool_name: str, tool_input: dict) -> list:
     number = tool_input.get("pullNumber", tool_input.get("pull_number", tool_input.get("number")))
     if not (owner and repo and number):
         raise Refuse(f"{tool_name}: the input does not name owner, repo and pull number, so the PR cannot be checked.")
-    return [Target(str(number), f"{owner}/{repo}")]
+    return [Target(str(number), f"{owner}/{repo}", tool_input.get("sha") or None)]
 
 
 def _run(argv: list, cwd: Optional[str]) -> "subprocess.CompletedProcess[str]":
@@ -225,12 +281,17 @@ def not_green(rollup: list) -> list:
 
 
 def check_target(target: Target, cwd: Optional[str], run: Runner = _run) -> None:
-    """Return when the PR's head is green; raise Refuse otherwise."""
+    """Return when the PR's head is green and the merge pins that head; raise Refuse otherwise."""
+    by_url = bool(target.selector and re.match(r"https?://", target.selector))
+    if target.why_unknown and not (target.repo or by_url):
+        raise Refuse(f"{target.why_unknown}, so the guard cannot tell which repository's PR this merges. Name it: "
+                     "gh pr merge <number> --repo OWNER/REPO --match-head-commit <sha>")
+    where = cwd if target.why_unknown or target.directory is None else target.directory
     argv = ["gh", "pr", "view"] + ([target.selector] if target.selector else [])
     argv += ["--repo", target.repo] if target.repo else []
     argv += ["--json", "number,url,state,headRefOid,statusCheckRollup"]
     try:
-        proc = run(argv, cwd)
+        proc = run(argv, where)
     except (OSError, subprocess.SubprocessError) as exc:
         raise Refuse(f"could not read the checks of {target.describe()} ({exc}); a merge that cannot be checked is "
                      "not allowed.") from exc
@@ -241,30 +302,26 @@ def check_target(target: Target, cwd: Optional[str], run: Runner = _run) -> None
         pr = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise Refuse(f"`gh pr view` returned unreadable output for {target.describe()}.") from exc
+    head = pr.get("headRefOid") or ""
+    shown = pr.get("url") or target.describe()
     problems = not_green(pr.get("statusCheckRollup") or [])
     if problems:
-        head = (pr.get("headRefOid") or "")[:12]
         listed = "; ".join(problems[:8]) + (f"; and {len(problems) - 8} more" if len(problems) > 8 else "")
-        raise Refuse(f"{pr.get('url') or target.describe()} is not green at head {head}: {listed}. Fix the code and "
-                     "push again; a known or flaky failure is fixed too, not merged over.")
+        raise Refuse(f"{shown} is not green at head {head[:12]}: {listed}. Fix the code and push again; a known or "
+                     "flaky failure is fixed too, not merged over.")
+    if not target.head:
+        raise Refuse(f"{shown} is green at head {head}, but the merge does not pin it, so a commit pushed after this "
+                     f"check would merge unchecked. Add `--match-head-commit {head}` (the REST call and the MCP tool "
+                     f"take `sha={head}`).")
+    if target.head.lower() != head.lower():
+        raise Refuse(f"{shown}: the merge pins {target.head}, but the head the checks ran on is {head}. Pin the full "
+                     f"head: --match-head-commit {head}")
 
 
 # ------------------------------------------------------------------------------------------------- pushes, commits --
 
-@dataclass(frozen=True)
-class Push:
-    """One `git push` a command would run, and the directory it runs in (None when the guard cannot know it)."""
-    directory: Optional[str]
-    why_unknown: str = ""
-
-
-def _base(word: str) -> str:
-    """The command name of a word, without its directory (either separator, on any OS), lower case."""
-    return re.split(r"[\\/]", word)[-1].lower()
-
-
 def _native(path: str) -> str:
-    """A Git Bash drive path (`/f/x`) as the Windows path it names; `~` expanded. Other paths unchanged."""
+    """A Git Bash drive path (`/<letter>/x`) as the Windows path it names; `~` expanded. Other paths unchanged."""
     path = os.path.expanduser(path)
     if os.name == "nt":
         m = re.match(r"^/([a-zA-Z])(/.*)?$", path)
@@ -280,6 +337,32 @@ def _join(base: Optional[str], target: str) -> Optional[str]:
     if os.path.isabs(target):
         return os.path.normpath(target)
     return None if base is None else os.path.normpath(os.path.join(base, target))
+
+
+def _cd(words: list, here: Optional[str], why: str, powershell: bool, cmd: bool) -> tuple:
+    """The directory after one `cd`-like command, and why it is unknown (or the old reason, when it is known)."""
+    name, args = _base(words[0]), words[1:]
+    switch_drive = cmd and any(a.lower() == "/d" for a in args)
+    if cmd:
+        args = [a for a in args if a.lower() != "/d"]
+    if "-" in args:
+        return None, f"`{words[0]} -` returns to a directory the guard does not track"
+    path_flag = [args[k + 1] for k, a in enumerate(args[:-1]) if a.lower() in ("-path", "-literalpath")]
+    rest = [a for a in args if not a.startswith("-")]
+    target = (path_flag or rest or [None])[0]
+    if target is None:
+        if cmd and name in ("cd", "chdir"):
+            return here, why  # a bare `cd` in cmd prints the directory
+        if powershell or name in ("pushd", "push-location"):
+            return None, f"`{words[0]}` with no path goes somewhere the guard does not track"
+        target = "~"
+    joined = _join(here, target)
+    if joined is None:
+        return None, f"`{words[0]} {target}` changes to a directory the guard cannot resolve"
+    if cmd and name in ("cd", "chdir") and not switch_drive and here and \
+            os.path.splitdrive(joined)[0].lower() != os.path.splitdrive(here)[0].lower():
+        return here, why  # cmd's `cd` without /d does not change the current drive
+    return joined, why
 
 
 def _long_flag(arg: str, name: str) -> bool:
@@ -326,10 +409,13 @@ def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
         if opt in GIT_VALUE_OPTS and not eq:
             i += 1
             value = words[i] if i < len(words) else ""
-        if opt == "-c" and value.split("=")[0].lower() == "core.hookspath":
-            raise Refuse("`git -c core.hooksPath=...` replaces the repository's gate hooks. Run git without it.")
-        if opt == "--config-env" and value.split("=")[0].lower() == "core.hookspath":
-            raise Refuse("`git --config-env core.hooksPath=...` replaces the repository's gate hooks. Run git without it.")
+        if opt in ("-c", "--config-env"):
+            key = value.split("=")[0]
+            if key.lower() == "core.hookspath":
+                raise Refuse(f"`git {opt} core.hooksPath=...` replaces the repository's gate hooks. Run git without it.")
+            if any(ch in key for ch in "$`%"):
+                raise Refuse(f"`git {opt} {value}` sets a key the guard cannot read, which could be core.hooksPath. "
+                             "Name the key literally.")
         if opt == "-C":
             joined = _join(directory, value)
             if joined is None:
@@ -354,52 +440,115 @@ def _git_call(words: list, cwd: Optional[str], why: str, pushes: list) -> None:
                          "`git config core.hooksPath .githooks`) sets it, and a session never unsets or redirects it.")
 
 
-def _strip_env(words: list) -> list:
-    """The command words with leading `NAME=value` assignments and an `env` / `&` / `command` prefix removed."""
-    while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]) or words[0].lower() in ("env", "command", "exec")):
-        words = words[1:]
-    return words
+def _unwrap(words: list, here: Optional[str], why: str) -> tuple:
+    """The command a simple command runs, past `NAME=value` assignments, shell KEYWORDS and WRAPPERS.
+
+    Returns (words, directory, why_unknown, the first wrapper's name or "", the `env -S` strings it runs)."""
+    via, split = "", []
+    while words:
+        if ASSIGNMENT.match(words[0]) or words[0] in KEYWORDS:
+            words = words[1:]
+            continue
+        name = _base(words[0])
+        if name not in WRAPPERS:
+            break
+        via = via or name
+        chdir, splits = WRAPPER_CHDIR.get(name, set()), WRAPPER_SPLIT.get(name, set())
+        k = 1
+        while k < len(words) and words[k].startswith("-") and words[k] != "-":
+            if words[k] == "--":
+                k += 1
+                break
+            opt, eq, value = words[k].partition("=")
+            if (opt in WRAPPERS[name] or opt in chdir or opt in splits) and not eq:
+                k += 1
+                value = words[k] if k < len(words) else ""
+            if opt in chdir:
+                here, why = None, f"`{name} {opt}` changes to a directory the guard does not follow"
+            if opt in splits:
+                split.append(value)
+            k += 1
+        if name == "timeout" and k < len(words):
+            k += 1  # the duration
+        words = words[k:]
+    return words, here, why, via, split
 
 
-def scan_shell(command: str, cwd: Optional[str], powershell: bool, pushes: list, depth: int = 0) -> None:
-    """Walk one shell command for pushes and hook-skipping forms; nested `bash -c` / `pwsh -c` strings too."""
+def _split_heredocs(command: str) -> tuple:
+    """The command without its here-document bodies, and the bodies a shell reads (those run as commands)."""
+    lines = command.replace("\r\n", "\n").split("\n")
+    kept, shell_bodies, i = [], [], 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for match in HEREDOC.finditer(line):
+            body = []
+            while i < len(lines) and lines[i].strip() != match.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1  # the terminator
+            if any(_base(w) in SHELLS_C | POWERSHELLS | CMDS for w in re.split(r"[\s|;&()]+", line) if w):
+                shell_bodies.append("\n".join(body))
+    return "\n".join(kept), shell_bodies
+
+
+def scan_shell(command: str, cwd: Optional[str], powershell: bool, scan: Scan, depth: int = 0,
+               cmd: bool = False) -> None:
+    """Walk one shell command for pushes, merges and hook-skipping forms; nested shells and substitutions too."""
     if depth > 4:
         raise Refuse("the command nests shells too deeply for the guard to follow.")
+    nested = SUBSTITUTION.findall(command)
+    if not powershell:
+        command, shell_bodies = _split_heredocs(command)
+        nested += shell_bodies + BACKTICKS.findall(command)
+    for inner in nested:
+        scan_shell(inner, cwd, powershell, scan, depth + 1)
     try:
         tokens = _tokens(command, powershell)
     except ValueError as exc:
-        if any(GIT_SHIP_LINE.search(line) for line in command.splitlines()):
-            raise Refuse(f"could not parse the command to check its git push / commit ({exc}). Run that git command "
-                         "on its own.") from exc
+        if any(GIT_SHIP_LINE.search(line) for line in command.splitlines()) or REST_MERGE.search(command) or \
+                (re.search(r"\bpr\b", command) and re.search(r"\bmerge\b", command)):
+            raise Refuse(f"could not parse the command to check its git push / commit / merge ({exc}). Run that "
+                         "command on its own.") from exc
         return
     here, why = cwd, ""
-    for words in _segments(tokens):
-        words = _strip_env(words)
-        if not words:
+    for segment in _segments(tokens):
+        words, here, why, via, split = _unwrap(segment, here, why)
+        for inner in split:
+            scan_shell(inner, here, powershell, scan, depth + 1)
+        _record_merges(segment, here, why, scan)
+        if not words or words[0].startswith("#"):
             continue
         name = _base(words[0])
         if name in CD_COMMANDS:
-            rest = [w for w in words[1:] if not w.startswith("-")]
-            path_flag = [words[k + 1] for k, w in enumerate(words[:-1]) if w.lower() in ("-path", "-literalpath")]
-            target = (path_flag or rest or ["~"])[0]
-            joined = _join(here, target)
-            if joined is None:
-                why = f"`{words[0]} {target}` changes to a directory the guard cannot resolve"
-            here = joined
+            here, why = _cd(words, here, why, powershell, cmd)
         elif name in ("popd", "pop-location"):
             here, why = None, f"`{words[0]}` returns to a directory the guard does not track"
         elif name in ("git", "git.exe"):
-            _git_call(words, here, why, pushes)
-        elif name in SHELLS_C or name in POWERSHELLS or name in ("cmd", "cmd.exe"):
-            nested_ps = name in POWERSHELLS
+            if via == "xargs":
+                raise Refuse("`xargs git ...` adds arguments from its input that the guard cannot see (a push, a "
+                             "--no-verify). Run git directly.")
+            _git_call(words, here, why, scan.pushes)
+        elif name in SHELLS_C or name in POWERSHELLS or name in CMDS:
+            nested_ps, is_cmd, ran = name in POWERSHELLS, name in CMDS, False
             for k, w in enumerate(words[1:], 1):
                 low = w.lower()
                 if (name in SHELLS_C and low.startswith("-") and not low.startswith("--") and "c" in low) or \
-                   (nested_ps and low in ("-c", "-command")) or (name.startswith("cmd") and low in ("/c", "/k")):
-                    inner = words[k + 1] if name in SHELLS_C else " ".join(words[k + 1:])
+                   (nested_ps and low.startswith("-c") and "-command".startswith(low)) or \
+                   (is_cmd and low in ("/c", "/k")):
+                    inner = words[k + 1] if name in SHELLS_C and k + 1 < len(words) else " ".join(words[k + 1:])
                     if inner:
-                        scan_shell(inner, here, nested_ps, pushes, depth + 1)
+                        scan_shell(inner, here, nested_ps or is_cmd, scan, depth + 1, cmd=is_cmd)
+                    ran = True
                     break
+            operands = [w for w in words[1:] if not w.startswith(("-", "<", "/"))]
+            if not ran and not operands and GIT_SHIP_LINE.search(command):
+                raise Refuse(f"`{words[0]}` reads its commands from its input here, where the guard cannot check the "
+                             "git push / commit in them. Run git directly.")
+        elif name not in NON_EXEC and GIT_SHIP_LINE.search(" ".join(words)):
+            raise Refuse(f"`{words[0]}` runs a git push / commit / config the guard cannot follow. Run git itself: "
+                         "git -C <dir> push ...")
 
 
 def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
@@ -434,24 +583,40 @@ def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
             f"Turn the gate on first: python <profile>/tools/git_gate.py (then `--check` prints `git gate: ON`).")
 
 
-def check_ship(command: str, cwd: Optional[str], powershell: bool, environ: Mapping[str, str],
-               run: Runner = _run) -> None:
-    if not MAYBE_SHIP.search(command):
-        return
+def scan_command(command: str, cwd: Optional[str], powershell: bool) -> Scan:
+    """What a shell command would push and merge. Raises Refuse for a form the guard refuses outright."""
+    scan = Scan()
+    if not (MAYBE_MERGE.search(command) or MAYBE_SHIP.search(command)):
+        return scan
+    if GRAPHQL_MERGE.search(command):
+        raise Refuse("a GraphQL merge (mergePullRequest / enablePullRequestAutoMerge) names the PR by node id, which "
+                     "this guard cannot check. Use `gh pr merge <number> --repo OWNER/REPO --match-head-commit <sha>` "
+                     "once every check is green.")
     for var in BYPASS_VARS:
         if var in command:
             raise Refuse(f"{var} is the owner's audited bypass, typed in the owner's own terminal; a session does not "
                          "set it. Fix what the gate reports instead.")
     if GIT_CONFIG_ENV.search(command) and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
-    pushes: list = []
-    scan_shell(command, cwd, powershell, pushes)
+    scan_shell(command, cwd, powershell, scan)
+    return scan
+
+
+def check_pushes(command: str, pushes: list, environ: Mapping[str, str], run: Runner = _run) -> None:
     if not pushes:
         return
     for var in BYPASS_VARS:
         if environ.get(var):
             raise Refuse(f"{var} is set in this session's environment, so the gate would be skipped. It is the owner's "
                          "bypass for the owner's terminal; unset it in the session before pushing.")
+    if GIT_CONFIG_ENV.search(command):
+        raise Refuse("GIT_CONFIG_* in a command that pushes can redirect core.hooksPath where the guard cannot see it. "
+                     "Push without it.")
+    redirect = GIT_REDIRECT_ENV.search(command)
+    named = redirect.group(0) if redirect else next((v for v in GIT_REDIRECT_VARS if environ.get(v)), None)
+    if named:
+        raise Refuse(f"{named} points git somewhere the guard does not follow, so it cannot check that the gate runs. "
+                     "Use a literal directory instead: git -C <dir> push ...")
     for push in pushes:
         if push.directory is None:
             raise Refuse(f"{push.why_unknown}, so the guard cannot check that the gate runs. Use a literal directory: "
@@ -459,6 +624,14 @@ def check_ship(command: str, cwd: Optional[str], powershell: bool, environ: Mapp
         reason = gate_is_on(push.directory, run)
         if reason:
             raise Refuse(reason)
+
+
+def check_merges(command: str, merges: list, cwd: Optional[str], run: Runner = _run) -> None:
+    if merges and GH_TARGET_ENV.search(command):
+        raise Refuse("GH_REPO / GH_HOST in a merging command choose the repository where the guard does not read it. "
+                     "Name it with --repo OWNER/REPO instead.")
+    for target in merges:
+        check_target(target, cwd, run)
 
 
 # ------------------------------------------------------------------------------------------------------------ entry --
@@ -478,18 +651,15 @@ def decide(payload: dict, run: Runner = _run, environ: Optional[Mapping[str, str
                              "clone and `git push` instead.")
             if not (tool_name.endswith("merge_pull_request") or tool_name.endswith("set_auto_merge")):
                 return None
-            targets = targets_in_mcp(tool_name, tool_input)
+            for target in targets_in_mcp(tool_name, tool_input):
+                check_target(target, cwd, run)
         elif tool_name in SHELL_TOOLS:
             command = tool_input.get("command")
             if not isinstance(command, str):
                 return f"{tool_name}: the payload has no command string, so it cannot be checked."
-            powershell = tool_name == "PowerShell"
-            check_ship(command, cwd, powershell, environ, run)
-            targets = targets_in_command(command, powershell)
-        else:
-            return None
-        for target in targets:
-            check_target(target, cwd, run)
+            scan = scan_command(command, cwd, tool_name == "PowerShell")
+            check_pushes(command, scan.pushes, environ, run)
+            check_merges(command, scan.merges, cwd, run)
     except Refuse as exc:
         return str(exc)
     return None
