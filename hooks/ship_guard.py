@@ -110,9 +110,11 @@ WRITE_REQUEST = re.compile(
     r"(\s|=|$)"
     r"|\.(put|post|patch|delete)\(|\brequest\(\s*(['\"](PUT|POST|PATCH|DELETE)\b|[a-z_])"
     r"|\bmethod(-override)?['\"]?\s*[=:]\s*(['\"]?(PUT|POST|PATCH|DELETE)\b|(?!(GET|HEAD)\b)[a-z_])"
-    r"|[(,]\s*data\s*=", re.IGNORECASE)
+    r"|[(,.]\s*data\s*=(?!=)", re.IGNORECASE)
 # urllib's `urlopen(url, body)` / `Request(url, body)`: a second positional argument is the request body.
 URLLIB_CALL = re.compile(r"\b(urlopen|Request)\s*\(")
+URLLIB_ALIAS = re.compile(r"\b(urlopen|Request)\s+as\b|=\s*[\w.]*\b(urlopen|Request)\b(?!\s*\()"
+                          r"|[(,]\s*[\w.]*\b(urlopen|Request)\s*[,)]")
 # gh's -f / -F field flags, alone or with the field attached (`-fmessage=x`), curl's -d / -F / -T, attached
 # (`-d@f`, `-Tfile`) or after a cluster of curl's flags (`-sd@f`, `-sSLT f`, `-OJd@f`, `-sXPUT`). A cluster ends at
 # curl's first value-taking letter, which takes the rest of the word, so every other letter or digit counts as a flag.
@@ -149,6 +151,8 @@ CONFIG_SUBS = CONFIG_READ_SUBS | {"set", "rename-section", "edit"}
 CONFIG_READ_FLAGS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "--unset",
                      "--unset-all", "--remove-section", "--get-color", "--get-colorbool"}
 GIT_CONFIG_ENV = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
+# The stem with the rest built at run time (`GIT_CONFIG_${s}`, `GIT_CONFIG_KEY_$i`): treated as naming one.
+GIT_CONFIG_FRAGMENT = re.compile(r"GIT_CONFIG(_?\s*[$%{(+]|_(KEY|VALUE)_\s*[$%{(+])", re.IGNORECASE)
 # Setting one: `NAME=`, `$env:NAME =`, `"NAME": ` / `"NAME", ` (a mapping or SetEnvironmentVariable), or the env drive.
 GIT_CONFIG_SET = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)['\"]?\]?\s*[=:,]"
                             r"|\benv:GIT_CONFIG_(PARAMETERS|KEY_\d+|VALUE_\d+|COUNT|GLOBAL|SYSTEM)\b", re.IGNORECASE)
@@ -527,11 +531,17 @@ def _config_long_opt(word: str) -> Optional[str]:
 
 
 def _urllib_body(text: str) -> bool:
-    """True when a `urlopen(...)` / `Request(...)` call in the text has a second positional argument, its body."""
+    """True when a `urlopen(...)` / `Request(...)` call in the text has a second positional argument, its body, or
+    when either is renamed (`import ... as`, `x = urlopen`, passed as a value), since the renamed call goes unseen."""
+    if URLLIB_ALIAS.search(text):
+        return True
     for match in URLLIB_CALL.finditer(text):
-        depth, quote, args, current = 0, "", [], ""
+        depth, quote, escaped, args, current = 0, "", False, [], ""
         for ch in text[match.end():]:
-            if quote:
+            if escaped:
+                escaped = False
+            elif quote:
+                escaped = ch == "\\"
                 quote = "" if ch == quote else quote
             elif ch in "'\"":
                 quote = ch
@@ -559,7 +569,7 @@ def _only_searches(command: str) -> bool:
     if re.search(r"[;&\r\n`<>(){}$]", command):
         return False
     for piece in command.split("|"):
-        words = piece.split()
+        words = SHELL_QUOTING.sub("", piece).split()
         if not words:
             return False
         first = words[0].lower()
@@ -1051,7 +1061,8 @@ def _check_text(command: str) -> None:
         if var in command:
             raise Refuse(f"{var} is the owner's audited bypass, typed in the owner's own terminal; a session does not "
                          "set it. Fix what the gate reports instead.")
-    named_config_env = any(GIT_CONFIG_ENV.search(t) for t in (command, SHELL_QUOTING.sub("", command)))
+    named_config_env = any(GIT_CONFIG_ENV.search(t) or GIT_CONFIG_FRAGMENT.search(t)
+                           for t in (command, SHELL_QUOTING.sub("", command)))
     if named_config_env and "hookspath" in command.lower():
         raise Refuse("GIT_CONFIG_* carrying core.hooksPath replaces the repository's gate hooks. Run git without it.")
     if GIT_CONFIG_SET.search(command) or named_config_env and not _only_searches(command):

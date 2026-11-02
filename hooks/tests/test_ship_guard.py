@@ -181,6 +181,11 @@ def test_direct_github_file_writes_are_refused():
     "curl -aT c.json https://api.github.com/repos/o/r/contents/f",
     "python -c \"import urllib.request as u; u.urlopen('https://api.github.com/repos/o/r/git/refs', b'{}')\"",
     "python -c \"import urllib.request as u; u.urlopen(u.Request('https://api.github.com/repos/o/r/git/refs', b'x'))\"",
+    "python -c \"import urllib.request as u; u.urlopen('https://api.github.com/repos/o/r/git/refs\\'', b'x')\"",
+    "python -c \"from urllib.request import urlopen as o; o('https://api.github.com/repos/o/r/git/refs', b'x')\"",
+    "python -c \"import urllib.request as u; f = u.urlopen; f('https://api.github.com/repos/o/r/git/refs', b'x')\"",
+    "python -c \"import urllib.request as u; r = u.Request('https://api.github.com/repos/o/r/git/refs'); "
+    "r.data = b'x'; u.urlopen(r)\"",
 ])
 def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
@@ -195,6 +200,7 @@ def test_writes_that_put_code_on_a_branch_without_a_push_are_refused(command, tm
     "curl -fsSL -H 'Accept: application/vnd.github.raw' https://api.github.com/repos/o/r/contents/f",
     "gh api repos/o/r/contents/f --method=GET",
     "python -c \"import urllib.request as u; u.urlopen('https://api.github.com/repos/o/r/contents/f', timeout=5)\"",
+    "python -c \"from urllib.request import urlopen; print(urlopen('https://api.github.com/repos/o/r/contents/f'))\"",
 ])
 def test_reads_of_the_contents_and_git_data_api_are_allowed(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))) is None, command
@@ -476,6 +482,9 @@ def test_the_rest_merge_pin_is_read_only_from_the_sha_field():
     "grep x <(GIT_CONFIG_COUNT=1 git st)", "rg --pre sh GIT_CONFIG_COUNT run.sh",
     "git grep -O'sh -c x' GIT_CONFIG_COUNT", "git grep --open-files-in-pager=sh GIT_CONFIG_COUNT",
     "sort --compress-program=sh GIT_CONFIG_COUNT", "git config --url get alias.x push",
+    "n=COUNT; export GIT_CONFIG_$n=1; git st", "export GIT_CONFIG_KEY_${i}=alias.st; git st",
+    "python -c \"import os; os.environ['GIT_CONFIG_' + 'COUNT'] = '1'\"",
+    "rg '--pre' sh GIT_CONFIG_COUNT run.sh", "rg \\--pre=sh GIT_CONFIG_COUNT x", "git grep -\"O\"sh GIT_CONFIG_COUNT",
 ])
 def test_hook_skipping_forms_are_refused_everywhere(command, tmp_path):
     assert decide(bash(command, cwd=str(tmp_path))), command
