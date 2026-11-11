@@ -180,6 +180,24 @@ class VerifyStop(unittest.TestCase):
                                    result(), say(CLAIM)])
         self.assert_warns(out)
 
+    # A write through a $variable names its file in an earlier command (CP#85 re-review, F2).
+    def test_write_through_a_variable_set_earlier_on_the_line_warns(self) -> None:
+        target = "/".join(("C" + ":", "r", "app.py"))  # built here: the machine-paths scan rejects a literal path
+        for cmd in ("for f in a.py b.py; do sed -i s/x/y/ $f; done",
+                    'f=app.py; sed -i s/a/b/ "$f"',
+                    "$f='app.py'; Set-Content $f 'x'",
+                    f"$p = '{target}'\n(Get-Content $p) -replace 'a','b' | Set-Content $p"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    def test_a_variable_write_with_no_code_file_on_the_line_is_silent(self) -> None:
+        for cmd in ('f=notes.md; sed -i s/a/b/ "$f"', "$p = 'out.log'; Set-Content $p 'x'",
+                    'python -m pytest tests/test_app.py -q | tee "$LOG"',
+                    "sed -i 's/a$/b/' notes.md; grep -n x app.py"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)]), SILENT)
+
     def test_compound_commands_that_do_run_a_check_are_silent(self) -> None:
         for cmd in ("python -m pytest hooks/tests -q | tee out.log", "cd repo && python -m pytest -q",
                     "sed -i 's/a/b/' x.py && python -m pytest -q", "PYTHONPATH=. pytest tests/test_app.py",

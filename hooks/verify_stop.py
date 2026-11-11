@@ -222,6 +222,7 @@ NOT_A_RUNNER = frozenset({
     "remove-item", "rename-item", "set-location", "measure-object", "select-object", "where-object",
 })
 ENV_ASSIGN_RE = re.compile(r"\s*(?:[A-Za-z_]\w*=\S*\s+)*")
+VARIABLE_RE = re.compile(r"\$[A-Za-z_{(]")  # `$f`, `${f}`, `$(...)`; not a regex `$` anchor
 
 
 def split_pipelines(cmd: str) -> list[list[str]]:
@@ -301,7 +302,14 @@ def needs_warning(turn: list[dict[str, Any]], final_text: str) -> bool:
                 changed, checked_since_change = True, False
         elif name in SHELL_TOOLS:
             # Each simple command in order: `fix && test` ends checked, `test; fix` does not.
-            for pipeline in split_pipelines(str(inp.get("command") or "")):
+            pipelines = split_pipelines(str(inp.get("command") or ""))
+            # A write through a variable (`f=app.py; sed -i ... "$f"`) names its file in an
+            # earlier command, so the non-check pieces of the whole line are read for it.
+            line_names_code = any(
+                names_code_file(m.group(0))
+                for pipeline in pipelines for piece in pipeline if not runs_check(piece)
+                for m in FILE_TOKEN_RE.finditer(piece))
+            for pipeline in pipelines:
                 # A write fed through a pipe (`cat fix.patch | git apply`) names its file in
                 # another piece, so the pieces that are not checks are also read together.
                 others = " | ".join(piece for piece in pipeline if not runs_check(piece))
@@ -309,8 +317,9 @@ def needs_warning(turn: list[dict[str, Any]], final_text: str) -> bool:
                     if runs_check(segment):
                         if tid not in failed:  # a check that errored verified nothing
                             checked_since_change = True
-                    elif shell_changes_code(segment) or (
-                            WRITE_RE.search(segment) and shell_changes_code(others)):
+                    elif shell_changes_code(segment) or (WRITE_RE.search(segment) and (
+                            shell_changes_code(others)
+                            or (line_names_code and VARIABLE_RE.search(segment)))):
                         changed, checked_since_change = True, False
     if not changed or checked_since_change:
         return False
