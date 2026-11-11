@@ -347,7 +347,25 @@ def cmd_start(a: argparse.Namespace) -> int:
     if path.exists():
         raise L.AuditError(f"run record already exists: {path}")
     wd = _watchdog_dir(a)
+    # finalize finds the heartbeat from the record, not from its own flags
+    rec["watchdog"] = {"dir": str(wd), "task": a.watchdog_task}
     HB.start(wd, a.task, run_id, a.watchdog_task)
+    try:
+        return _start_body(a, pf, rec, path, wd, run_id)
+    except Exception as e:
+        # the heartbeat is already open: close it and leave a failed record before the error surfaces
+        reason = f"start: {type(e).__name__}: {e}"
+        L.finalize_failed(rec, reason)
+        try:
+            L.save_record(path, rec)
+        except OSError as save_err:
+            print(f"start: run record not written: {save_err}", file=sys.stderr)
+        HB.finish(wd, a.task, run_id, "failed", note=reason, task=a.watchdog_task)
+        raise
+
+
+def _start_body(a: argparse.Namespace, pf: Preflight, rec: dict[str, Any], path: Path, wd: Path,
+                run_id: str) -> int:
     if not pf.ok:
         reason = "preflight: " + "; ".join(pf.failures)
         L.finalize_failed(rec, reason)
@@ -904,17 +922,27 @@ def cmd_finalize(a: argparse.Namespace) -> int:
     rec = L.load_record(rec_path)
     L.finalize_failed(rec, a.reason)
     L.save_record(rec_path, rec)
-    wd = _watchdog_dir(a)
-    hb = HB.heartbeat_path(wd, a.watchdog_task or rec["task_id"], rec["run_id"])
-    if hb.exists():
+    # explicit flag, else what start persisted, else env/default (records older than the persisted field)
+    stored = rec.get("watchdog") or {}
+    explicit_dir = getattr(a, "watchdog_dir", None)
+    wd = Path(explicit_dir) if explicit_dir else Path(stored["dir"]) if stored.get("dir") else _watchdog_dir(a)
+    task = a.watchdog_task or stored.get("task")
+    hb = HB.heartbeat_path(wd, task or rec["task_id"], rec["run_id"])
+    hb_found = hb.exists()
+    if hb_found:
         hbj = L.read_json(hb)
         if not hbj.get("finished_at"):
             HB.finish(wd, rec["task_id"], rec["run_id"], rec["run"], rec["ledgers"], a.reason,
-                      rec["states"]["remediation"], a.watchdog_task)
+                      rec["states"]["remediation"], task)
         elif rec["states"]["remediation"] != hbj.get("remediation"):
-            HB.remediation_update(wd, rec["task_id"], rec["run_id"], rec["states"]["remediation"], a.reason,
-                                  a.watchdog_task)
-    _print({"run": rec["run"], "states": rec["states"], "failure_reason": a.reason})
+            HB.remediation_update(wd, rec["task_id"], rec["run_id"], rec["states"]["remediation"], a.reason, task)
+    _print({"run": rec["run"], "states": rec["states"], "failure_reason": a.reason,
+            "heartbeat": str(hb) if hb_found else None})
+    if not hb_found:
+        print(f"finalize: heartbeat not found at {hb}; the record is finalized but the watchdog will see this "
+              "run as hung. Re-run finalize with the --watchdog-dir/--watchdog-task that start used.",
+              file=sys.stderr)
+        return 1
     return 0
 
 
