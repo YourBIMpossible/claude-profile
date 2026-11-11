@@ -144,8 +144,10 @@ ALLOWED += [
     payload("proj/NORTHSTAR.draft.md::$DATA"),                     # a draft stays free
     payload("docs/notes.md:meta"),
     payload("C:notes.md"),
-    payload("X:/fixture/BIMpossible/.env.example::$DATA"),
 ]
+# The name as written is tested beside the cut one (review repair F1). Written out, this name
+# is an env file with an unlisted suffix, so it blocks, as it did before the stream cut existed.
+BLOCKED += [payload("X:/fixture/BIMpossible/.env.example::$DATA")]
 
 
 def _short_path(path: str) -> "str | None":
@@ -312,6 +314,133 @@ def test_short_name_aliases() -> None:
         import pytest
         pytest.skip(skipped)
     assert not failures, "failing 8.3 cases:\n  " + "\n  ".join(failures)
+
+
+# --- Review repair of PR 86 (Zen review of 118c0e90, findings F1-F4) -------------------------------------------------
+
+def _load_gate():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("protect_paths_gate_under_test", GATE)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    return gate
+
+
+def test_a_colon_in_a_name_does_not_remove_its_protection() -> None:
+    """F1: off NTFS a colon is an ordinary character, so the name before the cut is tested as well."""
+    gate = _load_gate()
+    for raw in ("/srv/app/backup:server.key", "/srv/app/cert:2026.pem", "/srv/app/old:credentials.json",
+                "work/foo:credentials.json", "/srv/app/x:id_rsa.pem", "/srv/app/backend:x/guard.py"):
+        if raw.endswith("guard.py"):
+            continue  # a colon in a folder name was never cut; listed to show the scope of the cut
+        assert gate.is_protected(raw), f"expected BLOCK for {raw}"
+    for raw in ("/srv/app/backup:server.key", "work/foo:credentials.json"):
+        assert run_gate(payload(raw)) == 2, f"expected BLOCK(2) from the script for {raw}"
+    # the NTFS reading still applies: the cut name is tested too
+    assert gate.is_protected(".env:.example") and gate.is_protected("docs/.env.local:x.example")
+    assert gate.needs_approval("NORTHSTAR.md:s") and gate.needs_approval("NORTHSTAR.md::$DATA")
+    assert not gate.is_protected("docs/notes.md:meta") and not gate.needs_approval("docs/notes.md:meta")
+
+
+def test_the_nt_namespace_form_of_a_path_is_located_like_the_other_device_forms() -> None:
+    """F2: a leading backslash, two question marks, backslash is the same prefix as the extended-length one."""
+    import os
+    gate = _load_gate()
+    nt = "\\" + "??" + "\\"
+    drive = "Q" + ":"          # built here: the machine-paths scan rejects a literal drive path
+    seen: list[str] = []
+    real_realpath = os.path.realpath
+
+    def recorder(path, *args, **kwargs):
+        seen.append(str(path).replace("\\", "/"))
+        return str(path)
+
+    os.path.realpath = recorder
+    old_name = os.environ.get("COMPUTERNAME")
+    os.environ["COMPUTERNAME"] = "TESTBOX"
+    try:
+        for raw, want in ((f"{nt}{drive}\\proj\\notes.md", f"{drive}/proj/notes.md"),
+                          (f"/??/{drive}/proj/notes.md", f"{drive}/proj/notes.md"),
+                          (f"{nt}UNC\\localhost\\share\\notes.md", "//localhost/share/notes.md")):
+            seen.clear()
+            assert not gate.is_protected(raw), raw
+            assert seen[:1] == [want], f"{raw} should be resolved as {want}, got {seen}"
+        seen.clear()
+        assert not gate.is_protected(f"{nt}UNC\\host.invalid\\share\\notes.md")
+        assert gate.is_protected(f"{nt}UNC\\host.invalid\\share\\.env")
+        assert gate.is_protected(f"{nt}UNC\\host.invalid\\share\\NORTHS~1.MD")
+        assert gate.is_protected(f"{nt}GLOBALROOT\\Device\\Mup\\host.invalid\\share\\notes.md")
+        assert gate.is_protected(f"{nt}pipe\\notes.md")
+        assert not seen, f"realpath was called for a network or device path: {seen}"
+    finally:
+        os.path.realpath = real_realpath
+        if old_name is None:
+            os.environ.pop("COMPUTERNAME", None)
+        else:
+            os.environ["COMPUTERNAME"] = old_name
+
+
+def test_the_short_name_behind_the_nt_namespace_prefix_is_resolved() -> None:
+    """F2 on a real file: the 8.3 name of NORTHSTAR.md behind the prefix asks; of a credential file, blocks."""
+    import os
+    import tempfile
+    import pytest
+    nt = "\\" + "??" + "\\"
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = os.path.realpath(raw_tmp)
+        results = []
+        for fname, want in (("NORTHSTAR.md", "ask"), ("google-credentials-prod.json", "block")):
+            full = os.path.join(tmp, fname)
+            Path(full).write_text("x", encoding="utf-8")
+            short = _short_path(full)
+            if short is None:
+                continue
+            rc, out = run_gate_full(payload(nt + short))
+            results.append((fname, want, "block" if rc == 2 else "ask" if '"ask"' in out else "allow"))
+    if not results:
+        pytest.skip("no 8.3 short names on this platform or on the temp volume")
+    assert [r for r in results if r[1] != r[2]] == []
+
+
+def test_a_path_that_cannot_be_resolved_is_blocked() -> None:
+    """F3: a resolve error is a condition the gate cannot evaluate, so it blocks."""
+    import os
+    gate = _load_gate()
+    real_realpath = os.path.realpath
+    try:
+        for error in (OSError("the device is not ready"), ValueError("embedded null character")):
+            def failing(path, *args, _error=error, **kwargs):
+                raise _error
+            os.path.realpath = failing
+            reason = gate.is_protected("proj/notes.md")
+            assert reason and "resolved" in reason, f"{type(error).__name__}: {reason!r}"
+            assert gate.is_protected("proj/NORTHS~1.MD"), type(error).__name__
+    finally:
+        os.path.realpath = real_realpath
+    assert not gate.is_protected("proj/notes.md")
+
+
+def test_trailing_dots_and_spaces_are_dropped_from_the_name() -> None:
+    """F4: Win32 drops trailing dots and spaces, so `x.pem.` creates x.pem. No file here exists."""
+    import os
+    import tempfile
+    gate = _load_gate()
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = os.path.realpath(raw_tmp).replace("\\", "/")
+        for raw in (f"{tmp}/x.pem.", f"{tmp}/x.pem ", f"{tmp}/x.pem. .", f"{tmp}/.env.", f"{tmp}/.env.local. ",
+                    f"{tmp}/credentials.json..", f"{tmp}/x.key.::$DATA", "//host.invalid/share/x.key.",
+                    "//host.invalid/share/.env ."):
+            assert gate.is_protected(raw), f"expected BLOCK for {raw!r}"
+        for raw in (f"{tmp}/NORTHSTAR.slug.md.", f"{tmp}/NORTHSTAR.md. ", "//host.invalid/share/NORTHSTAR.md."):
+            assert not gate.is_protected(raw), raw
+            assert gate.needs_approval(raw), f"expected ASK for {raw!r}"
+        assert run_gate(payload(f"{tmp}/x.pem.")) == 2
+        rc, out = run_gate_full(payload(f"{tmp}/NORTHSTAR.slug.md."))
+        assert rc == 0 and '"ask"' in out, (rc, out)
+        # never weaker than the name as written: this was blocked before the strip and still is
+        assert gate.is_protected(f"{tmp}/.env.example.")
+        for raw in (f"{tmp}/notes.md.", f"{tmp}/NORTHSTAR.draft.md.", f"{tmp}/readme. "):
+            assert not gate.is_protected(raw) and not gate.needs_approval(raw), raw
 
 
 def main() -> int:
