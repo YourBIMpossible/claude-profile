@@ -11,7 +11,10 @@ prompt, subagent sidechains excluded):
      Set-Content, ...) and names a file outside DOC_EXTS (.md, .txt, .log, ...).
      Reports, notes and logs alone need no test run;
   2. no check command ran after the last change (pytest, npm test, dotnet build, tsc,
-     ruff, ...: see CHECK_RE);
+     ruff, ...: see CHECK_RE). A command line is read one simple command at a time; a
+     reader or editor that only names a check tool or a test file (grep, cat, sed, ...:
+     see NOT_A_RUNNER) is not a check, and neither is a check whose tool result came
+     back as an error;
   3. the final assistant message claims completion (done / fixed / complete / ...);
   4. that message does not already disclose the gap ("not verified", "untested", ...).
 
@@ -177,14 +180,91 @@ def current_turn(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return main[start:]
 
 
-def tool_uses(turn: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any]]]:
+def tool_uses(turn: list[dict[str, Any]]) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    """(tool_use id, tool name, input) for every tool call of the turn, in order."""
     for e in turn:
         if e.get("type") != "assistant":
             continue
         for b in blocks(e):
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 inp = b.get("input")
-                yield str(b.get("name") or ""), inp if isinstance(inp, dict) else {}
+                yield str(b.get("id") or ""), str(b.get("name") or ""), inp if isinstance(inp, dict) else {}
+
+
+def failed_tool_ids(turn: list[dict[str, Any]]) -> frozenset[str]:
+    """Ids of the tool calls whose result came back as an error (`is_error`).
+
+    A shell command that exits non-zero is reported that way, so a failed test run is
+    in this set. A call with no recorded result is not: it is treated as before.
+    """
+    failed = set()
+    for e in turn:
+        if e.get("type") != "user":
+            continue
+        for b in blocks(e):
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error") is True:
+                tid = b.get("tool_use_id")
+                if isinstance(tid, str) and tid:
+                    failed.add(tid)
+    return frozenset(failed)
+
+
+# Commands that read, list, print or edit files. One of these naming a check tool or a
+# test file (`grep pytest pyproject.toml`, `cat pytest.ini`, `sed -i ... test_app.py`)
+# ran no check.
+NOT_A_RUNNER = frozenset({
+    "grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr", "cat", "bat", "type", "head", "tail", "less", "more",
+    "sed", "awk", "gawk", "cut", "sort", "uniq", "wc", "tr", "tee", "echo", "printf", "ls", "dir", "find", "fd",
+    "tree", "stat", "file", "diff", "cmp", "git", "gh", "cp", "mv", "rm", "touch", "mkdir", "ln", "chmod", "cd",
+    "pushd", "popd", "export", "set", "which", "where", "whereis", "curl", "wget", "jq", "xxd", "sha256sum",
+    "get-content", "gc", "select-string", "sls", "get-childitem", "gci", "get-item", "test-path", "get-command",
+    "write-output", "write-host", "set-content", "add-content", "out-file", "new-item", "copy-item", "move-item",
+    "remove-item", "rename-item", "set-location", "measure-object", "select-object", "where-object",
+})
+ENV_ASSIGN_RE = re.compile(r"\s*(?:[A-Za-z_]\w*=\S*\s+)*")
+
+
+def split_segments(cmd: str) -> list[str]:
+    """Split a shell command line on `&&`, `||`, `;`, `|` and newlines, outside quotes."""
+    segments, buf, quote, i = [], [], "", 0
+    while i < len(cmd):
+        ch = cmd[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(cmd):
+                buf.append(cmd[i:i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            buf.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch == "\\" and i + 1 < len(cmd):
+            buf.append(cmd[i:i + 2])
+            i += 1
+        elif ch in ";\n|" or cmd.startswith("&&", i):
+            segments.append("".join(buf))
+            buf = []
+            if cmd.startswith(("&&", "||"), i):
+                i += 1
+        else:
+            buf.append(ch)
+        i += 1
+    segments.append("".join(buf))
+    return [s for s in (seg.strip() for seg in segments) if s]
+
+
+def runs_check(segment: str) -> bool:
+    """True when one simple command (no `&&`, `|`, ...) plausibly ran a test/build/lint."""
+    rest = segment[ENV_ASSIGN_RE.match(segment).end():].lstrip("({& ")
+    words = rest.split(None, 1)
+    if not words:
+        return False
+    head = re.split(r"[/\\]", words[0].strip("'\""))[-1].lower()
+    if head.endswith(".exe"):
+        head = head[:-4]
+    return head not in NOT_A_RUNNER and bool(CHECK_RE.search(rest))
 
 
 def last_text(turn: list[dict[str, Any]]) -> str:
@@ -200,16 +280,19 @@ def last_text(turn: list[dict[str, Any]]) -> str:
 def needs_warning(turn: list[dict[str, Any]], final_text: str) -> bool:
     changed = False
     checked_since_change = False
-    for name, inp in tool_uses(turn):
+    failed = failed_tool_ids(turn)
+    for tid, name, inp in tool_uses(turn):
         if name in EDIT_TOOLS:
             if not is_doc(str(inp.get("file_path") or inp.get("notebook_path") or "")):
                 changed, checked_since_change = True, False
         elif name in SHELL_TOOLS:
-            cmd = str(inp.get("command") or "")
-            if CHECK_RE.search(cmd):
-                checked_since_change = True
-            elif shell_changes_code(cmd):
-                changed, checked_since_change = True, False
+            # Each simple command in order: `fix && test` ends checked, `test; fix` does not.
+            for segment in split_segments(str(inp.get("command") or "")):
+                if runs_check(segment):
+                    if tid not in failed:  # a check that errored verified nothing
+                        checked_since_change = True
+                elif shell_changes_code(segment):
+                    changed, checked_since_change = True, False
     if not changed or checked_since_change:
         return False
     return bool(CLAIM_RE.search(final_text)) and not DISCLOSE_RE.search(final_text)
