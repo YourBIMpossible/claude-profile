@@ -754,8 +754,44 @@ def set_run(rec: dict[str, Any], run: str) -> None:
 def set_gate(rec: dict[str, Any], gate: Any) -> None:
     if rec["states"]["inspection"] != "complete":
         raise AuditError("gate is recorded only after inspection completes")
+    if rec["task_id"] == "slop-audit-sweep":
+        # sweep: {"<ledger path>": <gate json>}; {} when every root was unchanged
+        if not isinstance(gate, dict):
+            raise AuditError("gate must be a JSON object mapping each ledger path to its grrp gate result")
+        for ledger, result in gate.items():
+            _check_gate_result(result, f"gate[{ledger}]")
+    else:
+        _check_gate_result(gate, "gate")
     rec["gate"] = gate
     add_event(rec, "gate-recorded")
+
+
+GATE_VERDICTS = ("complete", "incomplete", "blocked")
+
+
+def _check_gate_result(result: Any, where: str) -> None:
+    """A grrp gate result is a verdict the gate can reach; exit 3 (`invalid`) is a failure, not a verdict."""
+    if not isinstance(result, dict):
+        raise AuditError(f"{where}: not a grrp gate result (expected a JSON object with a verdict)")
+    verdict = result.get("verdict")
+    if verdict not in GATE_VERDICTS:
+        raise AuditError(f"{where}: verdict {verdict!r} is not one of {', '.join(GATE_VERDICTS)} "
+                         "(grrp gate exit 3 is a failure: finalize the run, do not record it)")
+    if result.get("validation_errors"):
+        raise AuditError(f"{where}: gate result carries validation_errors; fix the ledger and re-run the gate")
+
+
+def _unreported_roots(rec: Mapping[str, Any]) -> list[str]:
+    """Changed roots whose inspection was not lost and that no report artifact names."""
+    reported = {n for a in rec["artifacts"] if a.get("kind") == "report" for n in a.get("roots") or []}
+    out = []
+    for name, root in rec["roots"].items():
+        if root.get("window") == "unchanged" or name in reported:
+            continue
+        cov = rec["coverage"].get(name)
+        if cov is None or cov["status"] == "complete":
+            out.append(name)
+    return out
 
 
 def publish(rec: dict[str, Any]) -> None:
@@ -766,6 +802,16 @@ def publish(rec: dict[str, Any]) -> None:
         raise AuditError(f"publish requires run ok|degraded, not {rec['run']}")
     if rec["gate"] is None:
         raise AuditError("publish requires the GRRP gate result (rule 6)")
+    if not rec["roots"]:
+        raise AuditError("publish requires baselined roots (run baseline first; rule 6)")
+    if rec["task_id"] == "weekly-full-audit":
+        if not any(a.get("kind") == "report" for a in rec["artifacts"]):
+            raise AuditError("publish requires the report (run write-report first; rule 6)")
+    else:
+        missing = _unreported_roots(rec)
+        if missing:
+            raise AuditError(f"publish requires a report for each changed root; none for: {', '.join(missing)} "
+                             "(run write-report --roots <name>; rule 6)")
     rec["states"]["publication"] = "published"
     rec["finished_at"] = iso_utc(utcnow())
     add_event(rec, "published", rec["run"])
