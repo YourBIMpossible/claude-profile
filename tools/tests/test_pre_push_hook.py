@@ -177,6 +177,18 @@ def test_bypass_passes_and_is_logged(src: Path) -> None:
     assert "hook test" in (common / "prepush-bypass.log").read_text(encoding="utf-8")
 
 
+def test_the_hook_refuses_a_bypass_it_could_not_log() -> None:
+    # SA09-5, read from the hook's text (the hook is not run here): the append to the log is tested, and its failure
+    # exits 1 before the "logged to" line.
+    text = (REPO / HOOK).read_text(encoding="utf-8")
+    start = text.index('if [ -n "${BIMP_PREPUSH_BYPASS:-}" ]; then')
+    block = text[start:text.index("\nfi\n", start)]
+    append = next(line for line in block.splitlines() if '>> "$log"' in line)
+    assert append.lstrip().startswith("if ! printf "), append
+    assert "could not be logged" in block
+    assert block.index("exit 1") < block.index("logged to $log") < block.index("exit 0")
+
+
 def test_branch_deletion_is_not_scanned(src: Path) -> None:
     git(src, "push", "-q", "origin", "main:gone")
     rc, out = run(src, "git", "push", "-q", "origin", ":gone")

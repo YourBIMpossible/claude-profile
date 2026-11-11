@@ -145,22 +145,33 @@ def provision(dest: Optional[Path] = None, key: Optional[tuple] = None) -> Path:
         binary = _extract(asset, data)
     except (KeyError, OSError, zipfile.BadZipFile, tarfile.TarError) as exc:
         raise GateError(f"{asset} does not contain the gitleaks binary ({exc}).") from exc
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=".gitleaks-")
+    # The download is written beside `dest` and proven there (it runs, it is the pinned version) before it takes
+    # the final name: a file at `dest` is what find_gitleaks and both pre-commit hooks trust without asking again.
     try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(binary)
-        os.chmod(tmp, os.stat(tmp).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        os.replace(tmp, dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=".gitleaks-", suffix=dest.suffix)
     except OSError as exc:
-        Path(tmp).unlink(missing_ok=True)
         raise GateError(f"could not install gitleaks at {dest} ({exc}).") from exc
     try:
-        version = subprocess.run([str(dest), "version"], capture_output=True, text=True, timeout=30).stdout.strip()
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise GateError(f"installed {dest}, but it does not run ({exc}).") from exc
-    if GITLEAKS_VERSION not in version:
-        raise GateError(f"installed {dest}, but `gitleaks version` printed {version!r}, not {GITLEAKS_VERSION}.")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(binary)
+            os.chmod(tmp, os.stat(tmp).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        except OSError as exc:
+            raise GateError(f"could not install gitleaks at {dest} ({exc}).") from exc
+        try:
+            version = subprocess.run([tmp, "version"], capture_output=True, text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GateError(f"the downloaded gitleaks does not run ({exc}); nothing was installed.") from exc
+        if GITLEAKS_VERSION not in version:
+            raise GateError(f"the downloaded gitleaks printed {version!r} for `gitleaks version`, not "
+                            f"{GITLEAKS_VERSION}; nothing was installed.")
+        try:
+            os.replace(tmp, dest)
+        except OSError as exc:
+            raise GateError(f"could not install gitleaks at {dest} ({exc}).") from exc
+    finally:
+        Path(tmp).unlink(missing_ok=True)
     return dest
 
 
@@ -225,6 +236,11 @@ def _git(clone: Path, *args: str) -> subprocess.CompletedProcess:
                           encoding="utf-8", errors="replace", timeout=30)
 
 
+def _last_line(proc: subprocess.CompletedProcess) -> str:
+    lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+    return lines[-1] if lines else f"git exit {proc.returncode}"
+
+
 def _same(a: Path, b: Path) -> bool:
     norm = lambda p: os.path.normcase(os.path.abspath(str(p))).rstrip("\\/")  # noqa: E731
     return norm(a) == norm(b) or norm(a.resolve()) == norm(b.resolve())
@@ -232,23 +248,40 @@ def _same(a: Path, b: Path) -> bool:
 
 @dataclass
 class HooksPlan:
-    """core.hooksPath in one clone: "set" (unset now), "already" (.githooks) or "foreign" (left alone)."""
+    """core.hooksPath in one clone: "set" (unset now), "already" (.githooks), "foreign" (left alone) or
+    "unknown" (git could not report it; `current` then holds the reason)."""
     clone: Path
     action: str
     current: str
 
 
 def plan_hooks(clone: Path) -> Optional[HooksPlan]:
-    """None when `clone` is not the top of a git work tree that ships .githooks/pre-push, or git is missing."""
-    if not (clone / HOOKS_DIR / "pre-push").is_file() or shutil.which("git") is None:
+    """None when `clone` is not the top of a git work tree that ships .githooks/pre-push.
+
+    A clone that ships the gate but whose state git cannot report (git not on PATH, a timeout, a failing rev-parse
+    or config read inside a repository) is planned as "unknown": the run then fails, it does not read as "nothing to
+    do". Without git the hooksPath can be neither read nor set, so a missing git is "unknown", not "no clone".
+    """
+    if not (clone / HOOKS_DIR / "pre-push").is_file():
         return None
+    if shutil.which("git") is None:
+        if not (clone / ".git").exists():
+            return None  # a plain copy of the files, not a repository
+        return HooksPlan(clone, "unknown", "git is not on PATH, so core.hooksPath can be neither read nor set")
     try:
         top = _git(clone, "rev-parse", "--show-toplevel")
-        if top.returncode != 0 or not _same(Path(top.stdout.strip()), clone):
+        if top.returncode != 0:
+            if not (clone / ".git").exists():
+                return None  # a plain copy of the files, not a repository
+            return HooksPlan(clone, "unknown", _last_line(top))
+        if not _same(Path(top.stdout.strip()), clone):
             return None
-        current = _git(clone, "config", "--local", "--get", "core.hooksPath").stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+        config = _git(clone, "config", "--local", "--get", "core.hooksPath")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return HooksPlan(clone, "unknown", f"{type(exc).__name__}: {exc}")
+    if config.returncode not in (0, 1):  # 1 is git's "the key is not set"
+        return HooksPlan(clone, "unknown", _last_line(config))
+    current = config.stdout.strip()
     if not current:
         return HooksPlan(clone, "set", "")
     resolved = Path(current) if Path(current).is_absolute() else clone / current
@@ -259,14 +292,16 @@ def default_clones(tools_root: Optional[str] = None) -> list:
     if tools_root is None:
         try:
             tools_root = machine_config.load(PROFILE_ROOT).get("tools_root") or ""
-        except machine_config.ConfigError:
-            tools_root = ""
+        except machine_config.ConfigError as exc:
+            raise GateError(f"the machine config cannot be read ({exc}), so the claude-tools clone is not known. "
+                            "Fix the config, or name the clone with --tools-root.") from exc
     return [PROFILE_ROOT] + ([Path(tools_root)] if tools_root else [])
 
 
 def describe_plan(plan: HooksPlan) -> str:
     return f"{plan.clone}: core.hooksPath " + {"set": f"-> {HOOKS_DIR}", "already": "already correct",
-                                               "foreign": f"= {plan.current} (left alone)"}[plan.action]
+                                               "foreign": f"= {plan.current} (left alone)",
+                                               "unknown": f"cannot be read ({plan.current})"}[plan.action]
 
 
 def enable(plans: list, check_only: bool = False) -> tuple:
@@ -290,6 +325,10 @@ def enable(plans: list, check_only: bool = False) -> tuple:
     for plan in plans:
         if plan.action == "already":
             lines.append(f"git gate on in {plan.clone} (core.hooksPath = {plan.current})")
+        elif plan.action == "unknown":
+            ok = False
+            lines.append(f"GIT GATE UNKNOWN in {plan.clone}: git could not report this clone ({plan.current}); "
+                         "nothing was changed there. Run this again.")
         elif plan.action == "foreign":
             ok = False
             lines.append(f"GIT GATE OFF in {plan.clone}: core.hooksPath = {plan.current} was set by someone else and "
@@ -321,7 +360,12 @@ def main(argv: list) -> int:
     ap.add_argument("--check", action="store_true", help="report only; change nothing")
     ap.add_argument("--tools-root", help="the claude-tools clone (default: from the machine config)")
     opts = ap.parse_args(argv)
-    plans = [p for p in map(plan_hooks, default_clones(opts.tools_root)) if p is not None]
+    try:
+        clones = default_clones(opts.tools_root)
+    except GateError as exc:
+        print(f"git gate: NOT ON - {exc}")
+        return 1
+    plans = [p for p in map(plan_hooks, clones) if p is not None]
     if not plans:
         print("git gate: no clone here ships .githooks/pre-push; nothing to do.")
         return 0

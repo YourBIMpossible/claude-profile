@@ -95,6 +95,32 @@ def test_gh_pr_merge_on_a_green_pinned_head_is_allowed():
     assert fake.calls[0][:5] == ["gh", "pr", "view", "7", "--repo"]
 
 
+def _done(name: str, conclusion: str) -> dict:
+    return {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion}
+
+
+@pytest.mark.parametrize("rollup", [[_done("machine-paths", "SKIPPED")], [_done("lint", "NEUTRAL")],
+                                    [_done("machine-paths", "SKIPPED"), _done("lint", "NEUTRAL")]],
+                         ids=["all-skipped", "all-neutral", "skipped-and-neutral"])
+def test_a_head_whose_every_check_was_skipped_or_neutral_is_not_green(rollup):
+    # SA09-1: a draft PR's only check run is SKIPPED; "at least one check" must mean one that ran.
+    merge = f"gh pr merge 7 --repo o/r --squash --match-head-commit {HEAD}"
+    for command in (merge, f"gh pr ready 7 --repo o/r && {merge}"):
+        reason = decide(bash(command), run=FakeGh(rollup))
+        assert reason and "not green" in reason and "no check ran" in reason
+    skipped_run = {"name": "gate (Linux)", "status": "completed", "conclusion": "skipped"}
+    reason = decide(bash(merge), run=FakeGh([], runs=[skipped_run]))
+    assert reason and "no check ran" in reason
+
+
+def test_a_skipped_check_beside_one_that_passed_stays_green():
+    merge = bash(f"gh pr merge 7 --repo o/r --squash --match-head-commit {HEAD}")
+    skipped = [_done("machine-paths", "SKIPPED")]
+    assert decide(merge, run=FakeGh(skipped + [_done("tests", "SUCCESS")])) is None
+    assert decide(merge, run=FakeGh(skipped + [{"__typename": "StatusContext", "context": "ci", "state": "SUCCESS"}])) is None
+    assert decide(merge, run=FakeGh(skipped, runs=[{"name": "gate", "status": "completed", "conclusion": "success"}])) is None
+
+
 DISPATCHED_GREEN = [{"name": "gate (Linux)", "status": "completed", "conclusion": "success"},
                     {"name": "gate (Windows)", "status": "completed", "conclusion": "success"}]
 
@@ -314,6 +340,69 @@ def test_push_from_a_repo_without_the_gate_is_allowed(tmp_path):
     plain = make_repo(tmp_path / "plain", gated=False)
     assert decide(bash("git push", cwd=str(plain))) is None
     assert decide(bash("git push", cwd=str(tmp_path))) is None  # not a repository at all
+
+
+def test_a_push_whose_gate_state_git_cannot_report_is_refused(repo):
+    # SA09-4: a git timeout or a failing rev-parse inside a repository is "unknown", not "gate on".
+    def timing_out(argv, cwd):
+        raise subprocess.TimeoutExpired(argv, 25)
+
+    def dubious(argv, cwd):
+        return subprocess.CompletedProcess(argv, 128, "", "fatal: detected dubious ownership in repository at 'x'\n")
+
+    reason = ship_guard.gate_is_on(str(repo), run=timing_out)
+    assert reason and "could not ask git" in reason
+    reason = ship_guard.gate_is_on(str(repo), run=dubious)
+    assert reason and "dubious ownership" in reason
+    sub = repo / "src"
+    sub.mkdir()
+    assert "dubious ownership" in ship_guard.gate_is_on(str(sub), run=dubious)
+    assert "dubious ownership" in decide(bash("git push origin HEAD", cwd=str(repo)), run=dubious)
+
+
+def test_a_gate_file_that_cannot_be_read_is_refused(repo, monkeypatch):
+    # CP#87 review, R1: only a missing gate file means "no gate"; any other read error is "unknown".
+    git("config", "core.hooksPath", ".githooks", cwd=repo)
+    assert ship_guard.gate_is_on(str(repo)) is None  # readable and switched on
+    real_read = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self.name == "pre-push":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_text", denied)
+        reason = ship_guard.gate_is_on(str(repo))
+        assert reason and "could not be read" in reason and "PermissionError" in reason
+        assert "could not be read" in decide(bash("git push origin HEAD", cwd=str(repo)), run=ship_guard._run)
+
+
+def test_a_gate_path_that_is_a_folder_is_refused(repo):
+    hook = repo / ".githooks" / "pre-push"
+    hook.unlink()
+    hook.mkdir()  # reading it fails with something other than "not found"
+    reason = ship_guard.gate_is_on(str(repo))
+    assert reason and "could not be read" in reason
+
+
+def test_a_missing_gate_file_still_means_no_gate(repo):
+    (repo / ".githooks" / "pre-push").unlink()
+    assert ship_guard.gate_is_on(str(repo)) is None
+    (repo / ".githooks").rmdir()
+    (repo / ".githooks").write_text("not a folder\n", encoding="utf-8")
+    assert ship_guard.gate_is_on(str(repo)) is None
+
+
+def test_a_push_from_a_bare_repository_is_refused(tmp_path):
+    # CP#87 review, R2: a bare repository has no work tree and no .git entry; that is "unknown", not "no repository".
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, capture_output=True)
+    reason = ship_guard.gate_is_on(str(bare))
+    assert reason and "bare repository" in reason
+    assert "bare repository" in (ship_guard.gate_is_on(str(bare / "refs")) or "")
+    assert "bare repository" in (decide(bash("git push origin HEAD", cwd=str(bare))) or "")
+    assert ship_guard.gate_is_on(str(tmp_path)) is None  # control: not a repository at all is still allowed
 
 
 def test_the_push_directory_is_followed(tmp_path, repo):
