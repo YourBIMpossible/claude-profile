@@ -19,6 +19,12 @@ added for the last two by CP-10, 2026-10-29). The Bash channel
 documented as advisory-only in hooks/README.md. Do not extend claims beyond
 that.
 
+PATH SPELLINGS: the rules read the last path component. NTFS stream suffixes
+(`name::$DATA`, `name:s`), drive-relative paths (`C:name`) and, for a file that
+exists, 8.3 short names and links are reduced to the real name first (CP-10 of
+the 2026-10-26 slop audit). Not covered: whatever the host does to file_path
+before or after this hook sees it, and hard links.
+
 Protected classes (mirrors the standing rules in CLAUDE.md / memory):
   - .env and every .env.* variant EXCEPT .env.example / .env.template /
     .env.sample (documented placeholders, routinely edited)
@@ -38,6 +44,7 @@ Protected classes (mirrors the standing rules in CLAUDE.md / memory):
     .git-credentials, and any filename containing "credential"
 """
 import json
+import os
 import sys
 
 BLOCK_EXIT = 2
@@ -58,9 +65,51 @@ def block(msg: str) -> None:
     sys.exit(BLOCK_EXIT)
 
 
+def plain_spelling(raw_path: str) -> str:
+    """The path with forward slashes and no NTFS decoration on its last component.
+
+    `name::$DATA` and `name:stream` write to the file `name`, and a drive-relative `C:name`
+    is `name` in that drive's current folder (slop audit 2026-10-26, CP-10). Both are cut back
+    to `name`, so a rule that reads the last component sees the file that would be written.
+    Off NTFS a colon is an ordinary filename character; reading it the NTFS way there can only
+    block or ask about a file that was otherwise allowed, never allow a protected one.
+    """
+    norm = raw_path.replace("\\", "/").strip().rstrip("/")
+    head, sep, name = norm.rpartition("/")
+    if not sep and len(name) >= 2 and name[1] == ":" and name[0].isalpha():
+        name = name[2:]                       # drive-relative: "C:name"
+    name = name.split(":", 1)[0]
+    return f"{head}{sep}{name}"
+
+
+def spellings(raw_path: str) -> "list[str]":
+    """Every spelling of the path to test: as given, and as the filesystem resolves it.
+
+    realpath turns an 8.3 short name (`NORTHS~1.MD`) or a link into the real long path when
+    the file exists; a short name that names no existing file is just a new file with that
+    name. A path realpath cannot resolve is tested as given only.
+    """
+    plain = plain_spelling(raw_path)
+    out = [plain]
+    try:
+        real = os.path.realpath(plain).replace("\\", "/")
+    except (OSError, ValueError):
+        return out
+    if real.lower() != plain.lower():
+        out.append(real)
+    return out
+
+
 def is_protected(raw_path: str) -> "str | None":
     """Return the reason a path is protected, or None if allowed."""
-    norm = raw_path.replace("\\", "/").strip().rstrip("/")
+    for norm in spellings(raw_path):
+        reason = _protected_reason(norm)
+        if reason:
+            return reason
+    return None
+
+
+def _protected_reason(norm: str) -> "str | None":
     name = norm.rsplit("/", 1)[-1].lower()
     if not name:
         return "empty filename"
@@ -80,12 +129,13 @@ def is_protected(raw_path: str) -> "str | None":
 
 def needs_approval(raw_path: str) -> "str | None":
     """Return the owner-facing prompt text if the path is a live north-star file."""
-    name = raw_path.replace("\\", "/").strip().rstrip("/").rsplit("/", 1)[-1].lower()
-    if name == "northstar.md" or (name.startswith("northstar.") and name.endswith(".md")):
-        if not name.endswith((".draft.md", ".template.md")):
-            return (f"{name} is a live north-star mission file. Approve this change only if "
-                    "the new text and the reason Claude gave match what you want; "
-                    "deny to keep the mission as it is.")
+    for norm in spellings(raw_path):
+        name = norm.rsplit("/", 1)[-1].lower()
+        if name == "northstar.md" or (name.startswith("northstar.") and name.endswith(".md")):
+            if not name.endswith((".draft.md", ".template.md")):
+                return (f"{name} is a live north-star mission file. Approve this change only if "
+                        "the new text and the reason Claude gave match what you want; "
+                        "deny to keep the mission as it is.")
     return None
 
 

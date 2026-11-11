@@ -118,10 +118,83 @@ ALLOWED = [
                 "tool_input": {"file_path": "X:/fixture/BIMpossible/backend/main.py", "edits": []}}),
 ]
 
+# NTFS spellings of the same file (slop audit 2026-10-26, CP-10): a stream suffix on the last
+# component (`name::$DATA`, `name:stream`) and a drive-relative path (`C:name`) reach the file
+# the plain name reaches, so they get the plain name's verdict.
+BLOCKED += [
+    payload("X:/fixture/BIMpossible/.env::$DATA"),
+    payload("X:/fixture/BIMpossible/.env:s"),
+    payload("certs/server.pem::$DATA"),
+    payload("X:\\fixture\\BIMpossible\\backend\\guard.py::$DATA"),
+    payload("X:/Users/someone/.ssh/id_rsa:s"),
+    payload("C:.env"),                                             # drive-relative
+    payload("C:credentials.json"),
+    payload(NS + "::$DATA", "bypassPermissions"),
+    payload(NS + ":s", None),
+    payload("proj/:s"),                                            # nothing left: fail closed
+    tool_payload("NotebookEdit", "notebook_path", "X:/fixture/BIMpossible/.env.local::$DATA"),
+]
+ASKED += [
+    payload(NS + "::$DATA"),
+    payload("proj/NORTHSTAR.md:s"),
+    payload("C:NORTHSTAR.md"),
+    payload("X:\\fixture\\BIMpossible\\NORTHSTAR.share-link.md::$DATA"),
+]
+ALLOWED += [
+    payload("proj/NORTHSTAR.draft.md::$DATA"),                     # a draft stays free
+    payload("docs/notes.md:meta"),
+    payload("C:notes.md"),
+    payload("X:/fixture/BIMpossible/.env.example::$DATA"),
+]
+
+
+def _short_path(path: str) -> "str | None":
+    """The 8.3 spelling of an existing path, or None where the volume has none."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    buf = ctypes.create_unicode_buffer(1024)
+    n = ctypes.windll.kernel32.GetShortPathNameW(path, buf, len(buf))
+    if not n or n >= len(buf):
+        return None
+    short = buf.value
+    return short if short.lower() != path.lower() else None
+
+
+def short_name_checks() -> "tuple[list[str], str]":
+    """8.3 short names (CP-10): `NORTHS~1.MD` is NORTHSTAR.md. Returns (failures, skip reason)."""
+    import os
+    import tempfile
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = os.path.realpath(raw_tmp)
+        cases = (
+            ("NORTHSTAR.md", "default", "ask"),
+            ("NORTHSTAR.md", "bypassPermissions", "block"),
+            ("google-credentials-prod.json", "default", "block"),
+            ("ordinary-long-file-name.json", "default", "allow"),
+        )
+        seen = 0
+        for fname, mode, want in cases:
+            full = os.path.join(tmp, fname)
+            Path(full).write_text("x", encoding="utf-8")
+            short = _short_path(full)
+            if short is None:
+                continue
+            seen += 1
+            rc, out = run_gate_full(payload(short, mode))
+            got = "block" if rc == 2 else ("ask" if '"ask"' in out else "allow" if rc == 0 else f"rc {rc}")
+            if got != want:
+                failures.append(f"expected {want.upper()} for the 8.3 name of {fname} ({mode}), got {got}: "
+                                f"{os.path.basename(short)}")
+        if not seen:
+            return failures, "no 8.3 short names on this platform or on the temp volume"
+    return failures, ""
+
 
 def run_checks() -> list[str]:
     """Run every fixture through the gate; return one line per mismatch."""
-    failures = []
+    failures = short_name_checks()[0]
     for p in BLOCKED:
         rc = run_gate(p)
         if rc != 2:
@@ -150,6 +223,15 @@ def test_protect_paths_gate() -> None:
     """pytest entry point - same fixtures as running this file directly."""
     failures = run_checks()
     assert not failures, "failing fixtures:\n  " + "\n  ".join(failures)
+
+
+def test_short_name_aliases() -> None:
+    """The 8.3 cases on their own, so a volume without short names shows as a skip, not a pass."""
+    failures, skipped = short_name_checks()
+    if skipped:
+        import pytest
+        pytest.skip(skipped)
+    assert not failures, "failing 8.3 cases:\n  " + "\n  ".join(failures)
 
 
 def main() -> int:
