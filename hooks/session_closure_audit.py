@@ -69,6 +69,21 @@ class Resolved(NamedTuple):
     unset: dict  # expand message ("{tools} is not set in ...") -> names of optional entries skipped for it
     required_unset: list  # (name, expand message) for "required": true entries whose root is not set
     dead_roots: dict  # root token -> (its value, names of entries under it) for a set root that is not a folder
+    bad_entries: list = []  # one description per entry that is not a usable {"name": ..., "path": ...} object
+
+
+def entry_problem(position: int, entry: object) -> str:
+    """Why a `repos` entry cannot be read ("" when it can). `position` is 1-based."""
+    if not isinstance(entry, dict):
+        return f"entry {position} is not an object"
+    name = entry.get("name")
+    label = f'entry {position} ("{name}")' if isinstance(name, str) and name else f"entry {position}"
+    missing = [f'"{key}"' for key in ("name", "path") if not (isinstance(entry.get(key), str) and entry.get(key))]
+    if missing:
+        return f"{label} has no usable {' or '.join(missing)}"
+    if entry.get("platform") is not None and not isinstance(entry.get("platform"), str):
+        return f'{label} has a "platform" that is not a string'
+    return ""
 
 
 def resolve_repos(cfg: dict) -> Resolved:
@@ -81,8 +96,10 @@ def resolve_repos(cfg: dict) -> Resolved:
     unusable machine config or helper is returned as config_error with the entries it blocked, an entry
     naming a root this machine has not set is returned under unset (required_unset when the entry is
     required: that is ATTENTION, like a missing required path), and an entry under a root that is set
-    but is not an existing folder (a misconfigured root, never a legitimately absent repo) under dead_roots."""
-    out, broken, unset, required_unset, dead_roots = [], [], {}, [], {}
+    but is not an existing folder (a misconfigured root, never a legitimately absent repo) under dead_roots.
+    An entry that is not an object with a "name" and a "path" is returned under bad_entries and the rest
+    are still resolved: one bad entry must not take the whole audit down."""
+    out, broken, unset, required_unset, dead_roots, bad_entries = [], [], {}, [], {}, []
     config_error, roots_cfg = "", None
     if machine_config is None:
         config_error = f"the machine-roots helper tools/machine_config.py did not import ({MACHINE_CONFIG_ERROR})"
@@ -93,7 +110,11 @@ def resolve_repos(cfg: dict) -> Resolved:
             config_error = f"the machine config is unusable ({type(exc).__name__}: {exc})"
             roots_cfg = {}  # {profile} still resolves; every other root reads as unset and lands in broken
     root_values = machine_config.roots(roots_cfg) if machine_config is not None else {}
-    for r in cfg.get("repos", []):
+    for position, r in enumerate(cfg.get("repos", []), start=1):
+        problem = entry_problem(position, r)
+        if problem:
+            bad_entries.append(problem)
+            continue
         if r.get("platform") and not sys.platform.startswith(r["platform"]):
             continue
         path = r["path"]
@@ -117,7 +138,7 @@ def resolve_repos(cfg: dict) -> Resolved:
             dead_roots.setdefault(dead[0], (root_values[dead[0]], []))[1].append(r["name"])
             continue
         out.append((r["name"], path, bool(r.get("required"))))
-    return Resolved(out, config_error, broken, unset, required_unset, dead_roots)
+    return Resolved(out, config_error, broken, unset, required_unset, dead_roots, bad_entries)
 
 
 GIT_TIMEOUT = 8  # seconds, per git call — this hook must never hang a session
@@ -152,8 +173,25 @@ def read_event() -> str:
 
 
 def load_config() -> dict:
+    """The repo-scope config. Raises (OSError / ValueError) when it is missing, unreadable, not JSON, or
+    not the expected shape; main() reports that, it is never a silent empty run."""
     with CONFIG_PATH.open("r", encoding="utf-8-sig") as fh:
-        return json.load(fh)
+        cfg = json.load(fh)
+    if not isinstance(cfg, dict):
+        raise ValueError("the top level is not a JSON object")
+    if not isinstance(cfg.get("repos", []), list):
+        raise ValueError('"repos" is not a list')
+    return cfg
+
+
+def attention_block(cause: str) -> str:
+    """The whole output for a run that could not audit anything: says so, and why."""
+    return (
+        "<closure-audit>\n"
+        f"ATTENTION REQUIRED: the closure audit did not run: {cause}. No repository was checked. "
+        "State unknown, not confirmed clean.\n"
+        "</closure-audit>"
+    )
 
 
 def run_git(repo: str, *args: str) -> "list[str] | None":
@@ -495,6 +533,12 @@ def build_report(cfg: dict) -> str:
     valid_repos = []  # (name, path)
     missing_sections = []
     resolved = resolve_repos(cfg)
+    if resolved.bad_entries:
+        missing_sections.append(
+            f"## (config)\n  ATTENTION REQUIRED: {CONFIG_PATH.name} has {len(resolved.bad_entries)} entry(ies) the "
+            f"audit cannot read, so they were not checked: {'; '.join(resolved.bad_entries)}. State unknown, not "
+            f"confirmed clean. Fix {CONFIG_PATH.name}."
+        )
     if resolved.broken:
         missing_sections.append(
             f"## (machine roots)\n  ATTENTION REQUIRED: {resolved.config_error}, so these configured repositories "
@@ -618,7 +662,11 @@ def main() -> None:
     event = read_event()
     if event not in ("SessionStart", "SessionEnd"):
         sys.exit(0)
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except Exception as exc:
+        emit(attention_block(f"{CONFIG_PATH.name} could not be loaded ({type(exc).__name__}: {exc})"))
+        sys.exit(0)
     report = build_report(cfg)
     emit(f"<closure-audit>\n{report}\n</closure-audit>")
     sys.exit(0)
@@ -629,5 +677,8 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
-    except Exception:
-        sys.exit(0)  # advisory hook: fail open, never break session start/end
+    except Exception as exc:
+        # Advisory hook: fail open (exit 0, never break session start/end), but never silently:
+        # an audit that crashed must not look like one that found nothing.
+        emit(attention_block(f"unexpected {type(exc).__name__}: {exc}"))
+        sys.exit(0)
