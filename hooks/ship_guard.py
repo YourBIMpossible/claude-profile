@@ -1061,7 +1061,16 @@ def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
     if top.returncode != 0:
         here = Path(directory).absolute()
         if not any((folder / ".git").exists() for folder in (here, *here.parents)):
-            return None  # not in a repository: nothing of a gated repository to push
+            # No .git entry, but a bare repository has none either: ask git whether this is a git folder at all.
+            try:
+                gitdir = run(["git", "-C", directory, "rev-parse", "--git-dir"], None)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return (f"could not ask git whether {directory} is a bare repository ({type(exc).__name__}: {exc}), "
+                        "so the guard cannot tell whether the push runs the gate. Run the push again.")
+            if gitdir.returncode != 0:
+                return None  # not in a repository: nothing of a gated repository to push
+            return (f"{directory} is in a bare repository (a git folder with no work tree), so the guard cannot tell "
+                    "whether the push runs the gate. Push from a clone with a work tree.")
         detail = (top.stderr or top.stdout or "").strip().splitlines()[-1:] or [f"exit {top.returncode}"]
         return (f"{directory} is inside a git repository, but git could not report its top folder ({detail[0]}), so "
                 "the guard cannot tell whether the push runs the gate.")

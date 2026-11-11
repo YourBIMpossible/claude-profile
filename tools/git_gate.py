@@ -256,13 +256,18 @@ class HooksPlan:
 
 
 def plan_hooks(clone: Path) -> Optional[HooksPlan]:
-    """None when `clone` is not the top of a git work tree that ships .githooks/pre-push, or git is missing.
+    """None when `clone` is not the top of a git work tree that ships .githooks/pre-push.
 
-    A clone that ships the gate but whose state git cannot report (a timeout, a failing rev-parse or config read
-    inside a repository) is planned as "unknown": the run then fails, it does not read as "nothing to do".
+    A clone that ships the gate but whose state git cannot report (git not on PATH, a timeout, a failing rev-parse
+    or config read inside a repository) is planned as "unknown": the run then fails, it does not read as "nothing to
+    do". Without git the hooksPath can be neither read nor set, so a missing git is "unknown", not "no clone".
     """
-    if not (clone / HOOKS_DIR / "pre-push").is_file() or shutil.which("git") is None:
+    if not (clone / HOOKS_DIR / "pre-push").is_file():
         return None
+    if shutil.which("git") is None:
+        if not (clone / ".git").exists():
+            return None  # a plain copy of the files, not a repository
+        return HooksPlan(clone, "unknown", "git is not on PATH, so core.hooksPath can be neither read nor set")
     try:
         top = _git(clone, "rev-parse", "--show-toplevel")
         if top.returncode != 0:

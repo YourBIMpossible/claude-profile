@@ -2,7 +2,8 @@
 
 The module's promise is "exit 0 only when the gate is on in every clone that ships it". These tests pin the three
 places where a failure used to read as "nothing to do" or leave a bad install behind:
-  - a clone whose state git cannot report (timeout, failing rev-parse) is planned as "unknown" and fails the run;
+  - a clone whose state git cannot report (git not on PATH, timeout, failing rev-parse) is planned as "unknown"
+    and fails the run;
   - gitleaks is verified before it is installed, so a binary that does not run, or is the wrong version, never lands;
   - an unreadable machine config fails the run instead of dropping the claude-tools clone from the plan.
 
@@ -81,6 +82,25 @@ def test_main_fails_when_the_only_clone_cannot_be_read(tmp_path, monkeypatch, ca
     clone = make_clone(tmp_path / "clone")
     monkeypatch.setattr(git_gate, "PROFILE_ROOT", clone)
     monkeypatch.setattr(git_gate, "_git", timing_out)
+    monkeypatch.setattr(git_gate, "find_gitleaks", lambda: Path("gitleaks"))
+    monkeypatch.setattr(git_gate, "ensure_pytest", lambda check_only=False: ("pytest: available", True))
+    assert git_gate.main(["--check", "--tools-root", ""]) == 1
+    out = capsys.readouterr().out
+    assert "nothing to do" not in out and "GIT GATE UNKNOWN" in out and "git gate: NOT ON" in out
+
+
+@needs_git
+def test_git_missing_is_unknown_and_not_nothing_to_do(tmp_path, monkeypatch, capsys):
+    # CP#87 review, R3: with git off PATH a clone that ships the gate used to be dropped, and main exited 0.
+    clone = make_clone(tmp_path / "clone")
+    copy = make_clone(tmp_path / "copy", init=False)
+    real_which = shutil.which
+    monkeypatch.setattr(git_gate.shutil, "which",
+                        lambda name, *args, **kwargs: None if name == "git" else real_which(name, *args, **kwargs))
+    plan = git_gate.plan_hooks(clone)
+    assert plan is not None and plan.action == "unknown" and "not on PATH" in plan.current
+    assert git_gate.plan_hooks(copy) is None  # control: a plain copy of the files is still not a clone
+    monkeypatch.setattr(git_gate, "PROFILE_ROOT", clone)
     monkeypatch.setattr(git_gate, "find_gitleaks", lambda: Path("gitleaks"))
     monkeypatch.setattr(git_gate, "ensure_pytest", lambda check_only=False: ("pytest: available", True))
     assert git_gate.main(["--check", "--tools-root", ""]) == 1

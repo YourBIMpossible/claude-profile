@@ -394,6 +394,17 @@ def test_a_missing_gate_file_still_means_no_gate(repo):
     assert ship_guard.gate_is_on(str(repo)) is None
 
 
+def test_a_push_from_a_bare_repository_is_refused(tmp_path):
+    # CP#87 review, R2: a bare repository has no work tree and no .git entry; that is "unknown", not "no repository".
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, capture_output=True)
+    reason = ship_guard.gate_is_on(str(bare))
+    assert reason and "bare repository" in reason
+    assert "bare repository" in (ship_guard.gate_is_on(str(bare / "refs")) or "")
+    assert "bare repository" in (decide(bash("git push origin HEAD", cwd=str(bare))) or "")
+    assert ship_guard.gate_is_on(str(tmp_path)) is None  # control: not a repository at all is still allowed
+
+
 def test_the_push_directory_is_followed(tmp_path, repo):
     elsewhere = tmp_path / "plain"
     elsewhere.mkdir()
