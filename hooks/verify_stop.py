@@ -224,9 +224,14 @@ NOT_A_RUNNER = frozenset({
 ENV_ASSIGN_RE = re.compile(r"\s*(?:[A-Za-z_]\w*=\S*\s+)*")
 
 
-def split_segments(cmd: str) -> list[str]:
-    """Split a shell command line on `&&`, `||`, `;`, `|` and newlines, outside quotes."""
-    segments, buf, quote, i = [], [], "", 0
+def split_pipelines(cmd: str) -> list[list[str]]:
+    """Split a shell command line into pipelines, and each pipeline into its `|` pieces.
+
+    Pipelines are separated by `&&`, `||`, `;` and newlines, outside quotes.
+    """
+    pipelines: list[list[str]] = [[]]
+    buf: list[str] = []
+    quote, i = "", 0
     while i < len(cmd):
         ch = cmd[i]
         if quote:
@@ -244,15 +249,24 @@ def split_segments(cmd: str) -> list[str]:
             buf.append(cmd[i:i + 2])
             i += 1
         elif ch in ";\n|" or cmd.startswith("&&", i):
-            segments.append("".join(buf))
+            pipelines[-1].append("".join(buf))
             buf = []
             if cmd.startswith(("&&", "||"), i):
                 i += 1
+                pipelines.append([])
+            elif ch != "|":
+                pipelines.append([])
         else:
             buf.append(ch)
         i += 1
-    segments.append("".join(buf))
-    return [s for s in (seg.strip() for seg in segments) if s]
+    pipelines[-1].append("".join(buf))
+    cleaned = ([s for s in (piece.strip() for piece in pipeline) if s] for pipeline in pipelines)
+    return [pipeline for pipeline in cleaned if pipeline]
+
+
+def split_segments(cmd: str) -> list[str]:
+    """Split a shell command line on `&&`, `||`, `;`, `|` and newlines, outside quotes."""
+    return [piece for pipeline in split_pipelines(cmd) for piece in pipeline]
 
 
 def runs_check(segment: str) -> bool:
@@ -287,12 +301,17 @@ def needs_warning(turn: list[dict[str, Any]], final_text: str) -> bool:
                 changed, checked_since_change = True, False
         elif name in SHELL_TOOLS:
             # Each simple command in order: `fix && test` ends checked, `test; fix` does not.
-            for segment in split_segments(str(inp.get("command") or "")):
-                if runs_check(segment):
-                    if tid not in failed:  # a check that errored verified nothing
-                        checked_since_change = True
-                elif shell_changes_code(segment):
-                    changed, checked_since_change = True, False
+            for pipeline in split_pipelines(str(inp.get("command") or "")):
+                # A write fed through a pipe (`cat fix.patch | git apply`) names its file in
+                # another piece, so the pieces that are not checks are also read together.
+                others = " | ".join(piece for piece in pipeline if not runs_check(piece))
+                for segment in pipeline:
+                    if runs_check(segment):
+                        if tid not in failed:  # a check that errored verified nothing
+                            checked_since_change = True
+                    elif shell_changes_code(segment) or (
+                            WRITE_RE.search(segment) and shell_changes_code(others)):
+                        changed, checked_since_change = True, False
     if not changed or checked_since_change:
         return False
     return bool(CLAIM_RE.search(final_text)) and not DISCLOSE_RE.search(final_text)

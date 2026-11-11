@@ -164,6 +164,22 @@ class VerifyStop(unittest.TestCase):
                                    result(), say(CLAIM)])
         self.assert_warns(out)
 
+    # A write command fed through a pipe names its file in the other piece (CP#85 cross-review, F1).
+    def test_patch_file_piped_into_git_apply_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="cat fix.patch | git apply"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
+    def test_diff_file_piped_into_patch_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="cat fix.diff | patch -p1"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
+    def test_git_show_piped_into_reverse_apply_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="git show abc -- app.py | git apply -R"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
     def test_compound_commands_that_do_run_a_check_are_silent(self) -> None:
         for cmd in ("python -m pytest hooks/tests -q | tee out.log", "cd repo && python -m pytest -q",
                     "sed -i 's/a/b/' x.py && python -m pytest -q", "PYTHONPATH=. pytest tests/test_app.py",
