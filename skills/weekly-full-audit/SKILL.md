@@ -100,7 +100,9 @@ review), and reads under `~/.claude` (HYG-8 live root, persona discovery, schedu
 **1. Ledger.** `GRRP init --slug <slug> --dir <ledger-dir> --objective "weekly full audit <rid>"`
 then `GRRP batch-init --slug <slug> --dir <ledger-dir>`. Take each path from that command's own
 `created:`/`existing:` line — never rebuild it from a date (init names it by the local date,
-batch-init by the UTC date; the run's own date is `run_date` in the run record). `RUN record --ledger <ledger path>`.
+batch-init by the UTC date; the run's own date is `run_date` in the run record).
+`RUN record --ledger <ledger path> --manifest <manifest path>` — both are the run's declared outputs;
+an unrecorded one is flagged by the outputs audit.
 Run brief: `ENROLL brief --ledger <ledger path> --scope "<root names and windows, filled after step 2>"
 --boundaries "inspection + artifact tiers only; no remediation unless --handoff" --done-means "AC-1 every
 lens/check ran over its scope; AC-2 every finding is in the report and the ledger" --authority "report

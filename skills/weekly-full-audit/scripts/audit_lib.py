@@ -1131,9 +1131,9 @@ def outputs_audit(rec: dict[str, Any], scan_dirs: Sequence[Path], evidence_root:
     """Attribute every write the run can see, in two strictly separate scopes.
 
     Run-owned (defects): files created or modified since run start under `scan_dirs` (declared
-    output dirs) that the run never declared — not a dispatched output, artifact, ledger or the
-    checklist, not under the evidence dir, not in `exclude` — plus anything `git status --ignored`
-    shows in an isolated checkout (`RUN isolate`). A nested git checkout inside a scan dir belongs to
+    output dirs) that the run never declared — not a dispatched output, artifact, ledger, batch
+    manifest or the checklist, not under the evidence dir, not in `exclude` — plus anything
+    `git status --ignored` shows in an isolated checkout (`RUN isolate`). A nested git checkout inside a scan dir belongs to
     another session: it is skipped and noted, never walked. Any hit is `defect:undeclared-outputs`.
 
     Live target roots (observed only): the start-time `git status` snapshot of each root is
@@ -1156,6 +1156,7 @@ def outputs_audit(rec: dict[str, Any], scan_dirs: Sequence[Path], evidence_root:
     declared = {_norm(o) for d in rec.get("dispatch", {}).values() for o in d["outputs"]}
     declared |= {_norm(a["path"]) for a in rec["artifacts"]}
     declared |= {_norm(x) for x in rec["ledgers"]}
+    declared |= {_norm(x) for x in rec.get("manifests", [])}
     checklist = rec.get("preflight", {}).get("tools", {}).get("checklist")
     if checklist:
         declared.add(_norm(checklist))
@@ -1289,7 +1290,10 @@ def checkout_revision(repo: Path, rev: str, dest: Path) -> None:
     """A detached checkout of `rev` at `dest` that leaves `repo` untouched: `git clone --shared
     --no-checkout` (objects borrowed via alternates), the source's `refs/remotes/origin/*` copied in
     so base-ref lookups resolve as they would in place, then `checkout --detach rev`. A real git
-    repository, because checkers such as G4 measure through `git ls-files`."""
+    repository, because checkers such as G4 measure through `git ls-files`. The clone sets
+    `core.longpaths=true` in its own config: `dest` sits deeper than `repo`, so tracked paths under
+    the Windows 260-char limit in the source can exceed it here, and a source's local setting is
+    not cloned."""
 
     def git(*args: str, cwd: Path | None = None) -> None:
         cp = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
@@ -1297,7 +1301,7 @@ def checkout_revision(repo: Path, rev: str, dest: Path) -> None:
         if cp.returncode != 0:
             raise AuditError(f"git {' '.join(args[:2])} for {repo}@{rev[:12]}: {cp.stderr.strip()}")
 
-    git("clone", "-q", "--shared", "--no-checkout", str(repo), str(dest))
+    git("clone", "-q", "-c", "core.longpaths=true", "--shared", "--no-checkout", str(repo), str(dest))
     git("fetch", "-q", "--no-tags", str(repo), "+refs/remotes/origin/*:refs/remotes/origin/*", cwd=dest)
     git("-c", "advice.detachedHead=false", "checkout", "-q", "--detach", rev, cwd=dest)
 
