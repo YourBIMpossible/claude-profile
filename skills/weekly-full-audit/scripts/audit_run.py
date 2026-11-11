@@ -14,7 +14,8 @@ Subcommands
   slug          GRRP slug for a run_id (rule 5)
   baseline      revision baseline per root, recorded into the run record (rule 3)
   write-report  exclusive-create a report with front matter (rule 5)
-  record        inspection state, coverage, required checks, artifacts, ledgers, gate, events, run outcome
+  record        inspection state, coverage, required checks, artifacts, ledgers, batch manifests, gate,
+                events, run outcome
   brief-done    a recorded ledger's brief (Scope, Boundaries, Done means, Authority) is filled
   dispatch      declare one child: method files (hash + random line k) and create-only outputs
   check         one required check's return (completion plan) or failure
@@ -41,6 +42,7 @@ import argparse
 import dataclasses
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -575,6 +577,14 @@ def cmd_record(a: argparse.Namespace) -> int:
                 raise L.AuditError(f"--ledger {led}: no such file (pass the path grrp init printed)")
             if led not in rec["ledgers"]:
                 rec["ledgers"].append(led)
+        for man in a.manifest or []:
+            mp = Path(man)
+            if not mp.is_file():
+                raise L.AuditError(f"--manifest {man}: no such file (pass the path grrp batch-init printed)")
+            if not re.search(r"^grrp-batch: v1[ \t]*$", mp.read_text(encoding="utf-8", errors="replace"), re.M):
+                raise L.AuditError(f"--manifest {man}: not a GRRP batch manifest (no 'grrp-batch: v1' line)")
+            if man not in rec.setdefault("manifests", []):
+                rec["manifests"].append(man)
         if a.gate_file:
             gate = L.read_json(Path(a.gate_file))
             L.set_gate(rec, gate)
@@ -978,6 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--coverage", action="append", help="key=status[:note]")
     p.add_argument("--require", nargs="+", action="extend", help="register required checks (pending) before dispatch")
     p.add_argument("--artifact", action="append", help="kind=path"); p.add_argument("--ledger", action="append")
+    p.add_argument("--manifest", action="append", help="the run's GRRP batch manifest (batch-init path)")
     p.add_argument("--gate-file"); p.add_argument("--event", action="append")
     p.add_argument("--run", choices=tuple(L.RUN_SEVERITY)); p.set_defaults(fn=cmd_record)
     p = sub.add_parser("check"); run_args(p); p.add_argument("--key", required=True)

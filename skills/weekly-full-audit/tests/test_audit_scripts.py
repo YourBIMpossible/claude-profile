@@ -1904,6 +1904,42 @@ class OutputsAuditTests(_StartedRun):
         self.assertEqual(code, 2)
         self.assertIn("not a directory", err)
 
+    def test_recorded_batch_manifest_is_declared_and_other_files_still_flagged(self) -> None:
+        """tf41a-986b: the run's own GRRP batch manifest (step 1 batch-init) is a declared output once
+        recorded with `record --manifest`; any other new file beside it is still a defect."""
+        base = self._start()
+        grrp = self.tmp / "grrp"
+        grrp.mkdir()
+        led = _touch(grrp / "run.ledger.md")
+        manifest = grrp / "run.batch.md"
+        manifest.write_text("# GRRP batch - run\ngrrp-batch: v1\n\n## Endpoint\n", encoding="utf-8")
+        code, _, err = run_cli("outputs-audit", *base, "--scan-dir", str(grrp))
+        self.assertEqual(code, 1, err)  # unrecorded, both are undeclared
+        self.assertEqual(run_cli("record", *base, "--ledger", str(led), "--manifest", str(manifest))[0], 0)
+        self.assertEqual(self._rec(base)["manifests"], [str(manifest)])
+        code, out, err = run_cli("outputs-audit", *base, "--scan-dir", str(grrp))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["undeclared"], [])
+        stray = grrp / "run.batch.md.bak"
+        stray.write_text("grrp-batch: v1\n", encoding="utf-8")
+        code, out, _ = run_cli("outputs-audit", *base, "--scan-dir", str(grrp))
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out)["undeclared"], [stray.resolve().as_posix()])
+        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        self.assertEqual(L.derive_run(self._rec(base)), "degraded")
+
+    def test_manifest_must_be_an_existing_grrp_batch_manifest(self) -> None:
+        base = self._start()
+        code, _, err = run_cli("record", *base, "--manifest", str(self.tmp / "missing.batch.md"))
+        self.assertEqual(code, 2)
+        self.assertIn("no such file", err)
+        other = self.tmp / "notes.md"
+        other.write_text("# notes\nnot a manifest\n", encoding="utf-8")
+        code, _, err = run_cli("record", *base, "--manifest", str(other))
+        self.assertEqual(code, 2)
+        self.assertIn("not a GRRP batch manifest", err)
+        self.assertNotIn("manifests", self._rec(base))
+
 
 class Utf8LineTests(_StartedRun):
     """Item 5: ctxcheck-line text is decoded and stored as UTF-8, never mojibake."""
@@ -2181,6 +2217,40 @@ class OutputsAttributionTests(_StartedRun):
         self.assertTrue(res["defect"])
         self.assertEqual(res["undeclared"], [(checkout / "scratch.py").resolve().as_posix()])
         self.assertIn("defect:undeclared-outputs", [e["event"] for e in self._rec(base)["events"]])
+
+    def test_isolated_checkout_with_long_tracked_paths_is_clean_and_still_strict(self) -> None:
+        """tf41a-986b: tracked files whose path is short in the source but over the Windows 260-char
+        limit under <run>/src/<name> must check out (core.longpaths on the run-owned clone), so the
+        run's own snapshot is not flagged; a real new file in that snapshot is still a defect."""
+        base = self._start()
+        repo = self.tmp / "app"
+        dest = (self.state / "weekly-full-audit" / base[1] / "src" / "repo").resolve()
+        src_len, dest_len = len(str(repo.resolve())), len(str(dest))
+        self.assertGreater(dest_len - src_len, 30)
+        n = 280 - dest_len  # rel length: dest/rel >= 281, repo/rel < 260
+        self.assertLess(src_len + 1 + n, 255)
+        parts, left = [], n - len("/f.md")
+        while left > 0:
+            seg = min(40, left - 1 if left > 41 else left)
+            parts.append("d" * seg)
+            left -= seg + 1
+        rel = "/".join(parts) + "/f.md"
+        self.assertGreater(len(str(dest)) + 1 + len(rel), 260)
+        commit(repo, rel, "long\n")
+        code, out, err = run_cli("isolate", *base, "--root", f"repo={repo}")
+        self.assertEqual(code, 0, err)
+        checkout = Path(json.loads(out)["checkout"])
+        self.assertEqual(sh(checkout, "config", "--get", "core.longpaths"), "true")
+        code, out, err = run_cli("outputs-audit", *base)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["undeclared"], [])
+        self.assertNotIn("undeclared_outputs", self._rec(base))
+        (checkout / "scratch.py").write_text("x\n", encoding="utf-8")
+        code, out, _ = run_cli("outputs-audit", *base)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out)["undeclared"], [(checkout / "scratch.py").resolve().as_posix()])
+        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        self.assertEqual(L.derive_run(self._rec(base)), "degraded")
 
     def test_nested_checkout_skipped_with_note(self) -> None:
         base = self._start()
