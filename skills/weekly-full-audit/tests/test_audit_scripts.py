@@ -129,6 +129,29 @@ def run_cli(*argv: str) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
+def return_pending(base: list[str], skip: tuple[str, ...] = ()) -> None:
+    """Return every still-pending required check the way a child does (declared output, attested
+    method, `check --state returned`), so a test about something else can pass the coverage floor."""
+    rid, sd = base[base.index("--run-id") + 1], Path(base[base.index("--state-dir") + 1])
+    rec = L.load_record(sd / L.parse_run_id(rid).task_id / f"{rid}.json")
+    evd = Path(run_cli("evidence-dir", *base)[1].strip())
+    meth = sd / "fixture-ledgers" / "floor-method.md"
+    meth.parent.mkdir(parents=True, exist_ok=True)
+    meth.write_text("# fixture method\n", encoding="utf-8")
+    for key in L.pending_checks(rec):
+        if key in skip:
+            continue
+        ev = evd / f"floor-{key}.md"
+        code, _, err = dispatch(base, key, f"FLOOR-{key}", meth, ev)
+        if code != 0:
+            raise AssertionError(err)
+        ev.write_text(attest(meth) + "read fixture/\n", encoding="utf-8")
+        code, _, err = run_cli("check", *base, "--key", key, "--state", "returned", "--inspected", "fixture/",
+                               "--evidence", str(ev))
+        if code != 0:
+            raise AssertionError(err)
+
+
 class Fixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="audit-fixture-"))
@@ -1925,7 +1948,8 @@ class OutputsAuditTests(_StartedRun):
         code, out, _ = run_cli("outputs-audit", *base, "--scan-dir", str(grrp))
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["undeclared"], [stray.resolve().as_posix()])
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(L.derive_run(self._rec(base)), "degraded")
 
     def test_manifest_must_be_an_existing_grrp_batch_manifest(self) -> None:
@@ -2249,7 +2273,8 @@ class OutputsAttributionTests(_StartedRun):
         code, out, _ = run_cli("outputs-audit", *base)
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["undeclared"], [(checkout / "scratch.py").resolve().as_posix()])
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(L.derive_run(self._rec(base)), "degraded")
 
     def test_nested_checkout_skipped_with_note(self) -> None:
