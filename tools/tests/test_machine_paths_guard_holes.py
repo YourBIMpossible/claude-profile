@@ -120,6 +120,33 @@ def test_cp5_a_match_found_later_in_the_same_token_covers_the_hit():
     assert code == 1 and len(findings(out)) == 1 and "('C:" in out, out
 
 
+# --- SA02-13: a second path joined into the fixture's token is its own path ---------------------------------------
+
+REAL_USER_TAIL = "C" + ":" + "/" + "Users" + "/someone/x"
+REAL_USER_TAIL_BS = "C" + ":" + BS + "Users" + BS + "someone" + BS + "x"
+JOINED_TO_THE_FIXTURE = {
+    "PATH-style colon join": (FAKE_FIXTURE + ":" + REAL_USER_TAIL, ["drive-path", "home-path"]),
+    "parent-directory hop": (FAKE_FIXTURE + "/../" + REAL_USER_TAIL, ["drive-path", "home-path"]),
+    "backslash parent-directory hop": (FAKE_FIXTURE + BS + ".." + BS + REAL_USER_TAIL_BS, ["drive-path"]),
+    "question-mark join": (FAKE_FIXTURE + "?" + REAL_USER_TAIL_BS, ["drive-path"]),
+    "PATH-style colon join to a home path": (FAKE_FIXTURE + ":" + "/" + "home" + "/someone/y", ["home-path"]),
+}
+
+
+@pytest.mark.parametrize("case", sorted(JOINED_TO_THE_FIXTURE))
+def test_sa02_13_a_real_path_joined_to_an_allowlisted_fixture_in_one_token_is_flagged(case):
+    token, rules = JOINED_TO_THE_FIXTURE[case]
+    code, out = scan({"t.py": f'P = "{token}"\n'}, [FIXTURE_ENTRY])
+    assert code == 1, out
+    assert [hit.split(" ")[1] for hit in findings(out)] == rules, out
+    assert "('X:" not in out, "the fixture's own drive stays covered"
+
+
+def test_sa02_13_two_fixtures_joined_in_one_token_are_each_covered():
+    code, out = scan({"t.py": f'P = "{FAKE_FIXTURE}:{FAKE_FIXTURE}/other"\n'}, [FIXTURE_ENTRY])
+    assert code == 0, out
+
+
 # --- CP-6: UTF-16 text is decoded and scanned, not skipped as binary ----------------------------------------------
 
 def _text(body: str) -> str:
