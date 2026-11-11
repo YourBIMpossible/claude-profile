@@ -22,6 +22,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 SCHEMA = "audit-run/1"
 TASK_IDS: tuple[str, ...] = ("weekly-full-audit", "slop-audit-sweep")
+# Weekly coverage floor (SA02-1): `start` registers these, so skipping `record --require` cannot empty it.
+WEEKLY_REQUIRED: tuple[str, ...] = ("sec", "re", "arch", "cq", "fe", "perf", "hyg", "slop", "ws")
 
 # Activation table (anchor "What each decision blocks").
 # A mode set False may not run: preflight refuses it with an explicit failure.
@@ -709,6 +711,10 @@ def set_coverage(rec: dict[str, Any], key: str, status: str, note: str = "") -> 
     if rec["states"]["inspection"] != "running":
         raise AuditError("coverage changes only while inspection is running")
     chk = rec.get("checks", {}).get(key)
+    if chk is None and status == "complete":
+        # `complete` is earned by a registered check's return, never asserted for a free-form key.
+        raise AuditError(f"coverage {key} is not a required check; register it with `record --require` "
+                         "and report it with `check`")
     if chk is not None and status == "complete" and not (chk["state"] == "returned" and not chk["remaining"]):
         # A required check is complete only through its own return with nothing remaining.
         raise AuditError(f"coverage {key} is a required check ({chk['state']}); report it with `check`")
