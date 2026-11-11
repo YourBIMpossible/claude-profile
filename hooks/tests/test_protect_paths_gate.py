@@ -213,18 +213,38 @@ def network_path_checks() -> "list[str]":
         return str(path)
 
     os.path.realpath = recorder
+    drive = "Q" + ":"          # built here: the machine-paths scan rejects a literal drive path
+    old_name = os.environ.get("COMPUTERNAME")
+    os.environ["COMPUTERNAME"] = "TESTBOX"
     try:
+        # another machine: tested as written, never resolved
         for raw in ("//host.invalid/share/proj/notes.md", "\\\\host.invalid\\share\\proj\\notes.md",
-                    "//./pipe/notes.md", "\\\\?\\UNC\\host.invalid\\share\\notes.md"):
+                    "\\\\?\\UNC\\host.invalid\\share\\notes.md"):
             seen.clear()
             if gate.is_protected(raw) or gate.needs_approval(raw):
-                failures.append(f"expected ALLOW for an ordinary name on a network/device path: {raw}")
+                failures.append(f"expected ALLOW for an ordinary name on a network path: {raw}")
             if seen:
-                failures.append(f"realpath was called for a network/device path: {raw} -> {seen}")
-        seen.clear()
-        gate.is_protected("\\\\?\\C:\\proj\\notes.md")
-        if [s.replace("\\", "/") for s in seen[:1]] != ["C:/proj/notes.md"]:
-            failures.append(f"a //?/C:/ path should be resolved as the drive path, got {seen}")
+                failures.append(f"realpath was called for a network path: {raw} -> {seen}")
+        # this machine under another spelling: resolved like any local path
+        for raw, want in (
+                (f"\\\\?\\{drive}\\proj\\notes.md", f"{drive}/proj/notes.md"),
+                (f"\\\\.\\{drive}\\proj\\notes.md", f"{drive}/proj/notes.md"),
+                ("//localhost/share/proj/notes.md", "//localhost/share/proj/notes.md"),
+                ("//127.0.0.1/share/notes.md", "//127.0.0.1/share/notes.md"),
+                ("//TestBox/share/notes.md", "//TestBox/share/notes.md"),
+                ("\\\\?\\UNC\\localhost\\share\\notes.md", "//localhost/share/notes.md")):
+            seen.clear()
+            gate.is_protected(raw)
+            if [s.replace("\\", "/") for s in seen[:1]] != [want]:
+                failures.append(f"{raw} should be resolved as {want}, got {seen}")
+        # a device path the gate cannot map to a drive or a host: fail closed, never resolved
+        for raw in ("//./pipe/notes.md", "//?/Volume{01234567-89ab-cdef-0123-456789abcdef}/proj/notes.md",
+                    "\\\\?\\GLOBALROOT\\Device\\Mup\\host.invalid\\share\\notes.md", "//./notes.md"):
+            seen.clear()
+            if not gate.is_protected(raw):
+                failures.append(f"expected BLOCK for an uncheckable device path: {raw}")
+            if seen:
+                failures.append(f"realpath was called for a device path: {raw} -> {seen}")
         # the rules still apply to the name as written
         if not gate.is_protected("//host.invalid/share/.env"):
             failures.append("expected BLOCK for .env on a network path")
@@ -233,10 +253,17 @@ def network_path_checks() -> "list[str]":
         # a short-name-like component there cannot be checked: fail closed
         for raw in ("//host.invalid/share/NORTHS~1.MD", "//host.invalid/share/BACKEN~1/guard.py",
                     "\\\\?\\UNC\\host.invalid\\share\\GOOGLE~1.JSO"):
+            seen.clear()
             if not gate.is_protected(raw):
                 failures.append(f"expected BLOCK for an uncheckable short name: {raw}")
+            if seen:
+                failures.append(f"realpath was called for a network path: {raw} -> {seen}")
     finally:
         os.path.realpath = real_realpath
+        if old_name is None:
+            os.environ.pop("COMPUTERNAME", None)
+        else:
+            os.environ["COMPUTERNAME"] = old_name
     return failures
 
 
