@@ -360,6 +360,40 @@ def test_a_push_whose_gate_state_git_cannot_report_is_refused(repo):
     assert "dubious ownership" in decide(bash("git push origin HEAD", cwd=str(repo)), run=dubious)
 
 
+def test_a_gate_file_that_cannot_be_read_is_refused(repo, monkeypatch):
+    # CP#87 review, R1: only a missing gate file means "no gate"; any other read error is "unknown".
+    git("config", "core.hooksPath", ".githooks", cwd=repo)
+    assert ship_guard.gate_is_on(str(repo)) is None  # readable and switched on
+    real_read = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self.name == "pre-push":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_text", denied)
+        reason = ship_guard.gate_is_on(str(repo))
+        assert reason and "could not be read" in reason and "PermissionError" in reason
+        assert "could not be read" in decide(bash("git push origin HEAD", cwd=str(repo)), run=ship_guard._run)
+
+
+def test_a_gate_path_that_is_a_folder_is_refused(repo):
+    hook = repo / ".githooks" / "pre-push"
+    hook.unlink()
+    hook.mkdir()  # reading it fails with something other than "not found"
+    reason = ship_guard.gate_is_on(str(repo))
+    assert reason and "could not be read" in reason
+
+
+def test_a_missing_gate_file_still_means_no_gate(repo):
+    (repo / ".githooks" / "pre-push").unlink()
+    assert ship_guard.gate_is_on(str(repo)) is None
+    (repo / ".githooks").rmdir()
+    (repo / ".githooks").write_text("not a folder\n", encoding="utf-8")
+    assert ship_guard.gate_is_on(str(repo)) is None
+
+
 def test_the_push_directory_is_followed(tmp_path, repo):
     elsewhere = tmp_path / "plain"
     elsewhere.mkdir()

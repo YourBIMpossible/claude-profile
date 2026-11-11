@@ -1070,8 +1070,11 @@ def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
     try:
         if GATE_MARKER not in hook.read_text(encoding="utf-8", errors="replace"):
             return None
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return None  # this repository ships no gate
+    except OSError as exc:  # it is there and unreadable: "unknown", never "no gate"
+        return (f"the gate file {hook} could not be read ({type(exc).__name__}: {exc}), so the guard cannot tell "
+                "whether this repository ships a gate. Make the file readable, then run the push again.")
     proc = run(["git", "-C", str(root), "config", "--get", "core.hooksPath"], None)
     value = proc.stdout.strip() if proc.returncode == 0 else ""
     if value:
