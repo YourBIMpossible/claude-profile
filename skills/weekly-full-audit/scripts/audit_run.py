@@ -372,6 +372,12 @@ def cmd_start(a: argparse.Namespace) -> int:
         for name, hit in pf.personas.items():
             if hit is None:
                 L.add_event(rec, "persona-absent", f"{name}: refute stage uses general-purpose")
+        # Coverage floor (SA02-1): the required lens set is registered here, not left to a later
+        # `record --require` the caller may skip. Add-Ins joins it when its root and audit skill are usable.
+        required = list(L.WEEKLY_REQUIRED)
+        if "addins" in pf.roots and "addins" not in rec["coverage"]:
+            required.append("addins")
+        L.require_checks(rec, required)
     L.save_record(path, rec)
     _print({"run_id": run_id, "ok": True, "record": str(path), "slug": L.grrp_slug(run_id),
             "heartbeat": str(HB.heartbeat_path(wd, a.watchdog_task or a.task, run_id)),
