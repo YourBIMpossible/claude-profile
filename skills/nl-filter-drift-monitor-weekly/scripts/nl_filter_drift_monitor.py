@@ -141,16 +141,30 @@ def run_live(container: str, repeats: int, json_out: Path, commit: str) -> tuple
         return EXIT_NOT_RUN, f"nl-filter-monitor mode=live verdict=NOT-RUN ({why})", why
     # Clear a stale in-container artifact first so a dead run can never file last
     # run's numbers as this run's evidence (same rule as the PowerShell wrapper).
-    _run(["docker", "exec", container, "rm", "-f", IN_CONTAINER_JSON], timeout=60)
+    rm_rc, _ = _run(["docker", "exec", container, "rm", "-f", IN_CONTAINER_JSON], timeout=60)
+    if rm_rc != 0:
+        why = (f"could not clear the stale in-container summary (rm exit {rm_rc}) - the live "
+               "evaluator was not started, so nothing was checked")
+        return EXIT_NOT_RUN, f"nl-filter-monitor mode=live verdict=NOT-RUN ({why})", why
     rc, text = _run(["docker", "exec", "-w", "/app", "-e", f"NL_FILTER_EVAL_COMMIT={commit}",
                      container, "python", "tests/eval/nl_filter_monitor.py", "--mode", "live",
                      "--repeats", str(repeats), "--json", IN_CONTAINER_JSON])
     print(text.rstrip())
     rc = map_exit(rc)
     cp_rc, _ = _run(["docker", "cp", f"{container}:{IN_CONTAINER_JSON}", str(json_out)], timeout=120)
+    line = _verdict_line(text, "live", rc)
+    # A verdict needs both its line and its evidence: without either, the run proved nothing.
+    if "verdict=UNPARSEABLE" in line:
+        why = f"the evaluator printed no verdict line (exit {rc}) - nothing was proven"
+        print(f"    RED: {why}")
+        return EXIT_NOT_RUN, line, why
     if cp_rc != 0 or not json_out.is_file():
         print(f"    WARN: could not copy the JSON summary out of the container (docker cp exit {cp_rc})")
-    return rc, _verdict_line(text, "live", rc), ("" if rc == 0 else f"exit {rc} - see the summary")
+        if rc == EXIT_PASS:
+            why = (f"the JSON summary could not be copied out of the container (docker cp exit "
+                   f"{cp_rc}) - a pass with no evidence is not a pass")
+            return EXIT_NOT_RUN, line, why
+    return rc, line, ("" if rc == 0 else f"exit {rc} - see the summary")
 
 
 def _load_summary(path: Path) -> dict[str, Any] | None:
@@ -194,13 +208,16 @@ def record(ledger_dir: Path, *, stamp: str, commit: str, repeats: int | str, rc:
             "",
         ]) + "\n", encoding="utf-8")
         print(f"\n    RED: standing alert written to {alert}")
-    elif alert.exists():
-        alert.unlink()
+    clear = rc == 0 and alert.exists()
+    if clear:
         rows.append(f"| {_utc('%Y-%m-%dT%H:%M:%SZ')} | `{short}` | - | - | - | - | - | (alert cleared) | "
                     "the standing alert from a previous red run was cleared by this green run |")
-        print("    Cleared the standing alert from a previous red run.")
     with ledger.open("a", encoding="utf-8") as fh:
         fh.write("\n".join(rows) + "\n")
+    # Only after the green row is on disk: a failed append must leave the alert standing.
+    if clear:
+        alert.unlink()
+        print("    Cleared the standing alert from a previous red run.")
     print(f"\n    Ledger: {ledger}")
 
 
@@ -279,6 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OSError as exc:
         print(f"nl-filter-drift-monitor: run completed (exit {rc}) but its record could not be "
               f"written: {type(exc).__name__}", file=sys.stderr)
+        return rc if rc != EXIT_PASS else EXIT_NOT_RUN
     return rc
 
 
