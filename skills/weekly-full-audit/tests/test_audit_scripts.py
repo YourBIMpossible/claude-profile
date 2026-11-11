@@ -152,6 +152,32 @@ def return_pending(base: list[str], skip: tuple[str, ...] = ()) -> None:
             raise AssertionError(err)
 
 
+def lib_reported(rec: dict[str, Any]) -> None:
+    """Lib-level stand-in for baseline + write-report + a gate verdict grrp can reach, for tests whose
+    subject is a later state (publish refuses without them)."""
+    rec["roots"]["repo"] = {"window": "full"}
+    rec["artifacts"].append({"kind": "report", "path": "fixture-report.md", "roots": ["repo"]})
+    L.set_gate(rec, {"verdict": "incomplete"})
+
+
+def cli_report(base: list[str]) -> None:
+    """Baseline every preflight root and write one report through the CLI, as the skill does."""
+    rid, sd = base[base.index("--run-id") + 1], Path(base[base.index("--state-dir") + 1])
+    rec = L.load_record(sd / L.parse_run_id(rid).task_id / f"{rid}.json")
+    outdir = sd / "fixture-reports"
+    for name, meta in rec["preflight"]["roots"].items():
+        code, _, err = run_cli("baseline", "--root", f"{name}={meta['path']}", "--report-dir", str(outdir),
+                               "--pattern", "fixture_*.md", *base)
+        if code != 0:
+            raise AssertionError(err)
+    body = sd / "fixture-report-body.md"
+    body.write_text("# fixture report\n", encoding="utf-8")
+    code, _, err = run_cli("write-report", *base, "--dir", str(outdir), "--stem", "fixture_report",
+                           "--body-file", str(body))
+    if code != 0:
+        raise AssertionError(err)
+
+
 class Fixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="audit-fixture-"))
@@ -381,11 +407,10 @@ class StateMachineTests(unittest.TestCase):
     def test_separate_states_happy_path(self) -> None:
         r = self.rec()
         L.set_inspection(r, "running")
-        L.set_coverage(r, "lens-1", "complete")
         L.set_coverage(r, "addins", "not-run-optional", "NOT RUN (addins root not present)")
         L.set_inspection(r, "complete")
         L.set_run(r, "ok")  # declared gaps leave the run ok
-        L.set_gate(r, {"verdict": "PASS"})
+        lib_reported(r)
         L.publish(r)
         L.set_delivery(r, "skipped")
         self.assertFalse(L.start_remediation(r, []))
@@ -419,7 +444,7 @@ class StateMachineTests(unittest.TestCase):
             L.publish(r)  # no gate (rule 6)
         with self.assertRaises(L.AuditError):
             L.set_delivery(r, "skipped")  # before publication
-        L.set_gate(r, {"verdict": "PASS"})
+        lib_reported(r)
         L.publish(r)
         with self.assertRaises(L.AuditError):
             L.set_delivery(r, "delivered")  # mode none never delivers
@@ -448,7 +473,7 @@ class StateMachineTests(unittest.TestCase):
         L.set_inspection(r2, "running")
         L.set_inspection(r2, "complete")
         L.set_run(r2, "ok")
-        L.set_gate(r2, {})
+        lib_reported(r2)
         L.publish(r2)
         L.set_delivery(r2, "skipped")
         r2["states"]["remediation"] = "running"  # as start_remediation would after D1
@@ -461,7 +486,7 @@ class StateMachineTests(unittest.TestCase):
         L.set_inspection(r, "running")
         L.set_inspection(r, "complete")
         L.set_run(r, "ok")
-        L.set_gate(r, {})
+        lib_reported(r)
         L.publish(r)
         L.set_delivery(r, "skipped")
         self.assertFalse(L.ACTIVATION["autofix"])
@@ -478,7 +503,7 @@ class StateMachineTests(unittest.TestCase):
         L.set_run(r, "ok")
         with self.assertRaises(L.AuditError):
             L.start_remediation(r, [])  # before publication
-        L.set_gate(r, {})
+        lib_reported(r)
         L.publish(r)
         L.set_delivery(r, "skipped")
         self.assertFalse(L.start_remediation(r, [" M a.txt"]))
@@ -550,10 +575,12 @@ class RollbackTests(Fixture):
         self.assertEqual(code, 0, out + err)
         rid = json.loads(out)["run_id"]
         base = ["--run-id", rid, "--state-dir", str(self.state)]
+        return_pending(base)
+        cli_report(base)
         self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(run_cli("record", *base, "--run", "degraded")[0], 0)
         gate = self.tmp / "gate.json"
-        gate.write_text('{"verdict": "PASS"}', encoding="utf-8")
+        gate.write_text('{"verdict": "incomplete"}', encoding="utf-8")
         self.assertEqual(run_cli("record", *base, "--gate-file", str(gate))[0], 0)
         self.assertEqual(run_cli("publish", *base)[0], 0)
         self.assertEqual(run_cli("deliver", *base, "--state", "skipped")[0], 0)
@@ -761,6 +788,7 @@ class WeeklyRunTests(Fixture):
         self.assertEqual(started["coverage"]["handoff"]["status"], "handoff-pending")
         self.assertEqual(started["coverage"]["autofix"]["status"], "not-run-flag-off")
         base = ["--run-id", rid, "--state-dir", str(self.state)]
+        return_pending(base)
         outdir = self.tmp / "reports"
         for name, path in (("repo", repo), ("workspace", ws)):
             code, out, err = run_cli("baseline", "--root", f"{name}={path}", "--report-dir", str(outdir),
@@ -779,14 +807,15 @@ class WeeklyRunTests(Fixture):
         self.assertEqual(fm["roots"]["repo"]["identity"], "github.com/O/App")
         code, _, err = run_cli("publish", *base)
         self.assertEqual(code, 2)  # before run outcome / gate
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, err = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
         self.assertIn("softer", err)
         self.assertEqual(run_cli("record", *base, "--run", "degraded", "--ledger", str(_touch(self.tmp / "l.ledger.md")))[0], 0)
         self.assertEqual(run_cli("publish", *base)[0], 2)  # still no gate
         gate = self.tmp / "gate.json"
-        gate.write_text('{"verdict": "PASS"}', encoding="utf-8")
+        gate.write_text('{"verdict": "incomplete"}', encoding="utf-8")
         self.assertEqual(run_cli("record", *base, "--gate-file", str(gate))[0], 0)
         self.assertEqual(run_cli("publish", *base)[0], 0)
         self.assertEqual(run_cli("deliver", *base, "--state", "delivered")[0], 2)  # D2 not activated
@@ -827,6 +856,7 @@ class WeeklyRunTests(Fixture):
                                  str(self.state), "--watchdog-dir", str(self.wd))[1])["run_id"]
         base = ["--run-id", rid, "--state-dir", str(self.state)]
         run_cli("baseline", "--root", f"repo={repo}", "--pattern", "x*.md", *base)
+        return_pending(base)
         body = self.tmp / "b.md"
         body.write_text("x\n", encoding="utf-8")
         code, _, err = run_cli("write-report", *base, "--dir", str(repo / "99_Archive"), "--stem", "r",
@@ -1381,6 +1411,7 @@ class RequiredCheckCliTests(Fixture):
             return subprocess.run([sys.executable, str(RUN_PY), *a], capture_output=True, text=True)
 
         self.assertEqual(run("record", *base, "--require", "sec", "fe").returncode, 0)
+        return_pending(base, skip=("sec", "fe"))
         w = run("wait", *base, "--phase", "convergence")
         self.assertEqual(w.returncode, 1)
         self.assertEqual(json.loads(w.stdout)["pending"], ["sec", "fe"])
@@ -1494,6 +1525,7 @@ class FixtureEndToEndTests(Fixture):
                                  "--evidence", str(ev), "--findings", str(fj))[0], 0)
         self.assertEqual(run_cli("check", *base, "--key", "ws", "--state", "returned", "--inspected", "scripts/",
                                  "--remaining", "system/", "--why", "budget", "--evidence", str(wsev))[0], 0)
+        return_pending(base)
         self.assertEqual(run_cli("wait", *base, "--phase", "report")[0], 0)
         code, report, err = run_cli("write-report", *base, "--dir", str(outdir), "--stem", stem, "--body-file", str(body))
         self.assertEqual(code, 0, err)
@@ -1611,6 +1643,7 @@ class AuditDefectRegressionTests(Fixture):
                                      "--pattern", "weekly-full-audit_*.md", *base)[0], 0)
         body = self.tmp / "body.md"
         body.write_text("# W\n\n**ctxcheck:** PASS 73 · WARN 2 · FAIL 0\n", encoding="utf-8")
+        return_pending(base)
         code, _, err = run_cli("write-report", *base, "--dir", str(outdir), "--stem", "r", "--body-file", str(body))
         self.assertEqual(code, 2)
         self.assertIn("verbatim", err)
@@ -1681,7 +1714,7 @@ class DispatchContractTests(Fixture):
             "outside": ("sec", meth, self.tmp / "scratch" / "out.md", "outside"),
             "pre-existing": ("sec", meth, pre, "already exists"),
             "missing method": ("sec", self.tmp / "nope.md", evd / "a.md", "method file missing"),
-            "unregistered key": ("arch", meth, evd / "b.md", "never required"),
+            "unregistered key": ("lens-x", meth, evd / "b.md", "never required"),
         }
         for name, (key, m, out, msg) in cases.items():
             with self.subTest(name):
@@ -1755,10 +1788,12 @@ class FileDeliveryTests(_StartedRun):
 
     def _publish(self, base: list[str]) -> Path:
         led = _touch(self.tmp / "l.ledger.md")
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        cli_report(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(run_cli("record", *base, "--run", "degraded", "--ledger", str(led))[0], 0)
         gate = self.tmp / "gate.json"
-        gate.write_text('{"verdict": "PASS", "note": "a · b — c"}', encoding="utf-8")
+        gate.write_text('{"verdict": "incomplete", "note": "a · b — c"}', encoding="utf-8")
         self.assertEqual(run_cli("record", *base, "--gate-file", str(gate))[0], 0)
         self.assertEqual(run_cli("publish", *base)[0], 0)
         return led
@@ -1916,7 +1951,8 @@ class OutputsAuditTests(_StartedRun):
         rec = self._rec(base)
         self.assertEqual(rec["undeclared_outputs"], [stray.resolve().as_posix()])
         self.assertIn("defect:undeclared-outputs", [e["event"] for e in rec["events"]])
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, err = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
         self.assertIn("softer", err)
@@ -2209,7 +2245,8 @@ class OutputsAttributionTests(_StartedRun):
         rec = self._rec(base)
         self.assertIn("observed:unattributed-target-changes", [e["event"] for e in rec["events"]])
         self.assertNotIn("undeclared_outputs", rec)
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         rec = self._rec(base)
         without = {k: v for k, v in rec.items() if k != "unattributed_target_changes"}
         self.assertEqual(L.derive_run(rec), L.derive_run(without))  # observation never moves the floor
@@ -2361,6 +2398,7 @@ class ChildRuleToolingTests(_StartedRun):
         self.assertEqual(json.loads(out)["modified_after_collect"], [ev.resolve().as_posix()])
         rec = self._rec(base)
         self.assertIn("defect:output-modified-after-collect", [e["event"] for e in rec["events"]])
+        return_pending(base)
         self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, err = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
@@ -2371,6 +2409,7 @@ class ChildRuleToolingTests(_StartedRun):
         base = self._start()
         ev = self._collect(base)
         ev.write_text("replaced\n", encoding="utf-8")
+        return_pending(base)
         self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, _ = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
@@ -2401,7 +2440,10 @@ class SweepRunLogTests(Fixture):
             made.append(Path(out.strip()))
         self.assertEqual([p.name for p in made], ["2026-10-30__slop-audit-sweep-run.md",
                                                   "2026-10-30__slop-audit-sweep-run-2.md"])
-        self.assertEqual(run_cli("record", *base, "--coverage", "app=complete", "--inspection", "complete")[0], 0)
+        self.assertEqual(run_cli("record", *base, "--require", "app")[0], 0)
+        return_pending(base)
+        cli_report(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(run_cli("record", *base, "--run", "ok")[0], 0)
         gate = self.tmp / "gate.json"
         gate.write_text("{}", encoding="utf-8")
@@ -2470,3 +2512,201 @@ class ChildRuleBriefTests(unittest.TestCase):
         self.assertNotIn("the working tree at HEAD and nothing else", text)
         self.assertNotIn("Do not claim G4 state for any commit other than HEAD", text)
         self.assertIn("exact inspected revision", text)
+
+
+# --------------------------------------------------------------------------- coverage floor (SA02-1)
+
+
+class CoverageFloorTests(_StartedRun):
+    """`start` owns the weekly required set; skipping `record --require` cannot empty it."""
+
+    WEEKLY = ["sec", "re", "arch", "cq", "fe", "perf", "hyg", "slop", "ws"]
+
+    def test_start_registers_the_weekly_required_set(self) -> None:
+        base = self._start()
+        checks = self._rec(base).get("checks", {})
+        self.assertEqual(list(checks), self.WEEKLY)
+        self.assertEqual({v["state"] for v in checks.values()}, {"pending"})
+
+    def test_usable_addins_root_adds_addins_to_the_required_set(self) -> None:
+        repo, ws = self.repo("app", "https://github.com/O/App.git"), self.workspace()
+        addins = self.repo("addins", "https://github.com/O/AddIns.git")
+        commit(addins, ".claude/skills/revit-functionality-audit/SKILL.md", "# fixture\n")
+        code, out, err = run_cli("start", *self.weekly_args(repo, ws, "--deliver", "none"),
+                                 "--root", f"addins={addins}",
+                                 "--state-dir", str(self.state), "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 0, err)
+        rec = self._rec(["--run-id", json.loads(out)["run_id"], "--state-dir", str(self.state)])
+        self.assertEqual(list(rec.get("checks", {})), [*self.WEEKLY, "addins"])
+
+    def test_inspection_complete_is_refused_with_no_lens_returned(self) -> None:
+        base = self._start()
+        code, _, err = run_cli("record", *base, "--inspection", "complete")
+        self.assertEqual(code, 2, err)
+        self.assertIn("required checks not returned", err)
+        self.assertEqual(self._rec(base)["states"]["inspection"], "running")
+
+    def test_complete_coverage_for_an_unregistered_key_is_refused(self) -> None:
+        base = self._start()
+        code, _, err = run_cli("record", *base, "--coverage", "lens-1=complete")
+        self.assertEqual(code, 2, err)
+        self.assertIn("lens-1", err)
+        self.assertNotIn("lens-1", self._rec(base)["coverage"])
+
+    def test_lib_refuses_complete_for_an_unregistered_key(self) -> None:
+        rec = L.new_record("slop-audit-sweep", L.mint_run_id("slop-audit-sweep"), {})
+        L.set_inspection(rec, "running")
+        with self.assertRaises(L.AuditError):
+            L.set_coverage(rec, "app", "complete")
+        L.set_coverage(rec, "app", "lost", "still recordable")
+
+
+# --------------------------------------------------------------------------- slop audit 2026-11-02, SA02-2..5
+
+
+class PublishNeedsReportTests(_StartedRun):
+    """SA02-2: publication follows the report, not just a run outcome and a gate."""
+
+    def test_weekly_publish_without_write_report_is_refused(self) -> None:
+        base = self._start()
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
+        self.assertEqual(run_cli("record", *base, "--run", "degraded")[0], 0)
+        gate = self.tmp / "gate.json"
+        gate.write_text('{"verdict": "incomplete"}', encoding="utf-8")
+        self.assertEqual(run_cli("record", *base, "--gate-file", str(gate))[0], 0)
+        code, _, err = run_cli("publish", *base)
+        self.assertEqual(code, 2)
+        self.assertIn("baselined roots", err)
+        self.assertEqual(self._rec(base)["states"]["publication"], "pending")
+
+    def _lib(self, task: str) -> dict[str, Any]:
+        r = L.new_record(task, L.mint_run_id(task), {"deliver": "none"})
+        L.set_inspection(r, "running")
+        L.set_inspection(r, "complete")
+        L.set_run(r, "ok")
+        return r
+
+    def test_weekly_with_roots_but_no_report_is_refused(self) -> None:
+        r = self._lib("weekly-full-audit")
+        L.set_gate(r, {"verdict": "complete"})
+        r["roots"]["repo"] = {"window": "full"}
+        with self.assertRaisesRegex(L.AuditError, "write-report"):
+            L.publish(r)
+        r["artifacts"].append({"kind": "report", "path": "r.md", "roots": ["repo"]})
+        L.publish(r)
+
+    def test_sweep_changed_root_needs_its_report_and_unchanged_does_not(self) -> None:
+        r = self._lib("slop-audit-sweep")
+        L.set_gate(r, {})
+        r["roots"]["same"] = {"window": "unchanged"}
+        r["roots"]["moved"] = {"window": "abc..def"}
+        with self.assertRaisesRegex(L.AuditError, "moved"):
+            L.publish(r)
+        r["artifacts"].append({"kind": "report", "path": "r.md", "roots": ["moved"]})
+        L.publish(r)
+        self.assertEqual(r["states"]["publication"], "published")
+
+
+class GateShapeTests(_StartedRun):
+    """SA02-3: only a verdict the grrp gate can reach is recorded as the gate result."""
+
+    BAD: tuple[Any, ...] = ({"verdict": "invalid", "validation_errors": ["brief: empty field"]}, "complete",
+                            {"verdict": "PASS"}, {"verdict": "complete", "validation_errors": ["x"]}, {}, None,
+                            [{"verdict": "complete"}])
+
+    def _lib(self, task: str) -> dict[str, Any]:
+        r = L.new_record(task, L.mint_run_id(task), {"deliver": "none"})
+        L.set_inspection(r, "running")
+        L.set_inspection(r, "complete")
+        return r
+
+    def test_weekly_refuses_what_is_not_a_reachable_verdict(self) -> None:
+        for bad in self.BAD:
+            r = self._lib("weekly-full-audit")
+            with self.subTest(gate=bad), self.assertRaises(L.AuditError):
+                L.set_gate(r, bad)
+            self.assertIsNone(r["gate"])
+        for verdict in ("complete", "incomplete", "blocked"):
+            r = self._lib("weekly-full-audit")
+            L.set_gate(r, {"verdict": verdict, "validation_errors": []})
+            self.assertEqual(r["gate"]["verdict"], verdict)
+
+    def test_sweep_checks_each_ledger_entry(self) -> None:
+        for bad in ({"l.ledger.md": {"verdict": "invalid"}}, {"verdict": "complete"}, "complete",
+                    {"a": {"verdict": "complete"}, "b": {"verdict": "blocked", "validation_errors": ["x"]}}):
+            r = self._lib("slop-audit-sweep")
+            with self.subTest(gate=bad), self.assertRaises(L.AuditError):
+                L.set_gate(r, bad)
+        for good in ({}, {"a": {"verdict": "complete"}, "b": {"verdict": "blocked"}}):
+            r = self._lib("slop-audit-sweep")
+            L.set_gate(r, good)
+            self.assertEqual(r["gate"], good)
+
+    def test_cli_refuses_an_invalid_gate_file(self) -> None:
+        base = self._start()
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
+        gate = self.tmp / "gate.json"
+        gate.write_text('{"verdict": "invalid", "validation_errors": ["brief: empty field"]}', encoding="utf-8")
+        code, _, err = run_cli("record", *base, "--gate-file", str(gate))
+        self.assertEqual(code, 2)
+        self.assertIn("invalid", err)
+        self.assertIsNone(self._rec(base)["gate"])
+
+
+class FinalizeHeartbeatTests(Fixture):
+    """SA02-4: finalize finds the heartbeat start opened, and says so when it cannot."""
+
+    TASK = "bimpossible-weekly-full-audit"
+
+    def _start(self) -> str:
+        repo, ws = self.repo("app"), self.workspace()
+        code, out, err = run_cli("start", *self.weekly_args(repo, ws, "--deliver", "none", "--watchdog-task", self.TASK),
+                                 "--state-dir", str(self.state), "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 0, err)
+        return str(json.loads(out)["run_id"])
+
+    def test_finalize_without_watchdog_flags_finishes_the_started_heartbeat(self) -> None:
+        rid = self._start()
+        env = {k: v for k, v in os.environ.items() if k != "AUDIT_WATCHDOG_DIR"}
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            code, _, err = run_cli("finalize", "--run-id", rid, "--state-dir", str(self.state), "--reason", "lens crashed")
+        self.assertEqual((code, err), (0, ""))
+        hb = L.read_json(HB.heartbeat_path(self.wd, self.TASK, rid))
+        self.assertEqual(hb["outcome"], "failed")
+        self.assertTrue(hb["finished_at"])
+
+    def test_finalize_that_cannot_find_the_heartbeat_is_loud(self) -> None:
+        rid = self._start()
+        code, out, err = run_cli("finalize", "--run-id", rid, "--state-dir", str(self.state), "--reason", "lens crashed",
+                                 "--watchdog-dir", str(self.tmp / "elsewhere"))
+        self.assertEqual(code, 1)
+        self.assertIn("heartbeat not found", err)
+        self.assertEqual(json.loads(out)["run"], "failed")  # the record is still finalized
+        rec = L.load_record(self.state / "weekly-full-audit" / f"{rid}.json")
+        self.assertEqual(rec["run"], "failed")
+
+
+class StartFailureTests(Fixture):
+    """SA02-5: an exception after the heartbeat opens still leaves a failed record and a finished heartbeat."""
+
+    def test_exception_after_heartbeat_start_finalizes_failed(self) -> None:
+        repo, ws = self.repo("app"), self.workspace()
+        with unittest.mock.patch.object(R, "_target_snapshots", side_effect=PermissionError("denied: .git/index")):
+            code, _, err = run_cli("start", *self.weekly_args(repo, ws, "--deliver", "none"),
+                                   "--state-dir", str(self.state), "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 2)
+        self.assertIn("denied", err)
+        beats = list((self.wd / "heartbeats").rglob("*.json"))
+        self.assertEqual(len(beats), 1)
+        hb = L.read_json(beats[0])
+        self.assertEqual(hb["outcome"], "failed")
+        self.assertTrue(hb["finished_at"])
+        self.assertIn("PermissionError", hb["note"])
+        records = list((self.state / "weekly-full-audit").glob("*.json"))
+        self.assertEqual(len(records), 1)
+        rec = L.load_record(records[0])
+        self.assertEqual((rec["run"], rec["states"]["inspection"], rec["states"]["publication"]),
+                         ("failed", "failed", "not-published"))
+        self.assertIn("PermissionError", rec["failure_reason"])

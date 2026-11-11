@@ -36,9 +36,9 @@ override), a JSON list of entries::
 
 ``path`` is a glob over repo-relative POSIX paths (``*`` stays within one directory,
 ``**`` crosses directories). ``match``, when given, must be found in the offending
-path token (the run of characters around the hit up to whitespace, a quote or a
-bracket) for the entry to apply, so it never covers another path written on the
-same line; without it the entry covers every finding in the matched files.
+path token (the run of characters around the hit up to whitespace, a quote, a
+bracket or the start of another flagged path) for the entry to apply, so it never
+covers another path written on the same line, even one joined to it; without it the entry covers every finding in the matched files.
 ``reason`` is required. An entry that covers no finding fails the
 run, so the list cannot silently outlive what it was written for.
 
@@ -146,8 +146,21 @@ def scan_line(line: str) -> list[tuple[str, str, int]]:
     return hits
 
 
-def token_span(line: str, pos: int) -> tuple[int, int]:
-    """The path token holding offset ``pos``: up to whitespace, a quote or a bracket on either side."""
+def path_roots(hits: list[tuple[str, str, int]]) -> list[int]:
+    """The offsets on a line where a path begins: each rule hit that starts past everything matched before it. A hit
+    that starts inside an earlier match (a home folder directly under a drive root) is that same path seen twice."""
+    roots, matched_to = [], 0
+    for _, text, pos in sorted(hits, key=lambda hit: hit[2]):
+        if pos >= matched_to:
+            roots.append(pos)
+        matched_to = max(matched_to, pos + len(text))
+    return roots
+
+
+def token_span(line: str, pos: int, roots: list[int] | tuple[int, ...] = ()) -> tuple[int, int]:
+    """The path token holding offset ``pos``: up to whitespace, a quote or a bracket on either side, and no further
+    than the nearest of ``roots`` (see path_roots) on either side, so that a second path joined to the first without
+    a delimiter (a colon as in PATH, a parent-directory hop, a question mark) is a token of its own."""
     def inside(c: str) -> bool:
         return not c.isspace() and c not in TOKEN_DELIMITERS
     start = pos
@@ -156,6 +169,8 @@ def token_span(line: str, pos: int) -> tuple[int, int]:
     end = pos
     while end < len(line) and inside(line[end]):
         end += 1
+    start = max([start, *(r for r in roots if r <= pos)])
+    end = min([end, *(r for r in roots if r > pos)])
     return start, max(end, pos + 1)
 
 
@@ -230,8 +245,10 @@ def check(root: Path, allow_path: Path) -> int:
         scanned += 1
         candidates = [e for e in allow if e["path_re"].match(rel)]
         for lineno, line in enumerate(text.splitlines(), 1):
-            for rid, text_hit, pos in scan_line(line):
-                span = token_span(line, pos)
+            hits = scan_line(line)
+            roots = path_roots(hits)
+            for rid, text_hit, pos in hits:
+                span = token_span(line, pos, roots)
                 covered = next((e for e in candidates if entry_covers(e, line, span)), None)
                 if covered is not None:
                     covered["used"] += 1

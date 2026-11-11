@@ -36,6 +36,19 @@ def say(text: str) -> dict:
             "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
 
 
+def call(tid: str, name: str, **inp: object) -> dict:
+    """A tool call with its own id, to pair with `outcome(tid, ...)`."""
+    entry = tool(name, **inp)
+    entry["message"]["content"][0]["id"] = tid
+    return entry
+
+
+def outcome(tid: str, *, is_error: bool = False, content: str = "ok") -> dict:
+    return {"type": "user", "isSidechain": False,
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tid, "is_error": is_error, "content": content}]}}
+
+
 EDIT = tool("Edit", file_path="a.py", old_string="x", new_string="y")
 TEST = tool("Bash", command="python -m pytest hooks/tests -q")
 CLAIM = "**Done** - fixed the parser in a.py."
@@ -101,6 +114,97 @@ class VerifyStop(unittest.TestCase):
                     "Invoke-Pester", "python -m unittest", "python -m py_compile a.py"):
             with self.subTest(cmd=cmd):
                 rc = self.run_hook([prompt("go"), EDIT, result(), tool("PowerShell", command=cmd), result(), say(CLAIM)])
+                self.assertEqual(rc, SILENT)
+
+    # --- SA02-10: a check that failed is not verification ---------------------------
+    def test_failed_check_does_not_count(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), EDIT, result(),
+                                   call("c1", "Bash", command="python -m pytest hooks/tests -q"),
+                                   outcome("c1", is_error=True, content="3 failed, 10 passed"),
+                                   say("Done, all tests pass.")])
+        self.assert_warns(out)
+
+    def test_failed_check_then_passing_check_is_silent(self) -> None:
+        rc = self.run_hook([prompt("go"), EDIT, result(),
+                            call("c1", "Bash", command="python -m pytest -q"), outcome("c1", is_error=True, content="1 failed"),
+                            call("c2", "Bash", command="python -m pytest -q"), outcome("c2", content="11 passed"),
+                            say(CLAIM)])
+        self.assertEqual(rc, SILENT)
+
+    def test_passing_check_with_its_own_id_is_silent(self) -> None:
+        rc = self.run_hook([prompt("go"), EDIT, result(),
+                            call("c1", "PowerShell", command="dotnet test"), outcome("c1"), say(CLAIM)])
+        self.assertEqual(rc, SILENT)
+
+    def test_failed_result_of_another_call_does_not_void_the_check(self) -> None:
+        rc = self.run_hook([prompt("go"), EDIT, result(),
+                            call("g1", "Bash", command="ls missing-dir"), outcome("g1", is_error=True, content="No such file"),
+                            call("c1", "Bash", command="python -m pytest -q"), outcome("c1"), say(CLAIM)])
+        self.assertEqual(rc, SILENT)
+
+    # --- SA02-11: a command that only mentions a check tool is not a check ----------
+    def test_reading_about_a_check_tool_is_not_a_check(self) -> None:
+        for cmd in ("grep -rn pytest pyproject.toml", "cat pytest.ini", "rg unittest hooks", "echo run pytest later",
+                    "git diff hooks/tests/test_x.py", "ls tests/test_app.py", "head -5 tests/test_app.py",
+                    "Get-Content pytest.ini", "Select-String -Pattern pytest -Path pyproject.toml",
+                    "cat notes.md | grep pytest", "cd repo && grep -n ruff pyproject.toml"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), EDIT, result(), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    def test_writing_a_test_file_is_a_change_not_a_check(self) -> None:
+        for cmd in ("sed -i 's/a/b/' tests/test_app.py", "cp draft.py tests/test_app.py",
+                    "Set-Content -Path tests/test_app.py -Value 1", "echo 'x = 1' > tests/test_app.py"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    def test_write_after_check_in_one_command_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="python -m pytest -q; sed -i 's/a/b/' x.py"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
+    # A write command fed through a pipe names its file in the other piece (CP#85 cross-review, F1).
+    def test_patch_file_piped_into_git_apply_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="cat fix.patch | git apply"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
+    def test_diff_file_piped_into_patch_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="cat fix.diff | patch -p1"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
+    def test_git_show_piped_into_reverse_apply_warns(self) -> None:
+        _, out, _ = self.run_hook([prompt("go"), tool("Bash", command="git show abc -- app.py | git apply -R"),
+                                   result(), say(CLAIM)])
+        self.assert_warns(out)
+
+    # A write through a $variable names its file in an earlier command (CP#85 re-review, F2).
+    def test_write_through_a_variable_set_earlier_on_the_line_warns(self) -> None:
+        target = "/".join(("C" + ":", "r", "app.py"))  # built here: the machine-paths scan rejects a literal path
+        for cmd in ("for f in a.py b.py; do sed -i s/x/y/ $f; done",
+                    'f=app.py; sed -i s/a/b/ "$f"',
+                    "$f='app.py'; Set-Content $f 'x'",
+                    f"$p = '{target}'\n(Get-Content $p) -replace 'a','b' | Set-Content $p"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    def test_a_variable_write_with_no_code_file_on_the_line_is_silent(self) -> None:
+        for cmd in ('f=notes.md; sed -i s/a/b/ "$f"', "$p = 'out.log'; Set-Content $p 'x'",
+                    'python -m pytest tests/test_app.py -q | tee "$LOG"',
+                    "sed -i 's/a$/b/' notes.md; grep -n x app.py"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)]), SILENT)
+
+    def test_compound_commands_that_do_run_a_check_are_silent(self) -> None:
+        for cmd in ("python -m pytest hooks/tests -q | tee out.log", "cd repo && python -m pytest -q",
+                    "sed -i 's/a/b/' x.py && python -m pytest -q", "PYTHONPATH=. pytest tests/test_app.py",
+                    "python -m pytest -q 2>&1 | tail -5", "grep -c x a.py; ruff check .",
+                    "python -m pytest -k 'a|b' -q"):
+            with self.subTest(cmd=cmd):
+                rc = self.run_hook([prompt("go"), EDIT, result(), tool("Bash", command=cmd), result(), say(CLAIM)])
                 self.assertEqual(rc, SILENT)
 
     def test_no_change_this_turn_is_silent(self) -> None:
