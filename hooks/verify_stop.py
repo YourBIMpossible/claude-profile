@@ -13,8 +13,9 @@ prompt, subagent sidechains excluded):
   2. no check command ran after the last change (pytest, npm test, dotnet build, tsc,
      ruff, ...: see CHECK_RE). A command line is read one simple command at a time; a
      reader or editor that only names a check tool or a test file (grep, cat, sed, ...:
-     see NOT_A_RUNNER) is not a check, and neither is a check whose tool result came
-     back as an error;
+     see NOT_A_RUNNER) is not a check, and neither is an install of a check tool, a
+     comment, a no-op mode (--version, --collect-only), a check sent to the background
+     with `&`, or a check whose tool result came back as an error;
   3. the final assistant message claims completion (done / fixed / complete / ...);
   4. that message does not already disclose the gap ("not verified", "untested", ...).
 
@@ -221,6 +222,16 @@ NOT_A_RUNNER = frozenset({
     "write-output", "write-host", "set-content", "add-content", "out-file", "new-item", "copy-item", "move-item",
     "remove-item", "rename-item", "set-location", "measure-object", "select-object", "where-object",
 })
+# A check tool run in a mode that checks nothing (`pytest --version`, `--collect-only`).
+NO_OP_RE = re.compile(r"(?:^|\s)(?:--version|--help|--collect-only|--co)(?=\s|$)")
+# Installing a check tool (`pip install pytest`, `npm install --save-dev jest`) runs no check.
+INSTALL_RE = re.compile(
+    r"""(?ix)
+    \b(?:pip3?|uv\s+pip|conda|mamba|pipx)\s+install\b
+    | \b(?:npm|pnpm|yarn|bun)\s+(?:install|i|add)\b
+    | \buv\s+add\b | \bInstall-(?:Module|Package)\b
+    """
+)
 ENV_ASSIGN_RE = re.compile(r"\s*(?:[A-Za-z_]\w*=\S*\s+)*")
 VARIABLE_RE = re.compile(r"\$[A-Za-z_{(]")  # `$f`, `${f}`, `$(...)`; not a regex `$` anchor
 
@@ -228,7 +239,9 @@ VARIABLE_RE = re.compile(r"\$[A-Za-z_{(]")  # `$f`, `${f}`, `$(...)`; not a rege
 def split_pipelines(cmd: str) -> list[list[str]]:
     """Split a shell command line into pipelines, and each pipeline into its `|` pieces.
 
-    Pipelines are separated by `&&`, `||`, `;` and newlines, outside quotes.
+    Pipelines are separated by `&&`, `||`, `;`, newlines and a single `&`, outside
+    quotes. A pipeline that a single `&` sent to the background keeps that `&` at the
+    end of its last piece (see `in_background`).
     """
     pipelines: list[list[str]] = [[]]
     buf: list[str] = []
@@ -257,12 +270,30 @@ def split_pipelines(cmd: str) -> list[list[str]]:
                 pipelines.append([])
             elif ch != "|":
                 pipelines.append([])
+        elif ch == "&" and ends_command(cmd, i, buf):
+            pipelines[-1].append("".join(buf) + "&")
+            buf = []
+            pipelines.append([])
         else:
             buf.append(ch)
         i += 1
     pipelines[-1].append("".join(buf))
     cleaned = ([s for s in (piece.strip() for piece in pipeline) if s] for pipeline in pipelines)
     return [pipeline for pipeline in cleaned if pipeline]
+
+
+def ends_command(cmd: str, i: int, buf: list[str]) -> bool:
+    """True when the single `&` at cmd[i] ends a command (bash: run it in the background).
+
+    Not when it is part of a redirect (`2>&1`, `>&2`, `&>`), follows a pipe (`|&`), or is
+    PowerShell's call operator (`& cmd` at the start of a command, `$r = & cmd`).
+    """
+    before = "".join(buf).rstrip()
+    return bool(before) and before[-1] not in "<>|&=(" and not cmd.startswith(">", i + 1)
+
+
+def in_background(pipeline: list[str]) -> bool:
+    return pipeline[-1].endswith("&") and not pipeline[-1].endswith("&&")
 
 
 def split_segments(cmd: str) -> list[str]:
@@ -274,7 +305,7 @@ def runs_check(segment: str) -> bool:
     """True when one simple command (no `&&`, `|`, ...) plausibly ran a test/build/lint."""
     rest = segment[ENV_ASSIGN_RE.match(segment).end():].lstrip("({& ")
     words = rest.split(None, 1)
-    if not words:
+    if not words or rest.startswith("#") or NO_OP_RE.search(rest) or INSTALL_RE.search(rest):
         return False
     head = re.split(r"[/\\]", words[0].strip("'\""))[-1].lower()
     if head.endswith(".exe"):
@@ -313,9 +344,11 @@ def needs_warning(turn: list[dict[str, Any]], final_text: str) -> bool:
                 # A write fed through a pipe (`cat fix.patch | git apply`) names its file in
                 # another piece, so the pieces that are not checks are also read together.
                 others = " | ".join(piece for piece in pipeline if not runs_check(piece))
+                background = in_background(pipeline)
                 for segment in pipeline:
                     if runs_check(segment):
-                        if tid not in failed:  # a check that errored verified nothing
+                        # A check that errored, or that was left running, verified nothing.
+                        if tid not in failed and not background:
                             checked_since_change = True
                     elif shell_changes_code(segment) or (WRITE_RE.search(segment) and (
                             shell_changes_code(others)
@@ -331,13 +364,15 @@ def main() -> int:
         return 0
     raw = sys.stdin.buffer.read()
     if not raw.strip():
-        return 0
+        raise ValueError("empty hook input")
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("stop_hook_active"):
+    if not isinstance(payload, dict):
+        raise ValueError("hook input is not a JSON object")
+    if payload.get("stop_hook_active"):
         return 0
     path = payload.get("transcript_path")
     if not isinstance(path, str) or not os.path.isfile(path):
-        return 0
+        raise FileNotFoundError("no readable transcript_path")
     turn = current_turn(read_tail(path))
     final_text = payload.get("last_assistant_message")
     if not isinstance(final_text, str) or not final_text.strip():
