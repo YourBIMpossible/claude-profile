@@ -17,7 +17,8 @@
 #   - Branch deletions are not checked.
 #   - Timing: the gate takes about a minute and a half per pushed commit; give `git push` a 5-minute timeout.
 #   - Emergency bypass, explicit and audited:  BIMP_PREPUSH_BYPASS="<reason>" git push ...
-#     appends a line to <git-common-dir>/prepush-bypass.log. `--no-verify` skips the hook and leaves no trail.
+#     appends a line to <git-common-dir>/prepush-bypass.log; if that line cannot be written the push is BLOCKED.
+#     `--no-verify` skips the hook and leaves no trail.
 #     Claude sessions can use neither (ship_guard refuses both); the owner's own terminal can.
 # Python lookup: python3, python, then py -3; each is probed, so a store stub that fails is skipped.
 # POSIX sh, LF endings.
@@ -29,7 +30,10 @@ common=$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd) || { echo 
 
 if [ -n "${BIMP_PREPUSH_BYPASS:-}" ]; then
     log="$common/prepush-bypass.log"
-    printf '%s pre-push bypass: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BIMP_PREPUSH_BYPASS" >> "$log"
+    if ! printf '%s pre-push bypass: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BIMP_PREPUSH_BYPASS" >> "$log"; then
+        echo "pre-push: BLOCKED - the bypass could not be logged ($log), and a bypass with no record is not allowed." >&2
+        exit 1
+    fi
     echo "pre-push: gate BYPASSED ($BIMP_PREPUSH_BYPASS) - logged to $log" >&2
     exit 0
 fi

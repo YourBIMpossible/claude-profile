@@ -95,6 +95,32 @@ def test_gh_pr_merge_on_a_green_pinned_head_is_allowed():
     assert fake.calls[0][:5] == ["gh", "pr", "view", "7", "--repo"]
 
 
+def _done(name: str, conclusion: str) -> dict:
+    return {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion}
+
+
+@pytest.mark.parametrize("rollup", [[_done("machine-paths", "SKIPPED")], [_done("lint", "NEUTRAL")],
+                                    [_done("machine-paths", "SKIPPED"), _done("lint", "NEUTRAL")]],
+                         ids=["all-skipped", "all-neutral", "skipped-and-neutral"])
+def test_a_head_whose_every_check_was_skipped_or_neutral_is_not_green(rollup):
+    # SA09-1: a draft PR's only check run is SKIPPED; "at least one check" must mean one that ran.
+    merge = f"gh pr merge 7 --repo o/r --squash --match-head-commit {HEAD}"
+    for command in (merge, f"gh pr ready 7 --repo o/r && {merge}"):
+        reason = decide(bash(command), run=FakeGh(rollup))
+        assert reason and "not green" in reason and "no check ran" in reason
+    skipped_run = {"name": "gate (Linux)", "status": "completed", "conclusion": "skipped"}
+    reason = decide(bash(merge), run=FakeGh([], runs=[skipped_run]))
+    assert reason and "no check ran" in reason
+
+
+def test_a_skipped_check_beside_one_that_passed_stays_green():
+    merge = bash(f"gh pr merge 7 --repo o/r --squash --match-head-commit {HEAD}")
+    skipped = [_done("machine-paths", "SKIPPED")]
+    assert decide(merge, run=FakeGh(skipped + [_done("tests", "SUCCESS")])) is None
+    assert decide(merge, run=FakeGh(skipped + [{"__typename": "StatusContext", "context": "ci", "state": "SUCCESS"}])) is None
+    assert decide(merge, run=FakeGh(skipped, runs=[{"name": "gate", "status": "completed", "conclusion": "success"}])) is None
+
+
 DISPATCHED_GREEN = [{"name": "gate (Linux)", "status": "completed", "conclusion": "success"},
                     {"name": "gate (Windows)", "status": "completed", "conclusion": "success"}]
 
@@ -314,6 +340,24 @@ def test_push_from_a_repo_without_the_gate_is_allowed(tmp_path):
     plain = make_repo(tmp_path / "plain", gated=False)
     assert decide(bash("git push", cwd=str(plain))) is None
     assert decide(bash("git push", cwd=str(tmp_path))) is None  # not a repository at all
+
+
+def test_a_push_whose_gate_state_git_cannot_report_is_refused(repo):
+    # SA09-4: a git timeout or a failing rev-parse inside a repository is "unknown", not "gate on".
+    def timing_out(argv, cwd):
+        raise subprocess.TimeoutExpired(argv, 25)
+
+    def dubious(argv, cwd):
+        return subprocess.CompletedProcess(argv, 128, "", "fatal: detected dubious ownership in repository at 'x'\n")
+
+    reason = ship_guard.gate_is_on(str(repo), run=timing_out)
+    assert reason and "could not ask git" in reason
+    reason = ship_guard.gate_is_on(str(repo), run=dubious)
+    assert reason and "dubious ownership" in reason
+    sub = repo / "src"
+    sub.mkdir()
+    assert "dubious ownership" in ship_guard.gate_is_on(str(sub), run=dubious)
+    assert "dubious ownership" in decide(bash("git push origin HEAD", cwd=str(repo)), run=dubious)
 
 
 def test_the_push_directory_is_followed(tmp_path, repo):

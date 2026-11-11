@@ -19,8 +19,9 @@ MERGES. A merge is allowed only when every check on the PR head is green, and th
   - the app's auto-merge switch (`mcp__ccd_pr__set_auto_merge`) when it turns auto-merge on: with no required checks,
     auto-merge has nothing to wait for.
 
-Green means: the head commit reports at least one check, and every check run has completed with SUCCESS, NEUTRAL or
-SKIPPED and every commit status is SUCCESS. Pending, failed, cancelled, timed out, action required, stale or missing all
+Green means: the head commit reports at least one check that passed (a check run with SUCCESS or a commit status of
+SUCCESS), and every check run has completed with SUCCESS, NEUTRAL or SKIPPED and every commit status is SUCCESS. A head
+whose checks were all skipped or neutral is not green: nothing ran. Pending, failed, cancelled, timed out, action required, stale or missing all
 refuse the merge. The state comes from `gh pr view --json statusCheckRollup` plus the head commit's own check runs
 (`gh api repos/OWNER/REPO/commits/<head>/check-runs`: a manually dispatched workflow reports only there), at the moment of
 the merge, run in the directory the merge runs in (followed through `cd` like a push, below). The pinned SHA must be the full head the guard
@@ -386,12 +387,14 @@ def not_green(rollup: list) -> list:
     """Why the head is not green: one line per check that is not, or the empty list when every check is green."""
     if not rollup:
         return ["no checks reported on the head commit"]
-    problems = []
+    problems, ran = [], False
     for item in rollup:
         if item.get("__typename") == "StatusContext" or "context" in item:
             name, state = item.get("context") or "status", (item.get("state") or "").upper()
             if state != "SUCCESS":
                 problems.append(f"{name}: {state.lower() or 'unknown'}")
+            else:
+                ran = True
             continue
         name = item.get("name") or item.get("workflowName") or "check"
         status, conclusion = (item.get("status") or "").upper(), (item.get("conclusion") or "").upper()
@@ -399,6 +402,10 @@ def not_green(rollup: list) -> list:
             problems.append(f"{name}: {status.lower() or 'unknown'}")
         elif conclusion not in GREEN_CONCLUSIONS:
             problems.append(f"{name}: {conclusion.lower() or 'no conclusion'}")
+        elif conclusion == "SUCCESS":
+            ran = True
+    if not problems and not ran:
+        return ["no check ran on the head commit: every check is skipped or neutral"]
     return problems
 
 
@@ -1048,10 +1055,16 @@ def gate_is_on(directory: str, run: Runner = _run) -> Optional[str]:
         return f"the push runs in {directory}, which does not exist"
     try:
         top = run(["git", "-C", directory, "rev-parse", "--show-toplevel"], None)
-    except (OSError, subprocess.SubprocessError):
-        return None  # no git here: there is no push either
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (f"could not ask git which repository {directory} is in ({type(exc).__name__}: {exc}), so the guard "
+                "cannot tell whether the push runs the gate. Run the push again.")
     if top.returncode != 0:
-        return None  # not a work tree: nothing of a gated repository to push
+        here = Path(directory).absolute()
+        if not any((folder / ".git").exists() for folder in (here, *here.parents)):
+            return None  # not in a repository: nothing of a gated repository to push
+        detail = (top.stderr or top.stdout or "").strip().splitlines()[-1:] or [f"exit {top.returncode}"]
+        return (f"{directory} is inside a git repository, but git could not report its top folder ({detail[0]}), so "
+                "the guard cannot tell whether the push runs the gate.")
     root = Path(top.stdout.strip())
     hook = root / ".githooks" / "pre-push"
     try:
