@@ -129,6 +129,29 @@ def run_cli(*argv: str) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
+def return_pending(base: list[str], skip: tuple[str, ...] = ()) -> None:
+    """Return every still-pending required check the way a child does (declared output, attested
+    method, `check --state returned`), so a test about something else can pass the coverage floor."""
+    rid, sd = base[base.index("--run-id") + 1], Path(base[base.index("--state-dir") + 1])
+    rec = L.load_record(sd / L.parse_run_id(rid).task_id / f"{rid}.json")
+    evd = Path(run_cli("evidence-dir", *base)[1].strip())
+    meth = sd / "fixture-ledgers" / "floor-method.md"
+    meth.parent.mkdir(parents=True, exist_ok=True)
+    meth.write_text("# fixture method\n", encoding="utf-8")
+    for key in L.pending_checks(rec):
+        if key in skip:
+            continue
+        ev = evd / f"floor-{key}.md"
+        code, _, err = dispatch(base, key, f"FLOOR-{key}", meth, ev)
+        if code != 0:
+            raise AssertionError(err)
+        ev.write_text(attest(meth) + "read fixture/\n", encoding="utf-8")
+        code, _, err = run_cli("check", *base, "--key", key, "--state", "returned", "--inspected", "fixture/",
+                               "--evidence", str(ev))
+        if code != 0:
+            raise AssertionError(err)
+
+
 class Fixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="audit-fixture-"))
@@ -358,7 +381,6 @@ class StateMachineTests(unittest.TestCase):
     def test_separate_states_happy_path(self) -> None:
         r = self.rec()
         L.set_inspection(r, "running")
-        L.set_coverage(r, "lens-1", "complete")
         L.set_coverage(r, "addins", "not-run-optional", "NOT RUN (addins root not present)")
         L.set_inspection(r, "complete")
         L.set_run(r, "ok")  # declared gaps leave the run ok
@@ -527,6 +549,7 @@ class RollbackTests(Fixture):
         self.assertEqual(code, 0, out + err)
         rid = json.loads(out)["run_id"]
         base = ["--run-id", rid, "--state-dir", str(self.state)]
+        return_pending(base)
         self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(run_cli("record", *base, "--run", "degraded")[0], 0)
         gate = self.tmp / "gate.json"
@@ -738,6 +761,7 @@ class WeeklyRunTests(Fixture):
         self.assertEqual(started["coverage"]["handoff"]["status"], "handoff-pending")
         self.assertEqual(started["coverage"]["autofix"]["status"], "not-run-flag-off")
         base = ["--run-id", rid, "--state-dir", str(self.state)]
+        return_pending(base)
         outdir = self.tmp / "reports"
         for name, path in (("repo", repo), ("workspace", ws)):
             code, out, err = run_cli("baseline", "--root", f"{name}={path}", "--report-dir", str(outdir),
@@ -756,7 +780,8 @@ class WeeklyRunTests(Fixture):
         self.assertEqual(fm["roots"]["repo"]["identity"], "github.com/O/App")
         code, _, err = run_cli("publish", *base)
         self.assertEqual(code, 2)  # before run outcome / gate
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, err = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
         self.assertIn("softer", err)
@@ -804,6 +829,7 @@ class WeeklyRunTests(Fixture):
                                  str(self.state), "--watchdog-dir", str(self.wd))[1])["run_id"]
         base = ["--run-id", rid, "--state-dir", str(self.state)]
         run_cli("baseline", "--root", f"repo={repo}", "--pattern", "x*.md", *base)
+        return_pending(base)
         body = self.tmp / "b.md"
         body.write_text("x\n", encoding="utf-8")
         code, _, err = run_cli("write-report", *base, "--dir", str(repo / "99_Archive"), "--stem", "r",
@@ -1358,6 +1384,7 @@ class RequiredCheckCliTests(Fixture):
             return subprocess.run([sys.executable, str(RUN_PY), *a], capture_output=True, text=True)
 
         self.assertEqual(run("record", *base, "--require", "sec", "fe").returncode, 0)
+        return_pending(base, skip=("sec", "fe"))
         w = run("wait", *base, "--phase", "convergence")
         self.assertEqual(w.returncode, 1)
         self.assertEqual(json.loads(w.stdout)["pending"], ["sec", "fe"])
@@ -1471,6 +1498,7 @@ class FixtureEndToEndTests(Fixture):
                                  "--evidence", str(ev), "--findings", str(fj))[0], 0)
         self.assertEqual(run_cli("check", *base, "--key", "ws", "--state", "returned", "--inspected", "scripts/",
                                  "--remaining", "system/", "--why", "budget", "--evidence", str(wsev))[0], 0)
+        return_pending(base)
         self.assertEqual(run_cli("wait", *base, "--phase", "report")[0], 0)
         code, report, err = run_cli("write-report", *base, "--dir", str(outdir), "--stem", stem, "--body-file", str(body))
         self.assertEqual(code, 0, err)
@@ -1588,6 +1616,7 @@ class AuditDefectRegressionTests(Fixture):
                                      "--pattern", "weekly-full-audit_*.md", *base)[0], 0)
         body = self.tmp / "body.md"
         body.write_text("# W\n\n**ctxcheck:** PASS 73 · WARN 2 · FAIL 0\n", encoding="utf-8")
+        return_pending(base)
         code, _, err = run_cli("write-report", *base, "--dir", str(outdir), "--stem", "r", "--body-file", str(body))
         self.assertEqual(code, 2)
         self.assertIn("verbatim", err)
@@ -1658,7 +1687,7 @@ class DispatchContractTests(Fixture):
             "outside": ("sec", meth, self.tmp / "scratch" / "out.md", "outside"),
             "pre-existing": ("sec", meth, pre, "already exists"),
             "missing method": ("sec", self.tmp / "nope.md", evd / "a.md", "method file missing"),
-            "unregistered key": ("arch", meth, evd / "b.md", "never required"),
+            "unregistered key": ("lens-x", meth, evd / "b.md", "never required"),
         }
         for name, (key, m, out, msg) in cases.items():
             with self.subTest(name):
@@ -1732,7 +1761,8 @@ class FileDeliveryTests(_StartedRun):
 
     def _publish(self, base: list[str]) -> Path:
         led = _touch(self.tmp / "l.ledger.md")
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(run_cli("record", *base, "--run", "degraded", "--ledger", str(led))[0], 0)
         gate = self.tmp / "gate.json"
         gate.write_text('{"verdict": "PASS", "note": "a · b — c"}', encoding="utf-8")
@@ -1893,7 +1923,8 @@ class OutputsAuditTests(_StartedRun):
         rec = self._rec(base)
         self.assertEqual(rec["undeclared_outputs"], [stray.resolve().as_posix()])
         self.assertIn("defect:undeclared-outputs", [e["event"] for e in rec["events"]])
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, err = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
         self.assertIn("softer", err)
@@ -2149,7 +2180,8 @@ class OutputsAttributionTests(_StartedRun):
         rec = self._rec(base)
         self.assertIn("observed:unattributed-target-changes", [e["event"] for e in rec["events"]])
         self.assertNotIn("undeclared_outputs", rec)
-        self.assertEqual(run_cli("record", *base, "--coverage", "lens-1=complete", "--inspection", "complete")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         rec = self._rec(base)
         without = {k: v for k, v in rec.items() if k != "unattributed_target_changes"}
         self.assertEqual(L.derive_run(rec), L.derive_run(without))  # observation never moves the floor
@@ -2266,6 +2298,7 @@ class ChildRuleToolingTests(_StartedRun):
         self.assertEqual(json.loads(out)["modified_after_collect"], [ev.resolve().as_posix()])
         rec = self._rec(base)
         self.assertIn("defect:output-modified-after-collect", [e["event"] for e in rec["events"]])
+        return_pending(base)
         self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, err = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
@@ -2276,6 +2309,7 @@ class ChildRuleToolingTests(_StartedRun):
         base = self._start()
         ev = self._collect(base)
         ev.write_text("replaced\n", encoding="utf-8")
+        return_pending(base)
         self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         code, _, _ = run_cli("record", *base, "--run", "ok")
         self.assertEqual(code, 2)
@@ -2306,7 +2340,9 @@ class SweepRunLogTests(Fixture):
             made.append(Path(out.strip()))
         self.assertEqual([p.name for p in made], ["2026-10-30__slop-audit-sweep-run.md",
                                                   "2026-10-30__slop-audit-sweep-run-2.md"])
-        self.assertEqual(run_cli("record", *base, "--coverage", "app=complete", "--inspection", "complete")[0], 0)
+        self.assertEqual(run_cli("record", *base, "--require", "app")[0], 0)
+        return_pending(base)
+        self.assertEqual(run_cli("record", *base, "--inspection", "complete")[0], 0)
         self.assertEqual(run_cli("record", *base, "--run", "ok")[0], 0)
         gate = self.tmp / "gate.json"
         gate.write_text("{}", encoding="utf-8")
@@ -2375,3 +2411,50 @@ class ChildRuleBriefTests(unittest.TestCase):
         self.assertNotIn("the working tree at HEAD and nothing else", text)
         self.assertNotIn("Do not claim G4 state for any commit other than HEAD", text)
         self.assertIn("exact inspected revision", text)
+
+
+# --------------------------------------------------------------------------- coverage floor (SA02-1)
+
+
+class CoverageFloorTests(_StartedRun):
+    """`start` owns the weekly required set; skipping `record --require` cannot empty it."""
+
+    WEEKLY = ["sec", "re", "arch", "cq", "fe", "perf", "hyg", "slop", "ws"]
+
+    def test_start_registers_the_weekly_required_set(self) -> None:
+        base = self._start()
+        checks = self._rec(base).get("checks", {})
+        self.assertEqual(list(checks), self.WEEKLY)
+        self.assertEqual({v["state"] for v in checks.values()}, {"pending"})
+
+    def test_usable_addins_root_adds_addins_to_the_required_set(self) -> None:
+        repo, ws = self.repo("app", "https://github.com/O/App.git"), self.workspace()
+        addins = self.repo("addins", "https://github.com/O/AddIns.git")
+        commit(addins, ".claude/skills/revit-functionality-audit/SKILL.md", "# fixture\n")
+        code, out, err = run_cli("start", *self.weekly_args(repo, ws, "--deliver", "none"),
+                                 "--root", f"addins={addins}",
+                                 "--state-dir", str(self.state), "--watchdog-dir", str(self.wd))
+        self.assertEqual(code, 0, err)
+        rec = self._rec(["--run-id", json.loads(out)["run_id"], "--state-dir", str(self.state)])
+        self.assertEqual(list(rec.get("checks", {})), [*self.WEEKLY, "addins"])
+
+    def test_inspection_complete_is_refused_with_no_lens_returned(self) -> None:
+        base = self._start()
+        code, _, err = run_cli("record", *base, "--inspection", "complete")
+        self.assertEqual(code, 2, err)
+        self.assertIn("required checks not returned", err)
+        self.assertEqual(self._rec(base)["states"]["inspection"], "running")
+
+    def test_complete_coverage_for_an_unregistered_key_is_refused(self) -> None:
+        base = self._start()
+        code, _, err = run_cli("record", *base, "--coverage", "lens-1=complete")
+        self.assertEqual(code, 2, err)
+        self.assertIn("lens-1", err)
+        self.assertNotIn("lens-1", self._rec(base)["coverage"])
+
+    def test_lib_refuses_complete_for_an_unregistered_key(self) -> None:
+        rec = L.new_record("slop-audit-sweep", L.mint_run_id("slop-audit-sweep"), {})
+        L.set_inspection(rec, "running")
+        with self.assertRaises(L.AuditError):
+            L.set_coverage(rec, "app", "complete")
+        L.set_coverage(rec, "app", "lost", "still recordable")
