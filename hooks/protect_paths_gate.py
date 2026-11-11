@@ -149,20 +149,20 @@ def spellings(raw_path: str) -> "list[str]":
     CannotCheck: its short names and links are unknown, so the caller blocks.
     """
     plain = plain_spelling(raw_path)
-    out = [plain]
     written = as_written(raw_path)
-    if written != plain:
-        out.append(written)
-    where, target = locate(plain)
-    if where != LOCAL:
-        return out
-    try:
-        real = os.path.realpath(target).replace("\\", "/")
-    except (OSError, ValueError) as exc:
-        raise CannotCheck(f"the path could not be resolved ({type(exc).__name__}), so it cannot "
-                          "be checked against the protected names") from exc
-    if real.lower() != plain.lower():
-        out.append(real)
+    out = [plain] if written == plain else [plain, written]
+    # Both spellings are resolved: off Windows a link can itself be named `link.` or `a:b`.
+    for spelling in list(out):
+        where, target = locate(spelling)
+        if where != LOCAL:
+            continue
+        try:
+            real = os.path.realpath(target).replace("\\", "/")
+        except (OSError, ValueError) as exc:
+            raise CannotCheck(f"the path could not be resolved ({type(exc).__name__}), so it "
+                              "cannot be checked against the protected names") from exc
+        if real.lower() not in (seen.lower() for seen in out):
+            out.append(real)
     return out
 
 

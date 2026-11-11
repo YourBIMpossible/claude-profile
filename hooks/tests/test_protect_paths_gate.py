@@ -443,6 +443,34 @@ def test_trailing_dots_and_spaces_are_dropped_from_the_name() -> None:
             assert not gate.is_protected(raw) and not gate.needs_approval(raw), raw
 
 
+def test_the_name_as_written_is_resolved_too() -> None:
+    """Off Windows a link can itself be named `link.` or `a:b`; cutting the name first must not hide its target."""
+    import os
+    gate = _load_gate()
+    links = {"work/link.": "work/credentials.json", "work/a:b": "work/NORTHSTAR.md"}
+    real_realpath = os.path.realpath
+
+    def fake(path, *args, **kwargs):
+        return links.get(str(path).replace("\\", "/"), str(path))
+
+    os.path.realpath = fake
+    try:
+        assert gate.is_protected("work/link."), "a link named with a trailing dot was not followed"
+        assert gate.needs_approval("work/a:b"), "a link named with a colon was not followed"
+        assert not gate.is_protected("work/notes.md.") and not gate.needs_approval("work/notes.md:meta")
+
+        def failing_on_written(path, *args, **kwargs):
+            if str(path).endswith("."):
+                raise OSError("the device is not ready")
+            return str(path)
+
+        os.path.realpath = failing_on_written
+        reason = gate.is_protected("work/notes.md.")
+        assert reason and "resolved" in reason, reason
+    finally:
+        os.path.realpath = real_realpath
+
+
 def main() -> int:
     failures = run_checks()
     total = len(BLOCKED) + len(ALLOWED) + len(ASKED)
