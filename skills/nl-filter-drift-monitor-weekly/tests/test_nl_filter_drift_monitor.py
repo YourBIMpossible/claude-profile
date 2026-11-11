@@ -105,6 +105,93 @@ def test_live_container_down_is_not_run(tmp_path: Path, monkeypatch: pytest.Monk
     assert "is not running" in (ledger / nlmon.ALERT_NAME).read_text(encoding="utf-8")
 
 
+LIVE_PASS = "nl-filter-monitor mode=live samples=37 score=1.0 verdict=PASS\n"
+LIVE_SUMMARY = {"schema": "nl-filter-monitor/1", "mode": "live", "sample_count": 37,
+                "score": 1.0, "flips": 0, "transport_errors": 0, "exit_code": 0}
+
+
+def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, exec_rc: int = 0, exec_out: str = LIVE_PASS,
+         cp_ok: bool = True, rm_rc: int = 0) -> tuple[int, Path, list[list[str]]]:
+    """Run --mode live against an in-process `_run` stub: no docker, no git, no network.
+    A standing alert from an earlier red run is seeded so each test can see its fate."""
+    calls: list[list[str]] = []
+
+    def stub(cmd, *, cwd=None, env=None, timeout=1800):  # type: ignore[no-untyped-def]
+        cmd = list(cmd)
+        calls.append(cmd)
+        if cmd[0] == "git":
+            return 0, "0123456789abcdef\n"
+        if cmd[:2] == ["docker", "cp"]:
+            if not cp_ok:
+                return 1, "Error response from daemon: no such file\n"
+            Path(cmd[3]).write_text(json.dumps(LIVE_SUMMARY), encoding="utf-8")
+            return 0, ""
+        if "rm" in cmd:
+            return rm_rc, ""
+        return exec_rc, exec_out
+
+    monkeypatch.setattr(nlmon, "_run", stub)
+    monkeypatch.setattr(nlmon, "_container_running", lambda c: True)
+    ledger = tmp_path / "ledger"
+    ledger.mkdir()
+    (ledger / nlmon.ALERT_NAME).write_text("standing", encoding="utf-8")
+    code = nlmon.main(["--mode", "live", "--repeats", "2", "--ledger-dir", str(ledger),
+                       "--repo", str(tmp_path / "repo")])
+    return code, ledger, calls
+
+
+def is_eval(cmd: list[str]) -> bool:
+    return "tests/eval/nl_filter_monitor.py" in cmd
+
+
+def test_live_green_records_pass_and_clears_alert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, ledger, calls = live(tmp_path, monkeypatch)
+    assert code == 0
+    log = (ledger / nlmon.LEDGER_NAME).read_text(encoding="utf-8")
+    assert "| PASS |" in log and "| 37 |" in log and "(alert cleared)" in log
+    assert not (ledger / nlmon.ALERT_NAME).exists()
+    assert sum(is_eval(c) for c in calls) == 1
+
+
+def test_live_cp_failure_is_not_run_and_keeps_alert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, ledger, _ = live(tmp_path, monkeypatch, cp_ok=False)
+    assert code == 2
+    log = (ledger / nlmon.LEDGER_NAME).read_text(encoding="utf-8")
+    assert "| PASS |" not in log and "(alert cleared)" not in log
+    assert "**RED (did not run)**" in log and "docker cp" in log
+    assert (ledger / nlmon.ALERT_NAME).exists()
+
+
+@pytest.mark.parametrize("cp_ok", [False, True])
+@pytest.mark.parametrize("exec_rc", [0, 1])
+def test_live_missing_verdict_is_not_run_and_keeps_alert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         cp_ok: bool, exec_rc: int) -> None:
+    code, ledger, _ = live(tmp_path, monkeypatch, exec_rc=exec_rc, exec_out="some unrelated output\n",
+                           cp_ok=cp_ok)
+    assert code == 2
+    log = (ledger / nlmon.LEDGER_NAME).read_text(encoding="utf-8")
+    assert "| PASS |" not in log and "(alert cleared)" not in log
+    assert "**RED (did not run)**" in log
+    assert "UNPARSEABLE" in (ledger / nlmon.ALERT_NAME).read_text(encoding="utf-8")
+
+
+def test_live_stale_artifact_not_cleared_is_not_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, ledger, calls = live(tmp_path, monkeypatch, rm_rc=1)
+    assert code == 2
+    assert not any(is_eval(c) for c in calls)  # the paid evaluator never ran
+    assert "| PASS |" not in (ledger / nlmon.LEDGER_NAME).read_text(encoding="utf-8")
+    assert (ledger / nlmon.ALERT_NAME).exists()
+
+
+def test_green_keeps_alert_and_fails_when_ledger_append_fails(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger"
+    (ledger / nlmon.LEDGER_NAME).mkdir(parents=True)  # the append raises OSError
+    (ledger / nlmon.ALERT_NAME).write_text("standing", encoding="utf-8")
+    code, ledger = run(tmp_path)
+    assert code != 0
+    assert (ledger / nlmon.ALERT_NAME).read_text(encoding="utf-8") == "standing"
+
+
 @pytest.mark.parametrize("flag", ["--write-baseline", "--write-baseline=1", "-WriteBaseline"])
 def test_refuses_write_baseline(tmp_path: Path, flag: str) -> None:
     code, ledger = run(tmp_path, flag)
