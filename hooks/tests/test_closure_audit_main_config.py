@@ -55,9 +55,9 @@ class ClosureAuditMainConfig(unittest.TestCase):
     def good(self) -> dict:
         return {"name": "good-repo", "path": str(self.repo)}
 
-    def run_hook(self, event: str = "SessionStart") -> tuple[int, str]:
-        proc = subprocess.run([sys.executable, str(self.hook)], input=json.dumps({"hook_event_name": event}).encode(),
-                              capture_output=True, timeout=60)
+    def run_hook(self, event: str = "SessionStart", *, raw: bytes | None = None) -> tuple[int, str]:
+        stdin = raw if raw is not None else json.dumps({"hook_event_name": event}).encode()
+        proc = subprocess.run([sys.executable, str(self.hook)], input=stdin, capture_output=True, timeout=60)
         return proc.returncode, proc.stdout.decode("utf-8")
 
     def assert_attention(self, out: str, *causes: str) -> None:
@@ -122,6 +122,15 @@ class ClosureAuditMainConfig(unittest.TestCase):
         code, out = self.run_hook()
         self.assertEqual(code, 0)
         self.assert_attention(out, "RuntimeError")
+
+    # CP#85 residual R5: unreadable hook input is an unexpected error, not "some other event".
+    def test_unreadable_hook_input_is_reported(self) -> None:
+        self.write_config([self.good()])
+        for raw in (b"", b"not json", b"[]"):
+            with self.subTest(raw=raw):
+                code, out = self.run_hook(raw=raw)
+                self.assertEqual(code, 0)
+                self.assert_attention(out, "hook input")
 
 
 if __name__ == "__main__":

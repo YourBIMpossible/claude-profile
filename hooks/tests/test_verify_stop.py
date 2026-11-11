@@ -198,6 +198,41 @@ class VerifyStop(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)]), SILENT)
 
+    # A single `&` ends a command like `;` does, but runs it in the background (CP#85 residual R2).
+    def test_write_after_a_single_ampersand_warns(self) -> None:
+        for cmd in ("pytest -q & sed -i s/a/b/ app.py", "python -m pytest -q & cp new.py app.py"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    def test_ampersands_that_do_not_end_a_command_are_not_separators(self) -> None:
+        for cmd in ("python -m pytest -q 2>&1 | tail -5", "pytest -q &> out.log", "pytest -q >&2",
+                    "pytest -q |& tee out.log", "& python -m pytest -q", "$r = & pytest -q"):
+            with self.subTest(cmd=cmd):
+                rc = self.run_hook([prompt("go"), EDIT, result(), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assertEqual(rc, SILENT)
+
+    # A check that checks nothing, or that was left running, verified nothing (CP#85 residual R3).
+    def test_no_op_and_background_checks_do_not_count(self) -> None:
+        for cmd in ("pytest --version", "python -m pytest --collect-only -q", "pytest --co -q", "ruff --help",
+                    "python -m pytest -q &", "python -m pytest -q | tee out.log &"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), EDIT, result(), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    # Installing a check tool, or a comment naming one, ran no check (CP#85 residual R4).
+    def test_installing_or_commenting_on_a_check_tool_is_not_a_check(self) -> None:
+        for cmd in ("pip install pytest", "python -m pip install -U pytest ruff", "npm install --save-dev jest",
+                    "uv pip install pytest", "# run pytest later", "sed -i s/a/b/ notes.md\n# then pytest"):
+            with self.subTest(cmd=cmd):
+                _, out, _ = self.run_hook([prompt("go"), EDIT, result(), tool("Bash", command=cmd), result(), say(CLAIM)])
+                self.assert_warns(out)
+
+    def test_install_then_check_is_silent(self) -> None:
+        rc = self.run_hook([prompt("go"), EDIT, result(),
+                            tool("Bash", command="pip install pytest && python -m pytest -q"), result(), say(CLAIM)])
+        self.assertEqual(rc, SILENT)
+
     def test_compound_commands_that_do_run_a_check_are_silent(self) -> None:
         for cmd in ("python -m pytest hooks/tests -q | tee out.log", "cd repo && python -m pytest -q",
                     "sed -i 's/a/b/' x.py && python -m pytest -q", "PYTHONPATH=. pytest tests/test_app.py",
@@ -284,6 +319,15 @@ class VerifyStop(unittest.TestCase):
             with self.subTest(raw=raw):
                 code, out, _ = self.run_hook(None, raw=raw)
                 self.assertEqual((code, out), (0, ""))
+
+    # Fail-open is never silent: the docstring promises one `verify_stop:` line (CP#85 residual R5).
+    def test_bad_input_leaves_one_stderr_line(self) -> None:
+        for raw in (b"", b"not json", b"[]", json.dumps({"transcript_path": "no-such-dir/missing.jsonl"}).encode()):
+            with self.subTest(raw=raw):
+                code, out, err = self.run_hook(None, raw=raw)
+                self.assertEqual((code, out), (0, ""))
+                self.assertTrue(err.startswith("verify_stop: "), err)
+                self.assertEqual(len(err.strip().splitlines()), 1, err)
 
     def test_malformed_transcript_lines_are_skipped(self) -> None:
         tp = Path(self.tmp.name) / "bad.jsonl"

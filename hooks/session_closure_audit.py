@@ -162,14 +162,15 @@ def emit(text: str) -> None:
         pass
 
 
-def read_event() -> str:
+def read_event() -> str | None:
+    """The hook event name ("" when the input names none), or None when the input is unreadable."""
     try:
         payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
-        if isinstance(payload, dict):
-            return str(payload.get("hook_event_name") or "")
     except Exception:
-        pass
-    return ""
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return str(payload.get("hook_event_name") or "")
 
 
 def load_config() -> dict:
@@ -660,6 +661,9 @@ def build_report(cfg: dict) -> str:
 
 def main() -> None:
     event = read_event()
+    if event is None:
+        emit(attention_block("the hook input could not be read (empty, not JSON, or not a JSON object)"))
+        sys.exit(0)
     if event not in ("SessionStart", "SessionEnd"):
         sys.exit(0)
     try:
