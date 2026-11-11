@@ -424,6 +424,11 @@ def plan_desktop_config(appdata: Path, profile_root: Path = PROFILE_ROOT) -> Des
         raise Refuse(f"Existing claude_desktop_config.json is not valid JSON; refusing to edit it: {exc}") from exc
     if not isinstance(existing, dict):
         raise Refuse("Existing claude_desktop_config.json is not a JSON object; refusing to edit it.")
+    if "mcpServers" in existing and not isinstance(existing["mcpServers"], dict):
+        # There is no object to replace, and a second key written beside this one would lose to it in every reader.
+        raise Refuse("Existing claude_desktop_config.json has an mcpServers value that is not a JSON object "
+                     f"({json.dumps(existing['mcpServers'])[:40]}); refusing to edit it. "
+                     "Remove that key or make it {}, then run again.")
     src = find_object_span(raw, "mcpServers")
     if not src:
         raise Refuse("Template is missing an mcpServers object")
