@@ -22,7 +22,9 @@ that.
 PATH SPELLINGS: the rules read the last path component. NTFS stream suffixes
 (`name::$DATA`, `name:s`), drive-relative paths (`C:name`) and, for a file that
 exists, 8.3 short names and links are reduced to the real name first (CP-10 of
-the 2026-10-26 slop audit). Not covered: whatever the host does to file_path
+the 2026-10-26 slop audit). A network or device path (`//host/share/...`,
+`//./...`) is never resolved, because that would contact the host before any
+permission decision; a `~N` short-name-like component on one is blocked. Not covered: whatever the host does to file_path
 before or after this hook sees it, and hard links.
 
 Protected classes (mirrors the standing rules in CLAUDE.md / memory):
@@ -45,6 +47,7 @@ Protected classes (mirrors the standing rules in CLAUDE.md / memory):
 """
 import json
 import os
+import re
 import sys
 
 BLOCK_EXIT = 2
@@ -82,6 +85,23 @@ def plain_spelling(raw_path: str) -> str:
     return f"{head}{sep}{name}"
 
 
+def local_target(plain: str) -> "str | None":
+    """The path to hand to the filesystem, or None for one this gate must not touch.
+
+    Resolving `//host/share/...` (also `//?/UNC/...`) makes this machine contact `host` and
+    offer it the user's sign-in, and `//./...` names a device; this hook runs before any
+    permission decision, so those are never resolved. `//?/C:/...` is the plain drive path.
+    """
+    if not plain.startswith("//"):
+        return plain
+    if plain.startswith("//?/") and len(plain) > 5 and plain[4].isalpha() and plain[5] == ":":
+        return plain[4:]
+    return None
+
+
+SHORT_NAME_RE = re.compile(r"~\d")
+
+
 def spellings(raw_path: str) -> "list[str]":
     """Every spelling of the path to test: as given, and as the filesystem resolves it.
 
@@ -91,8 +111,11 @@ def spellings(raw_path: str) -> "list[str]":
     """
     plain = plain_spelling(raw_path)
     out = [plain]
+    target = local_target(plain)
+    if target is None:
+        return out
     try:
-        real = os.path.realpath(plain).replace("\\", "/")
+        real = os.path.realpath(target).replace("\\", "/")
     except (OSError, ValueError):
         return out
     if real.lower() != plain.lower():
@@ -102,6 +125,10 @@ def spellings(raw_path: str) -> "list[str]":
 
 def is_protected(raw_path: str) -> "str | None":
     """Return the reason a path is protected, or None if allowed."""
+    plain = plain_spelling(raw_path)
+    if local_target(plain) is None and SHORT_NAME_RE.search(plain):
+        return ("a short-name-like component (~N) on a network or device path cannot be checked "
+                "against the protected names")
     for norm in spellings(raw_path):
         reason = _protected_reason(norm)
         if reason:

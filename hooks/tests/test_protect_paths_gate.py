@@ -192,9 +192,62 @@ def short_name_checks() -> "tuple[list[str], str]":
     return failures, ""
 
 
+def network_path_checks() -> "list[str]":
+    """A network or device path is never handed to the filesystem by the gate.
+
+    Resolving `//host/share/...` makes this machine contact `host` (and offer it the user's
+    sign-in) before any permission decision. In-process, with realpath replaced by a recorder,
+    so the test itself contacts nothing.
+    """
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location("protect_paths_gate_under_test", GATE)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    failures: list[str] = []
+    seen: list[str] = []
+    real_realpath = os.path.realpath
+
+    def recorder(path, *args, **kwargs):
+        seen.append(str(path))
+        return str(path)
+
+    os.path.realpath = recorder
+    try:
+        for raw in ("//host.invalid/share/proj/notes.md", "\\\\host.invalid\\share\\proj\\notes.md",
+                    "//./pipe/notes.md", "\\\\?\\UNC\\host.invalid\\share\\notes.md"):
+            seen.clear()
+            if gate.is_protected(raw) or gate.needs_approval(raw):
+                failures.append(f"expected ALLOW for an ordinary name on a network/device path: {raw}")
+            if seen:
+                failures.append(f"realpath was called for a network/device path: {raw} -> {seen}")
+        seen.clear()
+        gate.is_protected("\\\\?\\C:\\proj\\notes.md")
+        if [s.replace("\\", "/") for s in seen[:1]] != ["C:/proj/notes.md"]:
+            failures.append(f"a //?/C:/ path should be resolved as the drive path, got {seen}")
+        # the rules still apply to the name as written
+        if not gate.is_protected("//host.invalid/share/.env"):
+            failures.append("expected BLOCK for .env on a network path")
+        if not gate.needs_approval("\\\\host.invalid\\share\\NORTHSTAR.md::$DATA"):
+            failures.append("expected ASK for NORTHSTAR.md on a network path")
+        # a short-name-like component there cannot be checked: fail closed
+        for raw in ("//host.invalid/share/NORTHS~1.MD", "//host.invalid/share/BACKEN~1/guard.py",
+                    "\\\\?\\UNC\\host.invalid\\share\\GOOGLE~1.JSO"):
+            if not gate.is_protected(raw):
+                failures.append(f"expected BLOCK for an uncheckable short name: {raw}")
+    finally:
+        os.path.realpath = real_realpath
+    return failures
+
+
+def test_network_paths_are_not_resolved() -> None:
+    failures = network_path_checks()
+    assert not failures, "failing network-path cases:\n  " + "\n  ".join(failures)
+
+
 def run_checks() -> list[str]:
     """Run every fixture through the gate; return one line per mismatch."""
-    failures = short_name_checks()[0]
+    failures = short_name_checks()[0] + network_path_checks()
     for p in BLOCKED:
         rc = run_gate(p)
         if rc != 2:
