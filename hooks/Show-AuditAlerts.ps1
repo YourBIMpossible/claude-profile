@@ -12,7 +12,7 @@
     (Ack-AuditAlert.ps1) or resolved by the watchdog. Showing it is NOT acknowledgment.
   - At most 8 alerts are listed (malfunctions first, newest first); the rest are counted.
   - Watchdog problems are shown, never swallowed: unreadable state, a watchdog error, a stale
-    evaluation (> 26 h old, i.e. the Windows task is not running), or not activated.
+    evaluation (older than the longest scheduled gap + grace, 102 h; i.e. the Windows task is not running), or not activated.
   - Always exits 0: a monitoring fault must never block Claude startup.
   Each display is appended to deliveries.log (time + alert ids) as a delivery record.
 
@@ -22,7 +22,9 @@
 param(
     [string]$StatusRoot = (Join-Path $env:USERPROFILE '.claude\scheduled-tasks\_watchdog'),
     [datetime]$Now = (Get-Date),
-    [int]$StaleHours = 26,
+    # Longest gap between scheduled checks is Thu 11:00 -> Mon 11:00 = 96 h (Install-AuditWatchdog.ps1
+    # $CheckDays); 6 h grace. Test-AuditWatchdog.ps1 derives the gap from $CheckDays and fails on drift.
+    [int]$StaleHours = 102,
     [int]$MaxShown = 8
 )
 $ErrorActionPreference = 'Stop'
@@ -68,7 +70,7 @@ try {
     }
     if ($open.Count) {
         $m = @($open | Where-Object class -eq 'MALFUNCTION').Count
-        $lines.Add("Audit watchdog: $($open.Count) open alert(s) ($m malfunction, $($open.Count - $m) finding). Checks run daily 09:00 and at logon.")
+        $lines.Add("Audit watchdog: $($open.Count) open alert(s) ($m malfunction, $($open.Count - $m) finding). Checks run on the schedule in Install-AuditWatchdog.ps1 and at logon.")
         foreach ($a in ($open | Select-Object -First $MaxShown)) {
             $lines.Add("- [$($a.class)] $($a.task) $($a.kind) (scheduled run $($a.run), detected $($a.first_seen.ToString().Replace('T', ' ')))")
             $lines.Add("    reason: $($a.message)")
